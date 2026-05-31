@@ -173,7 +173,7 @@ export default function AdminClient({
             {(() => {
               const cats = new Map<string, number>();
               for (const g of goals) cats.set(g.category, (cats.get(g.category) ?? 0) + 1);
-              const sorted = [...cats.entries()].sort((a, b) => b[1] - a[1]);
+              const sorted = Array.from(cats.entries()).sort((a, b) => b[1] - a[1]);
               const max = sorted[0]?.[1] ?? 1;
               return (
                 <div className="space-y-2">
@@ -412,7 +412,7 @@ export default function AdminClient({
             {(() => {
               const counts = new Map<string, number>();
               for (const a of userAchievements) counts.set(a.achievement_id, (counts.get(a.achievement_id) ?? 0) + 1);
-              const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+              const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8);
               const max = sorted[0]?.[1] ?? 1;
               return (
                 <div className="space-y-2">
