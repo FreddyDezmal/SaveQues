@@ -354,7 +354,7 @@ export default function QuestsClient({
 
       <CelebrationOverlay
         show={celebration.show}
-        type="challenge"
+        type="xp"
         title={celebration.title}
         xpGained={celebration.xp}
         icon={celebration.icon || "⚔️"}
