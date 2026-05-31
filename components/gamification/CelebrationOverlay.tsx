@@ -5,7 +5,7 @@ import { X } from "lucide-react";
 
 interface Props {
   show: boolean;
-  type: "xp" | "levelup" | "badge" | "goal" | "streak" | "challenge";
+  type: "xp" | "levelup" | "badge" | "goal" | "streak";
   title: string;
   subtitle?: string;
   icon?: string;
@@ -64,17 +64,7 @@ export default function CelebrationOverlay({ show, type, title, subtitle, icon, 
 
         {/* Icon */}
         <div className="text-6xl mb-4" style={{ animation: "badgePop 0.5s 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275) both" }}>
-          {
-            icon ??
-            (
-              type === "levelup" ? "⬆️" :
-              type === "badge" ? "🏅" :
-              type === "goal" ? "🎉" :
-              type === "streak" ? "🔥" :
-              type === "challenge" ? "⚔️" :
-              "⚡"
-            )
-          }
+          {icon ?? (type === "levelup" ? "⬆️" : type === "badge" ? "🏅" : type === "goal" ? "🎉" : type === "streak" ? "🔥" : "⚡")}
         </div>
 
         <h2 className="font-display text-2xl font-bold text-white mb-2">{title}</h2>
