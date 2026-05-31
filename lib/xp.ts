@@ -117,7 +117,7 @@ export function getLevelFromXP(xp: number): {
   nextLevelXP: number;
   progressPercent: number;
 } {
-  let currentLevel = LEVELS[0];
+  let currentLevel: typeof LEVELS[number] = LEVELS[0];
   for (const l of LEVELS) {
     if (xp >= l.xpRequired) currentLevel = l;
   }
