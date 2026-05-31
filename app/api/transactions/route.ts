@@ -50,14 +50,17 @@ export async function POST(req: NextRequest) {
   // Check for new achievements
   const hour = new Date().getHours();
   const newAchievements = checkAchievements({
-    streakDays: profile.streak_days,
-    totalSaved,
-    goalsCompleted: completedGoals,
-    activeGoals: (goalsRes.data ?? []).filter((g: any) => !g.is_complete).length,
-    challengesCompleted: 0,
-    transactionAmount: amount,
-    transactionHour: hour,
-    earnedIds,
+      streakDays: profile.streak_days,
+      totalSaved,
+      goalsCompleted: completedGoals,
+      activeGoals: (goalsRes.data ?? []).filter((g: any) => !g.is_complete).length,
+      challengesCompleted: 0,
+      dailyQuestsCompleted: 0,
+      weeklyQuestsCompleted: 0,
+      questChainsCompleted: 0,
+      transactionAmount: amount,
+      transactionHour: hour,
+      earnedIds,
   });
 
   // Update profile XP
