@@ -1,11 +1,25 @@
-import { differenceInCalendarDays, format } from "date-fns";
+import { differenceInCalendarDays, format, addDays } from "date-fns";
 
 export interface StreakEvalResult {
   newStreak: number;
   broken: boolean;
-  shieldUsed: boolean;
+  graceDayUsed: boolean;
+  paused: boolean;
   message: string;
   milestoneHit?: number;
+}
+
+export const STREAK_PAUSE_DAYS = 7;
+export const GRACE_DAY_LABEL = "grace day";
+
+export function getPauseExpiryDate(pauseStartedAt: string): string {
+  return format(addDays(new Date(pauseStartedAt), STREAK_PAUSE_DAYS), "yyyy-MM-dd");
+}
+
+export function isStreakPaused(streakPausedUntil: string | null | undefined): boolean {
+  if (!streakPausedUntil) return false;
+  const today = format(new Date(), "yyyy-MM-dd");
+  return streakPausedUntil >= today;
 }
 
 const STREAK_MILESTONES = [3, 7, 14, 21, 30, 45, 66, 90, 100, 180, 365];
@@ -13,25 +27,33 @@ const STREAK_MILESTONES = [3, 7, 14, 21, 30, 45, 66, 90, 100, 180, 365];
 export function evaluateStreak(
   lastActiveDateStr: string | null,
   streakDays: number,
-  streakShields: number
+  streakShields: number,
+  streakPausedUntil?: string | null
 ): StreakEvalResult {
   const today = new Date();
-  const todayStr = format(today, "yyyy-MM-dd");
+
+  if (isStreakPaused(streakPausedUntil)) {
+    return {
+      newStreak: streakDays,
+      broken: false,
+      graceDayUsed: false,
+      paused: true,
+      message: `Streak paused — resumes ${streakPausedUntil}`,
+    };
+  }
 
   if (!lastActiveDateStr) {
-    return { newStreak: 1, broken: false, shieldUsed: false, message: "Streak started! Day 1 🔥" };
+    return { newStreak: 1, broken: false, graceDayUsed: false, paused: false, message: "Streak started! Day 1 🔥" };
   }
 
   const lastDate = new Date(lastActiveDateStr);
   const diff = differenceInCalendarDays(today, lastDate);
 
   if (diff === 0) {
-    // Same day — no change
-    return { newStreak: streakDays, broken: false, shieldUsed: false, message: "" };
+    return { newStreak: streakDays, broken: false, graceDayUsed: false, paused: false, message: "" };
   }
 
   if (diff === 1) {
-    // Consecutive — extend
     const newStreak = streakDays + 1;
     const milestoneHit = STREAK_MILESTONES.includes(newStreak) ? newStreak : undefined;
     const messages: Record<number, string> = {
@@ -48,29 +70,30 @@ export function evaluateStreak(
     return {
       newStreak,
       broken: false,
-      shieldUsed: false,
+      graceDayUsed: false,
+      paused: false,
       milestoneHit,
       message: messages[newStreak] ?? `Day ${newStreak} streak! Keep going 🔥`,
     };
   }
 
   if (diff === 2 && streakShields > 0) {
-    // Missed 1 day — use a streak shield
-    const newStreak = streakDays + 1; // still counts as consecutive
+    const newStreak = streakDays + 1;
     return {
       newStreak,
       broken: false,
-      shieldUsed: true,
-      message: `Streak shield used! Your ${streakDays}-day streak is safe 🛡️`,
+      graceDayUsed: true,
+      paused: false,
+      message: `Grace day used — your ${streakDays}-day streak continues 🛡️`,
     };
   }
 
-  // Streak broken
   return {
     newStreak: 1,
     broken: true,
-    shieldUsed: false,
-    message: `Streak reset. Day 1 — rebuild it 💪`,
+    graceDayUsed: false,
+    paused: false,
+    message: "Day 1 again. You know what to do. 💪",
   };
 }
 
@@ -97,12 +120,13 @@ export function getStreakCalendar(
   return result;
 }
 
-export function getStreakMessage(days: number): string {
+export function getStreakMessage(days: number, isPaused = false): string {
+  if (isPaused) return "Streak paused — enjoy your break, we'll be here when you're back.";
   if (days === 0) return "Start your streak today!";
   if (days < 3)   return "Keep going — 3 days to your first badge!";
-  if (days < 7)   return `${7 - days} more days to Week Warrior 🔥`;
-  if (days < 21)  return `${21 - days} more days to Habit Former 💎`;
-  if (days < 30)  return `${30 - days} more days to Monthly Master 🏆`;
-  if (days < 66)  return `${66 - days} more days to Hardwired 🧠`;
+  if (days < 7)   return `${7 - days} more day${7 - days === 1 ? "" : "s"} to Week Warrior 🔥`;
+  if (days < 21)  return `${21 - days} more day${21 - days === 1 ? "" : "s"} to Habit Former 💎`;
+  if (days < 30)  return `${30 - days} more day${30 - days === 1 ? "" : "s"} to Monthly Master 🏆`;
+  if (days < 66)  return `${66 - days} more day${66 - days === 1 ? "" : "s"} to Hardwired 🧠`;
   return "You're in elite territory! Keep it up! 👑";
 }

@@ -273,6 +273,22 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, totalSave
         </div>
       )}
 
+      {/* Streak pause option */}
+      {profile.streak_days >= 3 && (
+        <div className="mb-4 card p-4">
+          <p className="text-xs text-white/40 uppercase tracking-wider mb-2 font-medium">Streak settings</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm text-white/70">Need a break?</p>
+              <p className="text-xs text-white/40 mt-0.5">Pause your streak for up to 7 days — it won't break while paused. Free, unlimited uses.</p>
+            </div>
+            <a href="/dashboard" className="text-brand-400 text-xs hover:text-brand-300 transition-colors flex-shrink-0 mt-0.5">
+              Manage →
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* Admin link */}
       {profile.is_admin && (
         <div className="mb-6">

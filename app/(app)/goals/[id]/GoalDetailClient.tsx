@@ -4,9 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency, formatPercent, getDaysRemaining, GOAL_CATEGORIES } from "@/lib/utils";
+import { formatCurrency, formatPercent, getDaysRemaining, getCategoryById } from "@/lib/utils";
 import { getXPForAction } from "@/lib/xp";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, Plus, ChevronRight } from "lucide-react";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import type { SavingsGoal, Transaction } from "@/lib/types";
 import { format } from "date-fns";
@@ -28,8 +28,9 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
   const [celebration, setCelebration] = useState<{ show: boolean; title: string; subtitle: string; xpGained: number; icon?: string }>({
     show: false, title: "", subtitle: "", xpGained: 0,
   });
+  const [showNextGoalPrompt, setShowNextGoalPrompt] = useState(false);
 
-  const category = GOAL_CATEGORIES.find(c => c.id === goal.category) ?? GOAL_CATEGORIES[GOAL_CATEGORIES.length - 1];
+  const category = getCategoryById(goal.category);
   const percent = (Number(goal.current_amount) / Number(goal.target_amount)) * 100;
   const daysLeft = goal.target_date ? getDaysRemaining(goal.target_date) : null;
 
@@ -81,8 +82,16 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
     // Show celebration
     if (isNowComplete) {
       setCelebration({ show: true, title: "Goal Complete! 🎉", subtitle: `You saved ${formatCurrency(Number(goal.target_amount))}!`, xpGained, icon: "🏆" });
+      setShowNextGoalPrompt(true);
     } else {
-      setCelebration({ show: true, title: "Saved!", subtitle: `${formatCurrency(depositAmount)} added to your goal`, xpGained, icon: category.icon });
+      // Layered reward — show milestone subtitle if hitting 25/50/75%
+      const prevPercent = (Number(goal.current_amount) - depositAmount) / Number(goal.target_amount) * 100;
+      const nextPercent = (Number(goal.current_amount)) / Number(goal.target_amount) * 100;
+      let subtitle = `${formatCurrency(depositAmount)} added to your goal`;
+      if (prevPercent < 25 && nextPercent >= 25) subtitle = "25% there! Quarter of the way! 🎯";
+      else if (prevPercent < 50 && nextPercent >= 50) subtitle = "Halfway there! Keep going! 🔥";
+      else if (prevPercent < 75 && nextPercent >= 75) subtitle = "75%! Almost there! ⚡";
+      setCelebration({ show: true, title: "Saved!", subtitle, xpGained, icon: (goal as any).goal_emoji || category.icon });
     }
 
     setLoading(false);
@@ -213,13 +222,52 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
 
       <CelebrationOverlay
         show={celebration.show}
-        type="xp"
+        type={goal.is_complete ? "goal" : "xp"}
         title={celebration.title}
         subtitle={celebration.subtitle}
         xpGained={celebration.xpGained}
         icon={celebration.icon}
         onClose={() => setCelebration(prev => ({ ...prev, show: false }))}
       />
+
+      {/* ── Next goal prompt — fires after goal completion ── */}
+      {showNextGoalPrompt && !celebration.show && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-surface-card rounded-t-3xl p-6 border-t border-surface-border"
+            style={{ animation: "badgePop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards" }}>
+            <div className="text-center mb-5">
+              <div className="text-5xl mb-3">🚀</div>
+              <h2 className="font-display text-xl font-bold text-white">What's next for you?</h2>
+              <p className="text-white/50 text-sm mt-1">
+                You just proved you can do it. Keep the momentum going.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Link
+                href="/goals/new"
+                className="btn-primary w-full flex items-center justify-center gap-2"
+                onClick={() => setShowNextGoalPrompt(false)}
+              >
+                <Plus size={16} /> Start a New Goal
+              </Link>
+              <Link
+                href="/chains"
+                className="btn-ghost w-full flex items-center justify-center gap-2"
+                onClick={() => setShowNextGoalPrompt(false)}
+              >
+                <ChevronRight size={16} /> Continue Quest Chain
+              </Link>
+              <button
+                onClick={() => setShowNextGoalPrompt(false)}
+                className="w-full py-3 text-white/30 text-sm hover:text-white/50 transition-colors"
+              >
+                I'll decide later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
+

@@ -1,16 +1,17 @@
 "use client";
 
-import { formatStreakDisplay } from "@/lib/streaks";
 import { Flame } from "lucide-react";
 
-export default function StreakBadge({ streak }: { streak: number }) {
-  const isHot = streak >= 7;
-  const isMega = streak >= 30;
+export default function StreakBadge({ streak, paused = false }: { streak: number; paused?: boolean }) {
+  const isHot  = !paused && streak >= 7;
+  const isMega = !paused && streak >= 30;
 
   return (
     <div
       className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border transition-all ${
-        isMega
+        paused
+          ? "bg-surface-elevated border-surface-border opacity-60"
+          : isMega
           ? "bg-yellow-500/10 border-yellow-500/30 animate-pulse-glow"
           : isHot
           ? "bg-orange-500/10 border-orange-500/30"
@@ -20,22 +21,24 @@ export default function StreakBadge({ streak }: { streak: number }) {
       <Flame
         size={16}
         className={`${
-          isMega ? "text-yellow-400 animate-streak-fire" :
-          isHot ? "text-orange-400" :
-          "text-white/30"
+          paused ? "text-white/20" :
+          isMega  ? "text-yellow-400 animate-streak-fire" :
+          isHot   ? "text-orange-400" :
+                    "text-white/30"
         }`}
         fill={isHot ? "currentColor" : "none"}
       />
       <span
         className={`font-display font-bold text-sm ${
-          isMega ? "text-yellow-400" :
-          isHot ? "text-orange-400" :
-          "text-white/40"
+          paused ? "text-white/30" :
+          isMega  ? "text-yellow-400" :
+          isHot   ? "text-orange-400" :
+                    "text-white/40"
         }`}
       >
-        {streak}
+        {paused ? "⏸" : streak}
       </span>
-      <span className="text-white/30 text-xs">streak</span>
+      <span className="text-white/30 text-xs">{paused ? "paused" : "streak"}</span>
     </div>
   );
 }

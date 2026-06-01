@@ -168,3 +168,55 @@ export function checkAchievements(params: {
 
   return newAchievements;
 }
+
+// ── "ALMOST" MESSAGES ─────────────────────────────────────────
+// Returns up to 2 messages about achievements the user is close to.
+// Used on the dashboard to create the Zeigarnik pull.
+export function getAlmostMessages(params: {
+  streakDays: number;
+  totalSaved: number;
+  goalsCompleted: number;
+  challengesCompleted: number;
+  dailyQuestsCompleted: number;
+  earnedIds: string[];
+}): { message: string; icon: string }[] {
+  const earned = new Set(params.earnedIds);
+  const hints: { message: string; icon: string; urgency: number }[] = [];
+
+  // Streak proximity
+  const streakTargets = [3, 7, 14, 21, 30, 45, 66, 90, 100];
+  for (const t of streakTargets) {
+    if (!earned.has(`streak_${t}`) && params.streakDays >= t * 0.75 && params.streakDays < t) {
+      hints.push({ message: `${t - params.streakDays} more day${t - params.streakDays === 1 ? "" : "s"} to ${ACHIEVEMENTS.find(a => a.id === `streak_${t}`)?.title} ${ACHIEVEMENTS.find(a => a.id === `streak_${t}`)?.icon}`, icon: "🔥", urgency: 1 - (t - params.streakDays) / t });
+      break;
+    }
+  }
+
+  // Savings proximity
+  const savingsTargets: [number, string][] = [[50,"saved_50"],[100,"saved_100"],[250,"saved_250"],[500,"saved_500"],[1000,"saved_1000"],[2500,"saved_2500"],[5000,"saved_5000"],[10000,"saved_10000"]];
+  for (const [target, id] of savingsTargets) {
+    if (!earned.has(id) && params.totalSaved >= target * 0.75 && params.totalSaved < target) {
+      const remaining = target - params.totalSaved;
+      const a = ACHIEVEMENTS.find(a => a.id === id);
+      hints.push({ message: `R${remaining.toLocaleString()} away from ${a?.title} ${a?.icon}`, icon: "💰", urgency: 1 - remaining / target });
+      break;
+    }
+  }
+
+  // Daily quests proximity
+  const questTargets: [number, string][] = [[7,"daily_7"],[30,"daily_30"]];
+  for (const [target, id] of questTargets) {
+    if (!earned.has(id) && params.dailyQuestsCompleted >= target * 0.75 && params.dailyQuestsCompleted < target) {
+      const remaining = target - params.dailyQuestsCompleted;
+      const a = ACHIEVEMENTS.find(a => a.id === id);
+      hints.push({ message: `${remaining} more daily quest${remaining === 1 ? "" : "s"} to ${a?.title} ${a?.icon}`, icon: "📅", urgency: 1 - remaining / target });
+      break;
+    }
+  }
+
+  // Sort by urgency (closest to completion first), return top 2
+  return hints
+    .sort((a, b) => b.urgency - a.urgency)
+    .slice(0, 2)
+    .map(({ message, icon }) => ({ message, icon }));
+}

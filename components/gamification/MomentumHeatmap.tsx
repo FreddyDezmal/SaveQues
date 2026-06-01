@@ -10,6 +10,7 @@ interface ActivityDay {
 
 interface Props {
   activityLog: ActivityDay[];
+  userStage?: "new" | "building" | "established";
 }
 
 export default function MomentumHeatmap({ activityLog }: Props) {

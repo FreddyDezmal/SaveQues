@@ -15,6 +15,8 @@ export interface Database {
           last_active_date: string | null;
           streak_shields: number;
           total_shields_used: number;
+          streak_paused_until: string | null;
+          last_notification_hour: number | null;
           daily_quests_completed: number;
           weekly_quests_completed: number;
           quest_chains_completed: number;

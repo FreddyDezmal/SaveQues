@@ -4,19 +4,8 @@ import Link from "next/link";
 import { formatCurrency, formatPercent, getDaysRemaining, getCategoryById } from "@/lib/utils";
 import { ChevronRight } from "lucide-react";
 
-interface Goal {
-  id: string;
-  title: string;
-  category: string;
-  goal_emoji: string;
-  target_amount: number;
-  current_amount: number;
-  target_date: string | null;
-  is_complete: boolean;
-}
-
 interface Props {
-  goal: Goal;
+  goal: any;
   showLink?: boolean;
 }
 
@@ -35,7 +24,6 @@ export default function GoalCard({ goal, showLink = true }: Props) {
       isNearComplete ? "border-brand-500/20" : ""
     }`}>
       <div className="flex items-center gap-3 mb-3">
-        {/* Visual goal emoji */}
         <div
           className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0 border"
           style={{ backgroundColor: `${category.color}15`, borderColor: `${category.color}30` }}
@@ -57,13 +45,11 @@ export default function GoalCard({ goal, showLink = true }: Props) {
         </div>
       </div>
 
-      {/* Amount line */}
       <div className="flex justify-between text-xs mb-2">
         <span className="font-display font-bold text-white">{formatCurrency(Number(goal.current_amount))}</span>
         <span className="text-white/30">of {formatCurrency(Number(goal.target_amount))}</span>
       </div>
 
-      {/* Progress bar */}
       <div className="xp-bar-container mb-1.5">
         <div
           className={`h-full rounded-full transition-all duration-700 ease-out ${isComplete ? "bg-emerald-500" : "goal-bar-fill"}`}
