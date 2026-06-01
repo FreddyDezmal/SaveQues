@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { ACHIEVEMENTS } from "@/lib/achievements";
 import { formatCurrency } from "@/lib/utils";
 import { LEVELS, TIER_COLORS, TIER_LABELS, type LevelTier } from "@/lib/xp";
-import { LogOut, ChevronDown, ChevronUp, Lock } from "lucide-react";
+import { LogOut, ChevronDown, ChevronUp, Lock, ChevronRight } from "lucide-react";
 import { formatAmount } from "@/lib/currency";
 
 interface Props {
@@ -289,6 +289,20 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, totalSave
           </div>
         </div>
       )}
+
+      {/* Settings link */}
+      <div className="mb-4">
+        <a href="/settings" className="card p-4 flex items-center justify-between hover:border-white/10 transition-colors">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">⚙️</span>
+            <div>
+              <p className="text-sm font-medium text-white">Settings</p>
+              <p className="text-xs text-white/40 mt-0.5">Account, currency, security</p>
+            </div>
+          </div>
+          <ChevronRight size={16} className="text-white/20" />
+        </a>
+      </div>
 
       {/* Admin link */}
       {profile.is_admin && (
