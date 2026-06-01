@@ -1,15 +1,23 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { formatAmount, DEFAULT_CURRENCY, DEFAULT_LOCALE } from "@/lib/currency";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatCurrency(amount: number, currency = "R"): string {
-  return `${currency}${amount.toLocaleString("en-ZA", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`;
+/**
+ * formatCurrency — backward-compatible wrapper around formatAmount.
+ * Components that don't yet have a profile can call this with just an amount.
+ * Components with a profile should call formatAmount directly with the
+ * user's currency_code and locale for proper internationalisation.
+ */
+export function formatCurrency(
+  amount: number,
+  currencyCode = DEFAULT_CURRENCY,
+  locale = DEFAULT_LOCALE
+): string {
+  return formatAmount(amount, currencyCode, locale);
 }
 
 export function formatPercent(value: number): string {
@@ -21,6 +29,10 @@ export function getDaysRemaining(targetDate: string): number {
   const today = new Date();
   const diff = Math.ceil((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
   return Math.max(0, diff);
+}
+
+export function getWeeksRemaining(targetDate: string): number {
+  return Math.max(0, Math.floor(getDaysRemaining(targetDate) / 7));
 }
 
 // ── GOAL CATEGORIES — visual-first ───────────────────────────
@@ -41,7 +53,6 @@ export const GOAL_CATEGORIES = [
 
 export type GoalCategory = typeof GOAL_CATEGORIES[number]["id"];
 
-// Visual goal emoji presets — users pick these for their goal card
 export const GOAL_EMOJIS = [
   "🎮", "✈️", "🚗", "💻", "📱", "🏠", "🎓", "🛡️", "🌍", "🎵",
   "🏋️", "🎂", "💍", "🐾", "⛵", "🎸", "🎨", "🍕", "🎁", "🌟",

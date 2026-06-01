@@ -7,6 +7,7 @@ import { ACHIEVEMENTS } from "@/lib/achievements";
 import { formatCurrency } from "@/lib/utils";
 import { LEVELS, TIER_COLORS, TIER_LABELS, type LevelTier } from "@/lib/xp";
 import { LogOut, ChevronDown, ChevronUp, Lock } from "lucide-react";
+import { formatAmount } from "@/lib/currency";
 
 interface Props {
   profile: any;
@@ -259,7 +260,7 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, totalSave
       {/* ── STATS TAB ───────────────────────────── */}
       {activeTab === "stats" && (
         <div className="mb-6 space-y-2">
-          <StatRow icon="💰" label="Total Saved" value={formatCurrency(totalSaved)} />
+          <StatRow icon="💰" label="Total Saved" value={formatAmount(totalSaved, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")} />
           <StatRow icon="🔥" label="Current Streak" value={`${profile.streak_days} days`} />
           <StatRow icon="🏆" label="Longest Streak" value={`${profile.longest_streak ?? 0} days`} />
           <StatRow icon="🛡️" label="Shields Used" value={String(profile.total_shields_used ?? 0)} />
