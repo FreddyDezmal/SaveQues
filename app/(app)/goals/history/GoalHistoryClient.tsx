@@ -4,7 +4,7 @@ import Link from "next/link";
 import { formatAmount } from "@/lib/currency";
 import { getCategoryById } from "@/lib/utils";
 import { ArrowLeft, Trophy, Plus } from "lucide-react";
-import { format, formatDistanceStrict } from "date-fns";
+import { format } from "date-fns";
 
 interface Props {
   goals: any[];
@@ -15,7 +15,7 @@ interface Props {
 export default function GoalHistoryClient({ goals, totalLifetimeSaved, profile }: Props) {
   const currencyCode = profile?.currency_code ?? "ZAR";
   const locale       = profile?.locale ?? "en-ZA";
-  const fc = (amount: number) => formatAmount(amount, currencyCode, locale);
+  const fc = (n: number) => formatAmount(n, currencyCode, locale);
 
   return (
     <div className="max-w-lg mx-auto px-4 pt-6 pb-8">
@@ -37,13 +37,12 @@ export default function GoalHistoryClient({ goals, totalLifetimeSaved, profile }
             <p className="text-xs text-white/40 mt-0.5">Goals completed</p>
           </div>
           <div className="card p-4 text-center">
-            <p className="font-display font-bold text-white text-xl">{fc(totalLifetimeSaved)}</p>
-            <p className="text-xs text-white/40 mt-0.5">Total saved</p>
+            <p className="font-display font-bold text-white text-lg">{fc(totalLifetimeSaved)}</p>
+            <p className="text-xs text-white/40 mt-0.5">Total lifetime saved</p>
           </div>
         </div>
       )}
 
-      {/* Completed goal timeline */}
       {goals.length === 0 ? (
         <div className="card p-10 text-center">
           <div className="text-5xl mb-4">🏆</div>
@@ -61,7 +60,9 @@ export default function GoalHistoryClient({ goals, totalLifetimeSaved, profile }
         <div className="space-y-4">
           {goals.map((goal, idx) => {
             const category = getCategoryById(goal.category);
-            const deposits = (goal.transactions ?? []).filter((t: any) => t.transaction_type === "deposit");
+            const deposits = (goal.transactions ?? []).filter((t: any) =>
+              t.transaction_type === "deposit" || !t.transaction_type
+            );
             const totalDeposited = deposits.reduce((s: number, t: any) => s + Number(t.amount), 0);
             const daysToComplete = goal.completed_at && goal.created_at
               ? Math.ceil((new Date(goal.completed_at).getTime() - new Date(goal.created_at).getTime()) / 86400000)
@@ -69,50 +70,52 @@ export default function GoalHistoryClient({ goals, totalLifetimeSaved, profile }
 
             return (
               <div key={goal.id} className="card p-5 border-emerald-500/10">
-                {/* Timeline dot */}
                 <div className="flex items-start gap-4">
-                  <div className="flex flex-col items-center">
+                  {/* Timeline indicator */}
+                  <div className="flex flex-col items-center flex-shrink-0">
                     <div
-                      className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl border flex-shrink-0"
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl border"
                       style={{ backgroundColor: `${category.color}15`, borderColor: `${category.color}30` }}
                     >
                       {goal.goal_emoji || category.icon}
                     </div>
                     {idx < goals.length - 1 && (
-                      <div className="w-px flex-1 bg-emerald-500/10 mt-2 mb-0 min-h-[24px]" />
+                      <div className="w-px h-6 bg-emerald-500/10 mt-2" />
                     )}
                   </div>
 
-                  <div className="flex-1 min-w-0 pb-4">
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <h3 className="font-display font-bold text-white">{goal.title}</h3>
-                      <Trophy size={14} className="text-emerald-400 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                      <h3 className="font-display font-bold text-white truncate">{goal.title}</h3>
+                      <Trophy size={14} className="text-emerald-400 flex-shrink-0" />
                     </div>
 
                     {goal.completed_at && (
-                      <p className="text-xs text-emerald-400 mb-2">
+                      <p className="text-xs text-emerald-400 mb-3">
                         Completed {format(new Date(goal.completed_at), "d MMMM yyyy")}
                       </p>
                     )}
 
-                    <div className="grid grid-cols-2 gap-2 mb-3">
+                    <div className="grid grid-cols-2 gap-2">
                       <div className="bg-surface-elevated rounded-xl p-2.5">
-                        <p className="text-xs text-white/40 mb-0.5">Saved</p>
+                        <p className="text-[10px] text-white/40 mb-0.5">Total saved</p>
                         <p className="font-display font-bold text-white text-sm">{fc(totalDeposited)}</p>
                       </div>
                       {daysToComplete && (
                         <div className="bg-surface-elevated rounded-xl p-2.5">
-                          <p className="text-xs text-white/40 mb-0.5">Time taken</p>
+                          <p className="text-[10px] text-white/40 mb-0.5">Time taken</p>
                           <p className="font-display font-bold text-white text-sm">
                             {daysToComplete < 30
-                              ? `${daysToComplete} days`
+                              ? `${daysToComplete}d`
                               : `${Math.round(daysToComplete / 30)} months`}
                           </p>
                         </div>
                       )}
                     </div>
 
-                    <p className="text-xs text-white/30">{deposits.length} deposit{deposits.length !== 1 ? "s" : ""} · {category.label}</p>
+                    <p className="text-[10px] text-white/25 mt-2">
+                      {deposits.length} deposit{deposits.length !== 1 ? "s" : ""} · {category.label}
+                    </p>
                   </div>
                 </div>
               </div>

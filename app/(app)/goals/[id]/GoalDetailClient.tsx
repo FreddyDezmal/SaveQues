@@ -9,14 +9,13 @@ import { formatPercent, getDaysRemaining, getCategoryById } from "@/lib/utils";
 import { getXPForAction } from "@/lib/xp";
 import { ArrowLeft, Plus, Minus, ShoppingBag, ChevronRight } from "lucide-react";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
-import type { SavingsGoal, Transaction } from "@/lib/types";
 import { format } from "date-fns";
 
-type TransactionType = "deposit" | "withdrawal" | "goal_purchase";
+type TxType = "deposit" | "withdrawal" | "goal_purchase";
 
 interface Props {
-  goal: SavingsGoal;
-  transactions: Transaction[];
+  goal: any;
+  transactions: any[];
   streakDays: number;
   currencyCode: string;
   locale: string;
@@ -24,51 +23,28 @@ interface Props {
 
 export default function GoalDetailClient({ goal: initialGoal, transactions: initialTxs, streakDays, currencyCode, locale }: Props) {
   const router = useRouter();
-  const fc = (amount: number) => formatAmount(amount, currencyCode, locale);
+  const fc = (n: number) => formatAmount(n, currencyCode, locale);
 
-  const [goal, setGoal] = useState(initialGoal);
+  const [goal, setGoal]               = useState(initialGoal);
   const [transactions, setTransactions] = useState(initialTxs);
-  const [txType, setTxType] = useState<TransactionType>("deposit");
-  const [amount, setAmount] = useState("");
-  const [note, setNote] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [showNextGoalPrompt, setShowNextGoalPrompt] = useState(false);
-  const [celebration, setCelebration] = useState<{
+  const [txType, setTxType]            = useState<TxType>("deposit");
+  const [amount, setAmount]            = useState("");
+  const [note, setNote]                = useState("");
+  const [loading, setLoading]          = useState(false);
+  const [error, setError]              = useState("");
+  const [showNextGoal, setShowNextGoal] = useState(false);
+  const [celebration, setCelebration]  = useState<{
     show: boolean; title: string; subtitle: string; xpGained: number; icon?: string; type?: any;
   }>({ show: false, title: "", subtitle: "", xpGained: 0 });
 
-  const category = getCategoryById(goal.category);
-  const percent = goal.target_amount > 0
-    ? (Number(goal.current_amount) / Number(goal.target_amount)) * 100
-    : 0;
-  const daysLeft = goal.target_date ? getDaysRemaining(goal.target_date) : null;
+  const category  = getCategoryById(goal.category);
+  const percent   = goal.target_amount > 0 ? (Number(goal.current_amount) / Number(goal.target_amount)) * 100 : 0;
+  const daysLeft  = goal.target_date ? getDaysRemaining(goal.target_date) : null;
 
-  const TX_CONFIG = {
-    deposit: {
-      label: "Log a Saving",
-      placeholder: "Amount saved",
-      icon: <Plus size={14} />,
-      color: "emerald",
-      buttonText: "Log Saving",
-      noteHint: "e.g. skipped takeout, payday deposit",
-    },
-    withdrawal: {
-      label: "Log a Withdrawal",
-      placeholder: "Amount withdrawn",
-      icon: <Minus size={14} />,
-      color: "orange",
-      buttonText: "Log Withdrawal",
-      noteHint: "e.g. car repair, medical emergency",
-    },
-    goal_purchase: {
-      label: "Goal Purchase",
-      placeholder: "Amount spent",
-      icon: <ShoppingBag size={14} />,
-      color: "brand",
-      buttonText: "Mark as Purchased",
-      noteHint: "e.g. bought the flights, purchased the laptop",
-    },
+  const TX = {
+    deposit:      { label: "Log a Saving",     placeholder: "Amount saved",     icon: <Plus size={14} />,        buttonText: "Log Saving",       hint: "e.g. skipped takeout, payday transfer" },
+    withdrawal:   { label: "Log a Withdrawal", placeholder: "Amount withdrawn",  icon: <Minus size={14} />,       buttonText: "Log Withdrawal",   hint: "e.g. car repair, medical bill" },
+    goal_purchase:{ label: "Goal Purchase",    placeholder: "Amount spent",      icon: <ShoppingBag size={14} />, buttonText: "Mark as Purchased", hint: "e.g. bought the flights, got the laptop" },
   };
 
   async function handleSubmit(e: React.FormEvent) {
@@ -83,99 +59,78 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
 
     const depositAmount = Number(amount);
 
-    const { data: tx, error: txError } = await supabase
+    const { data: tx, error: txErr } = await supabase
       .from("transactions")
-      .insert({
-        user_id: user.id,
-        goal_id: goal.id,
-        amount: depositAmount,
-        note: note || null,
-        transaction_type: txType,
-      })
+      .insert({ user_id: user.id, goal_id: goal.id, amount: depositAmount, note: note || null, transaction_type: txType })
       .select()
       .single();
 
-    if (txError) { setError(txError.message); setLoading(false); return; }
+    if (txErr) { setError(txErr.message); setLoading(false); return; }
 
-    // Recalculate local balance
-    let newCurrentAmount = Number(goal.current_amount);
+    // Compute new balance locally (trigger handles DB)
+    let newAmount = Number(goal.current_amount);
     if (txType === "deposit") {
-      newCurrentAmount += depositAmount;
+      newAmount += depositAmount;
     } else {
-      newCurrentAmount = Math.max(0, newCurrentAmount - depositAmount);
+      newAmount = Math.max(0, newAmount - depositAmount);
     }
 
-    const isNowComplete = txType === "goal_purchase" && newCurrentAmount >= Number(goal.target_amount);
+    const isNowComplete = (txType === "goal_purchase" || txType === "deposit") && newAmount >= Number(goal.target_amount);
 
-    // Award XP for deposits only
+    // XP — only for deposits
+    let xpGained = 0;
     if (txType === "deposit") {
-      const xpGained = getXPForAction(
-        isNowComplete ? "GOAL_COMPLETE" : "LOG_SAVING",
-        streakDays
-      );
+      xpGained = getXPForAction(isNowComplete ? "GOAL_COMPLETE" : "LOG_SAVING", streakDays);
       const { data: p } = await supabase.from("profiles").select("xp_total").eq("id", user.id).single();
-      if (p) {
-        await supabase.from("profiles").update({ xp_total: p.xp_total + xpGained }).eq("id", user.id);
-      }
+      if (p) await supabase.from("profiles").update({ xp_total: p.xp_total + xpGained }).eq("id", user.id);
       await supabase.rpc("log_activity", { p_user_id: user.id, p_xp: xpGained });
     }
 
-    setGoal(prev => ({ ...prev, current_amount: newCurrentAmount, is_complete: isNowComplete }));
-    setTransactions(prev => [{ ...tx, transaction_type: txType } as any, ...prev]);
+    setGoal((prev: any) => ({ ...prev, current_amount: newAmount, is_complete: isNowComplete }));
+    setTransactions((prev: any[]) => [{ ...tx, transaction_type: txType }, ...prev]);
     setAmount("");
     setNote("");
     setLoading(false);
 
-    // Celebration messaging per transaction type
+    // Celebrations
     if (txType === "goal_purchase" && isNowComplete) {
-      const xpGained = getXPForAction("GOAL_COMPLETE", streakDays);
+      xpGained = getXPForAction("GOAL_COMPLETE", streakDays);
       setCelebration({
-        show: true,
-        type: "goal",
+        show: true, type: "goal",
         title: `${goal.title} — Done! 🎉`,
-        subtitle: `You followed through. That's everything.`,
-        xpGained,
-        icon: (goal as any).goal_emoji || "🏆",
+        subtitle: "You followed through. That's everything.",
+        xpGained, icon: goal.goal_emoji || "🏆",
       });
-      setShowNextGoalPrompt(true);
+      setShowNextGoal(true);
     } else if (txType === "withdrawal") {
-      const newPercent = newCurrentAmount / Number(goal.target_amount) * 100;
+      const newPct = Math.round(newAmount / Number(goal.target_amount) * 100);
       setCelebration({
-        show: true,
-        type: "xp",
+        show: true, type: "xp",
         title: "Withdrawal logged",
-        subtitle: `Life happens. Your goal is still ${Math.round(newPercent)}% complete — keep going when you're ready.`,
-        xpGained: 0,
-        icon: "🛡️",
+        subtitle: `Life happens. Your goal is still ${newPct}% complete — keep going when you're ready.`,
+        xpGained: 0, icon: "🛡️",
       });
     } else if (txType === "deposit") {
-      const xpGained = getXPForAction("LOG_SAVING", streakDays);
-      const prevPercent = (Number(goal.current_amount) - depositAmount) / Number(goal.target_amount) * 100;
-      const nextPercent = newCurrentAmount / Number(goal.target_amount) * 100;
+      const prevPct = (Number(goal.current_amount) - depositAmount) / Number(goal.target_amount) * 100;
+      const nextPct = newAmount / Number(goal.target_amount) * 100;
       let subtitle = `${fc(depositAmount)} added to your goal`;
-      if (prevPercent < 25 && nextPercent >= 25) subtitle = "25% there! You're building something real 🎯";
-      else if (prevPercent < 50 && nextPercent >= 50) subtitle = "Halfway there! Keep this momentum 🔥";
-      else if (prevPercent < 75 && nextPercent >= 75) subtitle = "75%! One more push and you're done ⚡";
-      setCelebration({ show: true, type: "xp", title: "Saved!", subtitle, xpGained, icon: (goal as any).goal_emoji || category.icon });
+      if (prevPct < 25 && nextPct >= 25) subtitle = "25% there! You're building something real 🎯";
+      else if (prevPct < 50 && nextPct >= 50) subtitle = "Halfway there! Keep this momentum 🔥";
+      else if (prevPct < 75 && nextPct >= 75) subtitle = "75%! One more push and you're done ⚡";
+      else if (isNowComplete) subtitle = "You did it. 🏆";
+      setCelebration({ show: true, type: isNowComplete ? "goal" : "xp", title: isNowComplete ? "Goal Complete! 🎉" : "Saved!", subtitle, xpGained, icon: goal.goal_emoji || category.icon });
     }
 
     router.refresh();
   }
 
-  const newPercent = (Number(goal.current_amount) / Number(goal.target_amount)) * 100;
+  const newPercent = goal.target_amount > 0 ? (Number(goal.current_amount) / Number(goal.target_amount)) * 100 : 0;
 
-  function getTxIcon(type: string) {
-    if (type === "deposit") return "💰";
-    if (type === "withdrawal") return "🛡️";
-    if (type === "goal_purchase") return "🎯";
-    return "📝";
-  }
-
-  function getTxLabel(type: string) {
-    if (type === "deposit") return "Deposit";
-    if (type === "withdrawal") return "Withdrawal";
-    if (type === "goal_purchase") return "Goal Purchase";
-    return "Adjustment";
+  function getTxMeta(type: string): { icon: string; color: string; label: string } {
+    if (type === "deposit")      return { icon: "💰", color: "text-emerald-400", label: "Deposit" };
+    if (type === "withdrawal")   return { icon: "🛡️", color: "text-orange-400",  label: "Withdrawal" };
+    if (type === "goal_purchase")return { icon: "🎯", color: "text-brand-400",   label: "Goal Purchase" };
+    return                              { icon: "📝", color: "text-white/40",    label: "Adjustment" };
   }
 
   return (
@@ -187,11 +142,9 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
             <ArrowLeft size={20} />
           </Link>
           <div className="flex items-center gap-3 flex-1">
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
-              style={{ backgroundColor: `${category.color}20` }}
-            >
-              {(goal as any).goal_emoji || category.icon}
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl"
+              style={{ backgroundColor: `${category.color}20` }}>
+              {goal.goal_emoji || category.icon}
             </div>
             <div>
               <h1 className="font-display text-lg font-bold text-white leading-tight">{goal.title}</h1>
@@ -238,62 +191,55 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
           <div className="card p-4 mb-5">
             {/* Type selector */}
             <div className="flex gap-1.5 mb-4 bg-surface-elevated p-1 rounded-xl">
-              {(["deposit", "withdrawal", "goal_purchase"] as TransactionType[]).map(type => {
-                const cfg = TX_CONFIG[type];
-                return (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => { setTxType(type); setError(""); }}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-xs font-medium transition-all duration-200 ${
-                      txType === type
-                        ? type === "deposit"
-                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                          : type === "withdrawal"
-                          ? "bg-orange-500/20 text-orange-400 border border-orange-500/30"
-                          : "bg-brand-500/20 text-brand-400 border border-brand-500/30"
-                        : "text-white/40 hover:text-white/60"
-                    }`}
-                  >
-                    {cfg.icon}
-                    <span className="hidden sm:inline">{type === "goal_purchase" ? "Purchase" : cfg.label.split(" ")[1]}</span>
-                  </button>
-                );
-              })}
+              {(["deposit", "withdrawal", "goal_purchase"] as TxType[]).map(type => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => { setTxType(type); setError(""); }}
+                  className={`flex-1 flex items-center justify-center gap-1 py-2 px-1 rounded-lg text-[11px] font-medium transition-all duration-200 ${
+                    txType === type
+                      ? type === "deposit"
+                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                        : type === "withdrawal"
+                        ? "bg-orange-500/20 text-orange-400 border border-orange-500/30"
+                        : "bg-brand-500/20 text-brand-400 border border-brand-500/30"
+                      : "text-white/40 hover:text-white/60"
+                  }`}
+                >
+                  {TX[type].icon}
+                  <span>{type === "goal_purchase" ? "Purchase" : type === "deposit" ? "Save" : "Withdraw"}</span>
+                </button>
+              ))}
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs text-white/50 mb-1.5">{TX_CONFIG[txType].label}</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 font-display font-medium text-sm">
-                    {currencyCode === "ZAR" ? "R" : ""}
-                  </span>
-                  <input
-                    type="number"
-                    className="input-field pl-8"
-                    placeholder={TX_CONFIG[txType].placeholder}
-                    min="0.01"
-                    step="0.01"
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    required
-                  />
-                </div>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 font-display font-medium text-sm">
+                  {currencyCode === "ZAR" ? "R" : ""}
+                </span>
+                <input
+                  type="number"
+                  className="input-field pl-8"
+                  placeholder={TX[txType].placeholder}
+                  min="0.01"
+                  step="0.01"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  required
+                />
               </div>
 
               <input
                 className="input-field"
-                placeholder={TX_CONFIG[txType].noteHint}
+                placeholder={TX[txType].hint}
                 value={note}
                 onChange={e => setNote(e.target.value)}
               />
 
-              {/* Contextual copy per transaction type */}
               {txType === "withdrawal" && (
                 <div className="px-3 py-2.5 rounded-xl bg-orange-500/8 border border-orange-500/15">
                   <p className="text-xs text-orange-300">
-                    Life happens. Withdrawals are tracked but your achievements and streak are safe.
+                    Life happens. Your achievements and streak are completely unaffected.
                   </p>
                 </div>
               )}
@@ -301,7 +247,7 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
               {txType === "goal_purchase" && (
                 <div className="px-3 py-2.5 rounded-xl bg-brand-500/8 border border-brand-500/15">
                   <p className="text-xs text-brand-300">
-                    Mark this when you've spent the money on what you saved for. This completes your goal. 🎯
+                    Use this when you've spent the money on what you saved for. This celebrates your goal. 🎯
                   </p>
                 </div>
               )}
@@ -309,13 +255,13 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
               {error && <p className="text-red-400 text-sm">{error}</p>}
 
               <button type="submit" className="btn-primary w-full flex items-center justify-center gap-2" disabled={loading}>
-                {loading ? "Saving…" : TX_CONFIG[txType].buttonText}
+                {loading ? "Saving…" : TX[txType].buttonText}
               </button>
             </form>
           </div>
         )}
 
-        {/* Transaction history */}
+        {/* History */}
         <div className="mb-6">
           <h2 className="font-display font-semibold text-white/60 text-xs uppercase tracking-wider mb-3">
             History ({transactions.length})
@@ -327,21 +273,20 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
           ) : (
             <div className="space-y-2">
               {transactions.map((tx: any) => {
-                const isNegative = ["withdrawal", "goal_purchase", "adjustment"].includes(tx.transaction_type);
+                const meta = getTxMeta(tx.transaction_type ?? "deposit");
+                const isNeg = ["withdrawal", "goal_purchase", "adjustment"].includes(tx.transaction_type ?? "deposit");
                 return (
                   <div key={tx.id} className="card p-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${
-                        isNegative ? "bg-orange-500/10" : "bg-emerald-500/10"
-                      }`}>
-                        {getTxIcon(tx.transaction_type)}
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${isNeg ? "bg-orange-500/10" : "bg-emerald-500/10"}`}>
+                        {meta.icon}
                       </div>
                       <div>
-                        <p className="text-sm text-white font-medium">
-                          {isNegative ? "-" : "+"}{fc(Number(tx.amount))}
+                        <p className={`text-sm font-medium ${meta.color}`}>
+                          {isNeg ? "−" : "+"}{fc(Number(tx.amount))}
                         </p>
                         {tx.note && <p className="text-xs text-white/40">{tx.note}</p>}
-                        <p className="text-[10px] text-white/25">{getTxLabel(tx.transaction_type)}</p>
+                        <p className="text-[10px] text-white/25">{meta.label}</p>
                       </div>
                     </div>
                     <span className="text-xs text-white/30">{format(new Date(tx.created_at), "MMM d")}</span>
@@ -353,7 +298,6 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
         </div>
       </div>
 
-      {/* Celebrations */}
       <CelebrationOverlay
         show={celebration.show}
         type={celebration.type ?? "xp"}
@@ -364,8 +308,8 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
         onClose={() => setCelebration(prev => ({ ...prev, show: false }))}
       />
 
-      {/* Next goal prompt after goal_purchase completion */}
-      {showNextGoalPrompt && !celebration.show && (
+      {/* Next goal prompt — after goal purchase completion */}
+      {showNextGoal && !celebration.show && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm">
           <div
             className="w-full max-w-lg bg-surface-card rounded-t-3xl p-6 border-t border-surface-border"
@@ -382,19 +326,19 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
               <Link
                 href="/goals/new"
                 className="btn-primary w-full flex items-center justify-center gap-2"
-                onClick={() => setShowNextGoalPrompt(false)}
+                onClick={() => setShowNextGoal(false)}
               >
                 <Plus size={16} /> Start a New Goal
               </Link>
               <Link
-                href="/goals"
+                href="/goals/history"
                 className="btn-ghost w-full flex items-center justify-center gap-2"
-                onClick={() => setShowNextGoalPrompt(false)}
+                onClick={() => setShowNextGoal(false)}
               >
                 <ChevronRight size={16} /> See My Goal History
               </Link>
               <button
-                onClick={() => setShowNextGoalPrompt(false)}
+                onClick={() => setShowNextGoal(false)}
                 className="w-full py-3 text-white/30 text-sm hover:text-white/50 transition-colors"
               >
                 I'll decide later
