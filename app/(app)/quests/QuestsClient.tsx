@@ -7,6 +7,7 @@ import { getXPForAction } from "@/lib/xp";
 import type { QuestTemplate } from "@/lib/quests";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import { Zap, CheckCircle, Clock, Trophy, Calendar, Sparkles } from "lucide-react";
+import { getQuestAvailability, isQuestAcceptable } from "@/lib/questAvailability";
 
 interface Props {
   allChallenges: any[];
@@ -16,13 +17,22 @@ interface Props {
   todaysDailyQuest: QuestTemplate;
   thisWeeksQuest: QuestTemplate;
   dailyCompletedToday: boolean;
+  weeklyQuestState: {
+    id: string;
+    status: "active" | "completed" | "expired";
+    accepted_at: string;
+    completed_at: string | null;
+    quest_id: string;
+    xp_earned: number | null;
+  } | null;
+  currentWeekStart: string;
 }
 
 type QuestTab = "daily" | "weekly" | "challenges";
 
 export default function QuestsClient({
   allChallenges, userChallenges, userId, profile,
-  todaysDailyQuest, thisWeeksQuest, dailyCompletedToday,
+  todaysDailyQuest, thisWeeksQuest, dailyCompletedToday, weeklyQuestState, currentWeekStart
 }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<QuestTab>("daily");
@@ -33,7 +43,32 @@ export default function QuestsClient({
   const completedUCs = userChallenges.filter(uc => uc.status === "completed");
   const activeIds = new Set(activeUCs.map(uc => uc.challenge_id));
   const completedIds = new Set(completedUCs.map(uc => uc.challenge_id));
-  const availableChallenges = allChallenges.filter(c => !activeIds.has(c.id) && !completedIds.has(c.id));
+
+  const availableChallenges = allChallenges
+    .filter(c => !activeIds.has(c.id) && !completedIds.has(c.id))
+    .map(c => ({
+      ...c,
+      window: getQuestAvailability({
+        quest_type: c.quest_type ?? "evergreen",
+        start_date: c.start_date ?? null,
+        end_date: c.end_date ?? null,
+        year_agnostic: c.year_agnostic ?? false,
+        preview_days: c.preview_days ?? 3,
+      }),
+    }))
+    .filter(c => c.window.availability !== "expired" ||
+                 c.window.availability === "upcoming")
+    .sort((a, b) => {
+      // Active first, then upcoming, then evergreen
+      const order: Record<string, number> = {
+        available: 0,
+        always_on: 1,
+        upcoming: 2,
+        expired: 99,
+        completed: 99,
+      };
+      return (order[a.window.availability as string] ?? 99) - (order[b.window.availability as string] ?? 99);
+    });
 
   async function completeDailyQuest() {
     if (dailyCompletedToday) return;
@@ -60,15 +95,49 @@ export default function QuestsClient({
     router.refresh();
   }
 
-  async function acceptChallenge(challengeId: string, xpReward: number, title: string) {
-    setLoading(challengeId);
+  async function acceptWeeklyQuest() {
+    setLoading("weekly_current");
     const supabase = createClient();
-    await supabase.from("user_challenges").insert({
-      user_id: userId, challenge_id: challengeId, status: "active",
-      started_at: new Date().toISOString(),
+    const { error } = await supabase.from("user_weekly_quests").insert({
+      user_id: userId,
+      quest_id: thisWeeksQuest.id,
+      week_start: currentWeekStart,
+      status: "active",
+      accepted_at: new Date().toISOString(),
     });
     setLoading(null);
-    setCelebration({ show: true, title: `Quest Accepted!`, xp: 0, icon: "⚔️" });
+    if (!error) {
+      setCelebration({
+        show: true,
+        title: "Quest Accepted!",
+        xp: 0,
+        icon: thisWeeksQuest.icon,
+      });
+    }
+    router.refresh();
+  }
+
+  async function completeWeeklyQuest() {
+    if (!weeklyQuestState) return;
+    setLoading("weekly_complete");
+    const supabase = createClient();
+    const xp = thisWeeksQuest.xpReward;
+    await supabase.from("user_weekly_quests").update({
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      xp_earned: xp,
+    }).eq("id", weeklyQuestState.id);
+
+    const { data: p } = await supabase.from("profiles").select("xp_total, weekly_quests_completed").eq("id", userId).single();
+    if (p) {
+      await supabase.from("profiles").update({
+        xp_total: p.xp_total + xp,
+        weekly_quests_completed: (p.weekly_quests_completed ?? 0) + 1,
+      }).eq("id", userId);
+    }
+    await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xp });
+    setLoading(null);
+    setCelebration({ show: true, title: `Quest Complete! 🎉`, xp, icon: thisWeeksQuest.icon });
     router.refresh();
   }
 
@@ -221,7 +290,7 @@ export default function QuestsClient({
               </div>
 
               <button
-                onClick={() => acceptChallenge("weekly_current", thisWeeksQuest.xpReward, thisWeeksQuest.title)}
+                onClick={() => acceptWeeklyQuest()}
                 disabled={loading === "weekly_current"}
                 className="btn-primary w-full"
               >
@@ -237,119 +306,97 @@ export default function QuestsClient({
         )}
 
         {/* ── CHALLENGES TAB ─────────────────────────────── */}
-        {activeTab === "challenges" && (
-          <div className="space-y-4">
-            {/* Active */}
-            {activeUCs.length > 0 && (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <Clock size={13} className="text-brand-400" />
-                  <h2 className="text-xs font-bold text-brand-400 uppercase tracking-wider">Active</h2>
-                </div>
-                <div className="space-y-2">
-                  {activeUCs.map(uc => {
-                    const ch = uc.challenges;
-                    if (!ch) return null;
-                    return (
-                      <div key={uc.id} className="card p-4 border-brand-500/20">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex-1">
-                            <h3 className="font-display font-semibold text-white text-sm">{ch.title}</h3>
-                            <p className="text-xs text-white/40 mt-0.5">{ch.description}</p>
-                          </div>
-                          <div className="flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 rounded-full px-2.5 py-1 ml-3">
-                            <Zap size={11} className="text-brand-400" />
-                            <span className="text-brand-400 text-xs font-bold">{ch.xp_reward}</span>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => completeChallenge(uc.id, ch.xp_reward, ch.title)}
-                          disabled={loading === uc.id}
-                          className="btn-primary w-full text-sm py-2.5"
-                        >
-                          {loading === uc.id ? "Claiming…" : "Mark Complete ✅"}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+        {activeTab === "weekly" && (
+  <div className="space-y-4">
+    <div className="card p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Sparkles size={14} className="text-brand-400" />
+        <span className="text-xs text-brand-400 font-bold uppercase tracking-wider">
+          This Week's Quest
+        </span>
+        <span className="ml-auto text-xs text-white/30">Resets Monday</span>
+      </div>
 
-            {/* Available */}
-            {availableChallenges.length > 0 && (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <Trophy size={13} className="text-white/40" />
-                  <h2 className="text-xs font-bold text-white/40 uppercase tracking-wider">Available</h2>
-                </div>
-                <div className="space-y-2">
-                  {availableChallenges.map(ch => (
-                    <div key={ch.id} className="card p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <h3 className="font-display font-semibold text-white text-sm">{ch.title}</h3>
-                            {ch.type === "seasonal" && (
-                              <span className="text-[10px] bg-purple-500/15 text-purple-400 border border-purple-500/20 rounded-full px-2 py-0.5">Seasonal</span>
-                            )}
-                          </div>
-                          <p className="text-xs text-white/40">{ch.description}</p>
-                          <p className="text-xs text-white/30 mt-1">⏱ {ch.duration_days}d</p>
-                        </div>
-                        <div className="flex items-center gap-1 bg-surface-elevated border border-surface-border rounded-full px-2.5 py-1 ml-3">
-                          <Zap size={11} className="text-white/40" />
-                          <span className="text-white/50 text-xs font-bold">{ch.xp_reward}</span>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => acceptChallenge(ch.id, ch.xp_reward, ch.title)}
-                        disabled={loading === ch.id}
-                        className="btn-ghost w-full text-sm py-2.5"
-                      >
-                        {loading === ch.id ? "Accepting…" : "⚔️ Accept Quest"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Completed */}
-            {completedUCs.length > 0 && (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <CheckCircle size={13} className="text-emerald-400" />
-                  <h2 className="text-xs font-bold text-emerald-400/60 uppercase tracking-wider">
-                    Completed ({completedUCs.length})
-                  </h2>
-                </div>
-                <div className="space-y-2 opacity-60">
-                  {completedUCs.map(uc => {
-                    const ch = uc.challenges;
-                    if (!ch) return null;
-                    return (
-                      <div key={uc.id} className="card p-3 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <CheckCircle size={16} className="text-emerald-400 flex-shrink-0" />
-                          <p className="text-sm text-white/60">{ch.title}</p>
-                        </div>
-                        <span className="text-xs text-emerald-400">+{ch.xp_reward} XP</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {availableChallenges.length === 0 && activeUCs.length === 0 && (
-              <div className="card p-10 text-center">
-                <div className="text-4xl mb-3">⚔️</div>
-                <p className="text-white/40 text-sm">All quests complete! New ones coming soon.</p>
-              </div>
-            )}
+      <div className="flex items-start gap-3 mb-4">
+        <div className="w-12 h-12 rounded-2xl bg-brand-500/15 border border-brand-500/20 flex items-center justify-center text-2xl flex-shrink-0">
+          {thisWeeksQuest.icon}
+        </div>
+        <div className="flex-1">
+          <h3 className="font-display font-bold text-white">{thisWeeksQuest.title}</h3>
+          <p className="text-sm text-white/50 mt-0.5">{thisWeeksQuest.description}</p>
+          <div className="flex items-center gap-2 mt-2 flex-wrap">
+            <div className="flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 rounded-full px-2.5 py-1">
+              <Zap size={11} className="text-brand-400" />
+              <span className="text-brand-400 text-xs font-bold">
+                +{thisWeeksQuest.xpReward} XP
+              </span>
+            </div>
+            <span className="text-xs text-white/30">⏱ 7 days</span>
           </div>
-        )}
+        </div>
+      </div>
+
+      {/* State-aware action area */}
+      {!weeklyQuestState && (
+        <button
+          onClick={acceptWeeklyQuest}
+          disabled={loading === "weekly_current"}
+          className="btn-primary w-full"
+        >
+          {loading === "weekly_current" ? "Accepting…" : "⚔️ Accept This Quest"}
+        </button>
+      )}
+
+      {weeklyQuestState?.status === "active" && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-brand-500/8 border border-brand-500/20">
+            <Clock size={14} className="text-brand-400 flex-shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-white">Quest in progress</p>
+              <p className="text-xs text-white/40 mt-0.5">
+                Accepted {new Date(weeklyQuestState.accepted_at).toLocaleDateString()} — mark complete when done
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={completeWeeklyQuest}
+            disabled={loading === "weekly_complete"}
+            className="btn-primary w-full"
+          >
+            {loading === "weekly_complete" ? "Claiming…" : "Mark Complete ✅"}
+          </button>
+        </div>
+      )}
+
+      {weeklyQuestState?.status === "completed" && (
+        <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+          <CheckCircle size={16} className="text-emerald-400 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-emerald-400">Quest complete this week!</p>
+            <p className="text-xs text-white/40 mt-0.5">
+              +{weeklyQuestState.xp_earned} XP earned · New quest unlocks Monday
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+
+    <div className="grid grid-cols-2 gap-3">
+      <div className="card p-4 text-center">
+        <p className="font-display font-bold text-white text-2xl">
+          {profile.weekly_quests_completed}
+        </p>
+        <p className="text-xs text-white/40 mt-0.5">Weekly quests done</p>
+      </div>
+      <div className="card p-4 text-center">
+        <p className="font-display font-bold text-white text-2xl">
+          {profile.streak_days}
+        </p>
+        <p className="text-xs text-white/40 mt-0.5">Day streak</p>
+      </div>
+    </div>
+  </div>
+)}
       </div>
 
       <CelebrationOverlay

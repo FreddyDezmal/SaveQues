@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+// @ts-ignore
 import "./globals.css";
 
 export const metadata: Metadata = {

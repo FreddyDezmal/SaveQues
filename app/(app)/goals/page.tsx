@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import GoalCard from "@/components/goals/GoalCard";
-import { Plus } from "lucide-react";
+import { ChevronRight, Plus } from "lucide-react";
 
 export default async function GoalsPage() {
   const supabase = createClient();
@@ -17,6 +17,27 @@ export default async function GoalsPage() {
 
   const active = (goals ?? []).filter(g => !g.is_complete);
   const completed = (goals ?? []).filter(g => g.is_complete);
+
+  {completed.length > 0 && (
+  <div className="mb-6">
+    <div className="flex items-center justify-between mb-3">
+      <h2 className="font-display font-semibold text-white/60 text-xs uppercase tracking-wider">
+        Completed ({completed.length}) ✅
+      </h2>
+      <Link href="/goals/history" className="text-brand-400 text-xs hover:text-brand-300 transition-colors flex items-center gap-0.5">
+        Full history <ChevronRight size={12} />
+      </Link>
+    </div>
+    <div className="space-y-3 opacity-70">
+      {completed.slice(0, 2).map(goal => <GoalCard key={goal.id} goal={goal} />)}
+      {completed.length > 2 && (
+        <Link href="/goals/history" className="block text-center text-brand-400 text-sm py-2 hover:text-brand-300">
+          See all {completed.length} completed goals →
+        </Link>
+      )}
+    </div>
+  </div>
+)}
 
   return (
     <div className="max-w-lg mx-auto px-4 pt-6">
