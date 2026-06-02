@@ -1,9 +1,12 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SaveQuest — Level Up Your Savings",
   description: "The gamified savings platform that makes saving money addictive.",
+};
+
+export const viewport: Viewport = {
   themeColor: "#0f0f14",
 };
 
