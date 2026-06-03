@@ -1,22 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import React from "react";
-
-// Local fallback client component (previously imported from ./GoalHistoryClient)
-function GoalHistoryClient({ goals, totalLifetimeSaved, profile }: any) {
-  return (
-    <div>
-      <h1>Goal History</h1>
-      <p>Total saved: {totalLifetimeSaved}</p>
-      <ul>
-        {(goals ?? []).map((g: any) => (
-          <li key={g.id}>{g.name ?? g.title ?? `Goal ${g.id}`}</li>
-        ))}
-      </ul>
-      <pre>{JSON.stringify(profile ?? {}, null, 2)}</pre>
-    </div>
-  );
-}
+import GoalHistoryClient from "./GoalHistoryClient";
 
 export default async function GoalHistoryPage() {
   const supabase = createClient();
@@ -35,10 +19,9 @@ export default async function GoalHistoryPage() {
 
   const completedGoals = completedGoalsRes.data ?? [];
 
-  // Compute summary stats
   const totalSaved = completedGoals.reduce((sum, g) =>
     sum + (g.transactions ?? [])
-      .filter((t: any) => t.transaction_type === "deposit")
+      .filter((t: any) => t.transaction_type === "deposit" || !t.transaction_type)
       .reduce((s: number, t: any) => s + Number(t.amount), 0), 0);
 
   return (
