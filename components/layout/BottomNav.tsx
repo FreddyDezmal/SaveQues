@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Target, Swords, Link2, User } from "lucide-react";
+import { Home, Target, Swords, CalendarDays, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", icon: Home,   label: "Home"   },
-  { href: "/goals",     icon: Target, label: "Goals"  },
-  { href: "/quests",    icon: Swords, label: "Quests" },
-  { href: "/chains",    icon: Link2,  label: "Chains" },
-  { href: "/profile",   icon: User,   label: "Profile"},
+  { href: "/dashboard", icon: Home,          label: "Home"   },
+  { href: "/goals",     icon: Target,        label: "Goals"  },
+  { href: "/quests",    icon: Swords,        label: "Quests" },
+  { href: "/events",    icon: CalendarDays,  label: "Events" },
+  { href: "/profile",   icon: User,          label: "Profile"},
 ];
 
 export default function BottomNav() {

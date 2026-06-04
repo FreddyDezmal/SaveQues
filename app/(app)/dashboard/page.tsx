@@ -3,10 +3,12 @@ import { redirect } from "next/navigation";
 import { getLevelFromXP } from "@/lib/xp";
 import { getAlmostMessages } from "@/lib/achievements";
 import { isStreakPaused } from "@/lib/streaks";
-import { shouldShowReflection, getWeekStart } from "@/lib/reflection";
-import { QUEST_CHAINS } from "@/lib/quests";
 import DashboardClient from "./DashboardClient";
+import { QUEST_CHAINS } from "@/lib/quests";
+import { getEventsForUser } from "@/lib/events";
 
+// User experience stage — drives progressive dashboard disclosure
+// new: 0–6 days  |  building: 7–29 days  |  established: 30+ days
 function getUserStage(createdAt: string): "new" | "building" | "established" {
   const daysSince = Math.floor(
     (Date.now() - new Date(createdAt).getTime()) / 86400000
@@ -24,27 +26,23 @@ export default async function DashboardPage() {
   const [
     profileRes, goalsRes, activeChallengesRes, achievementsRes,
     activityRes, dailyQuestRes, chainProgressRes,
-    reflectionRes, weekActivityRes,
   ] = await Promise.all([
     supabase.from("profiles").select("*").eq("id", user.id).single(),
-    supabase.from("savings_goals").select("*").eq("user_id", user.id).order("is_primary", { ascending: false }).order("created_at", { ascending: false }),
+    supabase.from("savings_goals").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
     supabase.from("user_challenges").select("*, challenges(*)").eq("user_id", user.id).eq("status", "active"),
     supabase.from("user_achievements").select("achievement_id").eq("user_id", user.id).order("earned_at", { ascending: false }).limit(5),
     supabase.from("activity_log").select("*").eq("user_id", user.id).gte("activity_date", new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0]),
     supabase.from("daily_quest_logs").select("quest_id, quest_date").eq("user_id", user.id).eq("quest_date", new Date().toISOString().split("T")[0]).maybeSingle(),
     supabase.from("quest_chain_progress").select("chain_id, current_step, status").eq("user_id", user.id),
-    // Most recent reflection — to know if we should show one
-    supabase.from("weekly_reflections").select("*").eq("user_id", user.id).order("week_start", { ascending: false }).limit(1).maybeSingle(),
-    // This week's transaction count for reflection data
-    supabase.from("transactions").select("id").eq("user_id", user.id).gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString()),
   ]);
 
   const profile = profileRes.data;
   if (!profile) redirect("/auth/login");
 
-  // Record app open for notification timing (fire-and-forget)
+  // Record app open for notification timing (fire-and-forget, no await)
   supabase.rpc("record_app_open", { p_user_id: user.id }).then(() => {});
 
+  // Evaluate streak — skip if paused
   const today = new Date().toISOString().split("T")[0];
   const streakCurrentlyPaused = isStreakPaused(profile.streak_paused_until);
 
@@ -58,6 +56,7 @@ export default async function DashboardPage() {
     if (diff === 1) {
       newStreak = profile.streak_days + 1;
     } else if (diff === 2 && (profile.streak_shields ?? 0) > 0) {
+      // Grace day absorbs the missed day
       newStreak = profile.streak_days + 1;
       await supabase.from("profiles").update({
         streak_shields: (profile.streak_shields ?? 0) - 1,
@@ -84,13 +83,10 @@ export default async function DashboardPage() {
   const activeGoals = goals.filter((g: any) => !g.is_complete);
   const completedGoals = goals.filter((g: any) => g.is_complete);
 
-  // Primary goal — first by is_primary flag, then by most recently created
-  const primaryGoal = goals.find((g: any) => g.is_primary && !g.is_complete)
-    ?? activeGoals[0]
-    ?? null;
-
+  // User experience stage — drives progressive dashboard disclosure
   const userStage = getUserStage(profile.created_at);
 
+  // "Almost" messages — only show for building/established users
   const almostMessages = userStage !== "new"
     ? getAlmostMessages({
         streakDays: profile.streak_days,
@@ -102,73 +98,22 @@ export default async function DashboardPage() {
       })
     : [];
 
+  // Active quest chain for dashboard nudge — only building/established
   const chainProgress = chainProgressRes.data ?? [];
   const activeChain = userStage !== "new"
     ? (chainProgress.find((c: any) => c.status === "active") ?? null)
     : null;
 
+  // Events for this user's region — shown on dashboard for building/established users
+  const dashboardEvents = userStage !== "new"
+    ? getEventsForUser(profile.country_code ?? "ZA").slice(0, 3)
+    : [];
+
+  // Comeback detection — streak is 1 but they had a longer one before
   const streakBroken =
     profile.streak_days === 1 &&
     (profile.longest_streak ?? 0) > 3 &&
     profile.last_active_date === today;
-
-  // ── Weekly reflection ─────────────────────────────────────────
-  // Only show for established users (day 7+), once per week
-  const lastReflection = reflectionRes.data;
-  const showReflection =
-    userStage !== "new" &&
-    primaryGoal !== null &&
-    shouldShowReflection(lastReflection?.viewed_at ?? null);
-
-  // Build or upsert this week's reflection record if it doesn't exist
-  let reflectionRecord = lastReflection?.week_start === getWeekStart() ? lastReflection : null;
-
-  if (showReflection && !reflectionRecord && primaryGoal) {
-    const primaryPercent = primaryGoal.target_amount > 0
-      ? (Number(primaryGoal.current_amount) / Number(primaryGoal.target_amount)) * 100
-      : 0;
-
-    const weekActivityCount = await supabase
-      .from("activity_log")
-      .select("actions_count")
-      .eq("user_id", user.id)
-      .gte("activity_date", new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0]);
-
-    const thisWeekActions = (weekActivityCount.data ?? []).reduce((s: number, a: any) => s + a.actions_count, 0);
-
-    const { data: newReflection } = await supabase
-      .from("weekly_reflections")
-      .upsert({
-        user_id: user.id,
-        week_start: getWeekStart(),
-        savings_count: weekActivityRes.data?.length ?? 0,
-        quests_completed: Math.max(0, thisWeekActions - (weekActivityRes.data?.length ?? 0)),
-        streak_days: profile.streak_days,
-        xp_earned: 0,
-        primary_goal_pct: Math.round(primaryPercent),
-      }, { onConflict: "user_id,week_start" })
-      .select()
-      .single();
-
-    reflectionRecord = newReflection;
-  }
-
-  // Reflection data passed to client for modal rendering
-  const reflectionData = showReflection && reflectionRecord && primaryGoal
-    ? {
-        id: reflectionRecord.id,
-        displayName: profile.display_name,
-        primaryGoalTitle: primaryGoal.title,
-        primaryGoalPercent: Number(reflectionRecord.primary_goal_pct ?? 0),
-        savingsCount: reflectionRecord.savings_count ?? 0,
-        questsCompleted: reflectionRecord.quests_completed ?? 0,
-        streakDays: profile.streak_days,
-        streakGrew: (profile.streak_days ?? 0) > (reflectionRecord.streak_days ?? 0),
-        xpEarned: reflectionRecord.xp_earned ?? 0,
-        currencyCode: profile.currency_code ?? "ZAR",
-        locale: profile.locale ?? "en-ZA",
-      }
-    : null;
 
   return (
     <DashboardClient
@@ -188,8 +133,7 @@ export default async function DashboardPage() {
       userStage={userStage}
       streakPaused={streakCurrentlyPaused}
       streakPausedUntil={profile.streak_paused_until ?? null}
-      primaryGoal={primaryGoal}
-      reflectionData={reflectionData}
+      dashboardEvents={dashboardEvents}
     />
   );
 }
