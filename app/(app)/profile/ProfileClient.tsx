@@ -8,6 +8,9 @@ import { formatCurrency } from "@/lib/utils";
 import { LEVELS, TIER_COLORS, TIER_LABELS, type LevelTier } from "@/lib/xp";
 import { LogOut, ChevronDown, ChevronUp, Lock, ChevronRight } from "lucide-react";
 import { formatAmount } from "@/lib/currency";
+import TimelineEventRow from "@/components/timeline/TimelineEventRow";
+import Link from "next/link";
+import type { TimelineEventGroup } from "@/lib/types";
 
 interface Props {
   profile: any;
@@ -16,12 +19,13 @@ interface Props {
   totalSaved: number;
   totalTransactions: number;
   completedChains: number;
+  timelineGroups: TimelineEventGroup[];
 }
 
 const AVATAR_OPTIONS = ["🌱", "💰", "🚀", "⚡", "🏆", "🔥", "💎", "👑", "🦅", "🧠", "🎯", "✨", "🌟", "⚔️", "🛡️"];
-type ProfileTab = "badges" | "levels" | "stats";
+type ProfileTab = "badges" | "levels" | "stats" | "timeline";
 
-export default function ProfileClient({ profile, levelInfo, earnedIds, totalSaved, totalTransactions, completedChains }: Props) {
+export default function ProfileClient({ profile, levelInfo, earnedIds, totalSaved, totalTransactions, completedChains, timelineGroups }: Props) {
   const router = useRouter();
   const [selectedAvatar, setSelectedAvatar] = useState(profile.avatar_emoji);
   const [activeTab, setActiveTab] = useState<ProfileTab>("badges");
@@ -123,7 +127,7 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, totalSave
 
       {/* Tabs */}
       <div className="flex gap-1.5 mb-4 bg-surface-elevated p-1 rounded-2xl">
-        {(["badges", "levels", "stats"] as ProfileTab[]).map(tab => (
+        {(["badges", "levels", "stats", "timeline"] as ProfileTab[]).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -271,6 +275,46 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, totalSave
           <StatRow icon="🔗" label="Chains Complete" value={String(completedChains)} />
           <StatRow icon="🏅" label="Badges Earned" value={String(earnedIds.length)} />
           <StatRow icon="⭐" label="Current Level" value={`Lv ${levelInfo.level} — ${levelInfo.title}`} />
+        </div>
+      )}
+
+      {/* ── TIMELINE TAB ────────────────────────── */}
+      {activeTab === "timeline" && (
+        <div className="mb-6">
+          {timelineGroups.length === 0 ? (
+            <div className="card p-8 text-center">
+              <div className="text-4xl mb-3">🌱</div>
+              <p className="text-white/40 text-sm">Your savings journey starts with your first deposit.</p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-4 mb-4">
+                {timelineGroups.map((group) => (
+                  <div key={group.date}>
+                    <p className="text-[11px] font-semibold text-white/25 uppercase tracking-widest mb-1 px-1">
+                      {group.date}
+                    </p>
+                    <div className="card px-4 divide-y divide-surface-border">
+                      {group.events.map((event) => (
+                        <TimelineEventRow
+                          key={event.id}
+                          event={event}
+                          currencyCode={profile.currency_code ?? "ZAR"}
+                          locale={profile.locale ?? "en-ZA"}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Link
+                href="/timeline"
+                className="flex items-center justify-center gap-1.5 text-brand-400 text-sm hover:text-brand-300 transition-colors py-2"
+              >
+                View full timeline <ChevronRight size={14} />
+              </Link>
+            </>
+          )}
         </div>
       )}
 

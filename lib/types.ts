@@ -90,3 +90,37 @@ export type UserAchievement = Database["public"]["Tables"]["user_achievements"][
 export type DailyQuestLog = Database["public"]["Tables"]["daily_quest_logs"]["Row"];
 export type QuestChainProgress = Database["public"]["Tables"]["quest_chain_progress"]["Row"];
 export type ActivityLog = Database["public"]["Tables"]["activity_log"]["Row"];
+// ─── Timeline ────────────────────────────────────────────────────────────────
+
+export type TimelineEventType =
+  | "deposit"
+  | "withdrawal"
+  | "goal_purchase"
+  | "goal_created"
+  | "goal_completed"
+  | "achievement_earned"
+  | "quest_completed"
+  | "progress_milestone";
+
+export type TimelineEventMeta =
+  | { type: "deposit";      goalId: string; goalTitle: string; goalCategory: string; amount: number; note?: string; }
+  | { type: "withdrawal";   goalId: string; goalTitle: string; goalCategory: string; amount: number; note?: string; }
+  | { type: "goal_purchase";goalId: string; goalTitle: string; goalCategory: string; amount: number; note?: string; }
+  | { type: "goal_created"; goalId: string; goalTitle: string; goalCategory: string; targetAmount: number; }
+  | { type: "goal_completed";goalId: string; goalTitle: string; goalCategory: string; targetAmount: number; }
+  | { type: "achievement_earned"; achievementId: string; achievementTitle: string; achievementIcon: string; achievementCategory: string; xpReward: number; }
+  | { type: "quest_completed";    challengeId: string; challengeTitle: string; xpReward: number; }
+  | { type: "progress_milestone"; goalId: string; goalTitle: string; goalCategory: string; milestone: 25 | 50 | 75; targetAmount: number; };
+
+export interface TimelineEvent {
+  id: string;
+  type: TimelineEventType;
+  timestamp: string;
+  xpGained?: number;
+  meta: TimelineEventMeta;
+}
+
+export interface TimelineEventGroup {
+  date: string;
+  events: TimelineEvent[];
+}

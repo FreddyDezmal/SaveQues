@@ -6,6 +6,7 @@ import { isStreakPaused } from "@/lib/streaks";
 import DashboardClient from "./DashboardClient";
 import { QUEST_CHAINS } from "@/lib/quests";
 import { getEventsForUser } from "@/lib/events";
+import { fetchTimelineEvents } from "@/lib/timeline";
 
 // User experience stage — drives progressive dashboard disclosure
 // new: 0–6 days  |  building: 7–29 days  |  established: 30+ days
@@ -109,6 +110,11 @@ export default async function DashboardPage() {
     ? getEventsForUser(profile.country_code ?? "ZA").slice(0, 3)
     : [];
 
+  // Timeline preview — shown for building/established users
+  const timelinePreview = userStage !== "new"
+    ? await fetchTimelineEvents(supabase, user.id, { limit: 5 })
+    : [];
+
   // Comeback detection — streak is 1 but they had a longer one before
   const streakBroken =
     profile.streak_days === 1 &&
@@ -134,6 +140,7 @@ export default async function DashboardPage() {
       streakPaused={streakCurrentlyPaused}
       streakPausedUntil={profile.streak_paused_until ?? null}
       dashboardEvents={dashboardEvents}
+      timelinePreview={timelinePreview}
     />
   );
 }

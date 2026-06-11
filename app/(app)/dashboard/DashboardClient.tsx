@@ -16,7 +16,9 @@ import DailyQuestCard from "@/components/gamification/DailyQuestCard";
 import { ChevronRight, Plus, PauseCircle, PlayCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import UpcomingEventsBanner from "@/components/events/UpcomingEventsBanner";
+import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
+import type { TimelineEventGroup } from "@/lib/types";
 
 interface Props {
   profile: any;
@@ -36,6 +38,7 @@ interface Props {
   streakPaused: boolean;
   streakPausedUntil: string | null;
   dashboardEvents: (SaveQuestEvent & { window: EventWindow })[];
+  timelinePreview: TimelineEventGroup[];
   primaryGoal?: any;
   reflectionData?: {
     lastReflectionDate: string;
@@ -49,7 +52,7 @@ export default function DashboardClient({
   dailyQuestCompletedToday, todayQuestId,
   almostMessages, activeChain, streakBroken,
   userStage, streakPaused, streakPausedUntil, dashboardEvents,
-  primaryGoal, reflectionData
+  timelinePreview, primaryGoal, reflectionData
 }: Props) {
   const router = useRouter();
   const [pauseLoading, setPauseLoading] = useState(false);
@@ -70,6 +73,8 @@ export default function DashboardClient({
   const showRecentBadges = userStage !== "new" && recentAchievements.length > 0;
   const showEvents       = userStage !== "new" && dashboardEvents.length > 0;
   const showXPDetails    = userStage !== "new";
+  const previewEvents    = timelinePreview.flatMap(g => g.events);
+  const showTimeline     = userStage !== "new" && previewEvents.length > 0;
 
   async function handlePauseStreak() {
     setPauseLoading(true);
@@ -379,6 +384,28 @@ export default function DashboardClient({
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Recent Activity (building/established) ── */}
+      {showTimeline && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-display font-semibold text-white text-sm">Recent Activity</h2>
+            <Link href="/timeline" className="text-brand-400 text-xs flex items-center gap-0.5 hover:text-brand-300">
+              View all <ChevronRight size={12} />
+            </Link>
+          </div>
+          <div className="card px-4 divide-y divide-surface-border">
+            {previewEvents.map(event => (
+              <TimelineEventRow
+                key={event.id}
+                event={event}
+                currencyCode={profile.currency_code ?? "ZAR"}
+                locale={profile.locale ?? "en-ZA"}
+              />
+            ))}
           </div>
         </div>
       )}

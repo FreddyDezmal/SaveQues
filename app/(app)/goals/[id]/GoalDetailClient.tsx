@@ -9,7 +9,8 @@ import { formatPercent, getDaysRemaining, getCategoryById } from "@/lib/utils";
 import { getXPForAction } from "@/lib/xp";
 import { ArrowLeft, Plus, Minus, ShoppingBag, ChevronRight } from "lucide-react";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
-import { format } from "date-fns";
+import TimelineEventRow from "@/components/timeline/TimelineEventRow";
+import type { TimelineEventGroup } from "@/lib/types";
 
 type TxType = "deposit" | "withdrawal" | "goal_purchase";
 
@@ -19,14 +20,16 @@ interface Props {
   streakDays: number;
   currencyCode: string;
   locale: string;
+  timelineGroups: TimelineEventGroup[];
 }
 
-export default function GoalDetailClient({ goal: initialGoal, transactions: initialTxs, streakDays, currencyCode, locale }: Props) {
+export default function GoalDetailClient({ goal: initialGoal, transactions: initialTxs, streakDays, currencyCode, locale, timelineGroups: initialGroups }: Props) {
   const router = useRouter();
   const fc = (n: number) => formatAmount(n, currencyCode, locale);
 
-  const [goal, setGoal]               = useState(initialGoal);
-  const [transactions, setTransactions] = useState(initialTxs);
+  const [goal, setGoal]                 = useState(initialGoal);
+  const [transactions, setTransactions]  = useState(initialTxs);
+  const [timelineGroups, setTimelineGroups] = useState(initialGroups);
   const [txType, setTxType]            = useState<TxType>("deposit");
   const [amount, setAmount]            = useState("");
   const [note, setNote]                = useState("");
@@ -125,13 +128,6 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
   }
 
   const newPercent = goal.target_amount > 0 ? (Number(goal.current_amount) / Number(goal.target_amount)) * 100 : 0;
-
-  function getTxMeta(type: string): { icon: string; color: string; label: string } {
-    if (type === "deposit")      return { icon: "💰", color: "text-emerald-400", label: "Deposit" };
-    if (type === "withdrawal")   return { icon: "🛡️", color: "text-orange-400",  label: "Withdrawal" };
-    if (type === "goal_purchase")return { icon: "🎯", color: "text-brand-400",   label: "Goal Purchase" };
-    return                              { icon: "📝", color: "text-white/40",    label: "Adjustment" };
-  }
 
   return (
     <>
@@ -261,38 +257,43 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
           </div>
         )}
 
-        {/* History */}
+        {/* Goal activity timeline */}
         <div className="mb-6">
-          <h2 className="font-display font-semibold text-white/60 text-xs uppercase tracking-wider mb-3">
-            History ({transactions.length})
-          </h2>
-          {transactions.length === 0 ? (
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display font-semibold text-white/60 text-xs uppercase tracking-wider">
+              Activity ({transactions.length})
+            </h2>
+            <Link
+              href={`/timeline?goalId=${goal.id}`}
+              className="text-brand-400 text-xs flex items-center gap-0.5 hover:text-brand-300 transition-colors"
+            >
+              Full history <ChevronRight size={12} />
+            </Link>
+          </div>
+
+          {timelineGroups.length === 0 ? (
             <div className="card p-6 text-center">
-              <p className="text-white/30 text-sm">No transactions yet. Log your first saving!</p>
+              <p className="text-white/30 text-sm">No activity yet. Log your first saving!</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {transactions.map((tx: any) => {
-                const meta = getTxMeta(tx.transaction_type ?? "deposit");
-                const isNeg = ["withdrawal", "goal_purchase", "adjustment"].includes(tx.transaction_type ?? "deposit");
-                return (
-                  <div key={tx.id} className="card p-3 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${isNeg ? "bg-orange-500/10" : "bg-emerald-500/10"}`}>
-                        {meta.icon}
-                      </div>
-                      <div>
-                        <p className={`text-sm font-medium ${meta.color}`}>
-                          {isNeg ? "−" : "+"}{fc(Number(tx.amount))}
-                        </p>
-                        {tx.note && <p className="text-xs text-white/40">{tx.note}</p>}
-                        <p className="text-[10px] text-white/25">{meta.label}</p>
-                      </div>
-                    </div>
-                    <span className="text-xs text-white/30">{format(new Date(tx.created_at), "MMM d")}</span>
+            <div className="space-y-4">
+              {timelineGroups.map((group) => (
+                <div key={group.date}>
+                  <p className="text-[11px] font-semibold text-white/25 uppercase tracking-widest mb-1 px-1">
+                    {group.date}
+                  </p>
+                  <div className="card px-4 divide-y divide-surface-border">
+                    {group.events.map((event) => (
+                      <TimelineEventRow
+                        key={event.id}
+                        event={event}
+                        currencyCode={currencyCode}
+                        locale={locale}
+                      />
+                    ))}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           )}
         </div>
