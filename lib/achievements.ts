@@ -128,6 +128,7 @@ export function checkAchievements(params: {
   check("streak_365", params.streakDays >= 365);
 
   // Savings
+  check("first_save",  (params.transactionCount ?? 0) >= 1 || params.totalSaved > 0);
   check("saved_50",    params.totalSaved >= 50);
   check("saved_100",   params.totalSaved >= 100);
   check("saved_250",   params.totalSaved >= 250);

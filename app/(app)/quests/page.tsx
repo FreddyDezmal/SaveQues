@@ -4,13 +4,21 @@ import { getTodaysDailyQuest, getThisWeeksQuest } from "@/lib/quests";
 import { getWeekStart } from "@/lib/reflection";
 import QuestsClient from "./QuestsClient";
 
+/** Returns the ISO date string for the Sunday ending the current week (Mon–Sun). */
+function getWeekEnd(weekStart: string): string {
+  const d = new Date(weekStart);
+  d.setDate(d.getDate() + 6); // Monday + 6 = Sunday
+  return d.toISOString().split("T")[0];
+}
+
 export default async function QuestsPage() {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/auth/login");
 
-  const today = new Date().toISOString().split("T")[0];
-  const weekStart = getWeekStart();
+  const today      = new Date().toISOString().split("T")[0];
+  const weekStart  = getWeekStart();
+  const weekEnd    = getWeekEnd(weekStart);
 
   const [challengesRes, userChallengesRes, dailyLogRes, profileRes, weeklyQuestRes] =
     await Promise.all([
@@ -32,6 +40,7 @@ export default async function QuestsPage() {
       dailyCompletedToday={!!dailyLogRes.data}
       weeklyQuestState={weeklyQuestRes.data ?? null}
       currentWeekStart={weekStart}
+      weekEndDate={weekEnd}
     />
   );
 }

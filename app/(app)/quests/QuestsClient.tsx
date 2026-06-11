@@ -7,7 +7,7 @@ import { getXPForAction } from "@/lib/xp";
 import type { QuestTemplate } from "@/lib/quests";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import Link from "next/link";
-import { Zap, CheckCircle, Clock, Trophy, Calendar, Sparkles } from "lucide-react";
+import { Zap, CheckCircle, Clock, Trophy, Calendar, Sparkles, Timer } from "lucide-react";
 
 interface Props {
   allChallenges: any[];
@@ -17,39 +17,66 @@ interface Props {
   todaysDailyQuest: QuestTemplate;
   thisWeeksQuest: QuestTemplate;
   dailyCompletedToday: boolean;
-  weeklyQuestState: any | null;
-  currentWeekStart: string;
+  weeklyQuestState: any | null;   // row from user_weekly_quests
+  currentWeekStart: string;       // ISO Monday date
+  weekEndDate: string;            // ISO Sunday 23:59 — everyone sees the same deadline
 }
 
-type QuestTab = "daily" | "weekly" | "challenges";
+type QuestTab = "daily" | "weekly" | "seasonal";
+
+// ── helpers ────────────────────────────────────────────────────
+function getDaysRemainingInWeek(weekEndDate: string): number {
+  const end = new Date(weekEndDate).getTime() + 86400000; // inclusive end of Sunday
+  const now  = Date.now();
+  return Math.max(0, Math.ceil((end - now) / 86400000));
+}
+
+function formatTimeRemaining(weekEndDate: string): string {
+  const end = new Date(weekEndDate).getTime() + 86400000;
+  const ms  = end - Date.now();
+  if (ms <= 0) return "Expired";
+  const days  = Math.floor(ms / 86400000);
+  const hours = Math.floor((ms % 86400000) / 3600000);
+  if (days > 0) return `${days}d ${hours}h remaining`;
+  return `${hours}h remaining`;
+}
 
 export default function QuestsClient({
   allChallenges, userChallenges, userId, profile,
-  todaysDailyQuest, thisWeeksQuest, dailyCompletedToday, weeklyQuestState, currentWeekStart
+  todaysDailyQuest, thisWeeksQuest, dailyCompletedToday,
+  weeklyQuestState, currentWeekStart, weekEndDate,
 }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<QuestTab>("daily");
-  const [loading, setLoading] = useState<string | null>(null);
+  const [activeTab, setActiveTab]   = useState<QuestTab>("daily");
+  const [loading, setLoading]       = useState<string | null>(null);
   const [celebration, setCelebration] = useState({ show: false, title: "", xp: 0, icon: "" });
 
-  const activeUCs = userChallenges.filter(uc => uc.status === "active");
+  // ── Seasonal (challenges) state ────────────────────────────
+  const activeUCs    = userChallenges.filter(uc => uc.status === "active");
   const completedUCs = userChallenges.filter(uc => uc.status === "completed");
-  const activeIds = new Set(activeUCs.map(uc => uc.challenge_id));
+  const activeIds    = new Set(activeUCs.map(uc => uc.challenge_id));
   const completedIds = new Set(completedUCs.map(uc => uc.challenge_id));
   const availableChallenges = allChallenges.filter(c => !activeIds.has(c.id) && !completedIds.has(c.id));
 
+  // ── Weekly derived state ───────────────────────────────────
+  const weeklyStatus   = weeklyQuestState?.status ?? "none"; // "none"|"active"|"completed"|"expired"
+  const weeklyAccepted = weeklyStatus !== "none";
+  const weeklyDone     = weeklyStatus === "completed";
+
+  // ── DAILY ──────────────────────────────────────────────────
   async function completeDailyQuest() {
-    if (dailyCompletedToday) return;
+    if (dailyCompletedToday || loading) return;
     setLoading("daily");
     const supabase = createClient();
-    const today = new Date().toISOString().split("T")[0];
-    const xp = getXPForAction("DAILY_QUEST_COMPLETE", profile.streak_days);
+    const today    = new Date().toISOString().split("T")[0];
+    const xp       = getXPForAction("DAILY_QUEST_COMPLETE", profile.streak_days);
 
-    await supabase.from("daily_quest_logs").upsert({
-      user_id: userId, quest_id: todaysDailyQuest.id, quest_date: today, xp_earned: xp,
-    }, { onConflict: "user_id,quest_date" });
-
-    const { data: p } = await supabase.from("profiles").select("xp_total, daily_quests_completed").eq("id", userId).single();
+    await supabase.from("daily_quest_logs").upsert(
+      { user_id: userId, quest_id: todaysDailyQuest.id, quest_date: today, xp_earned: xp },
+      { onConflict: "user_id,quest_date" }
+    );
+    const { data: p } = await supabase.from("profiles")
+      .select("xp_total, daily_quests_completed").eq("id", userId).single();
     if (p) {
       await supabase.from("profiles").update({
         xp_total: p.xp_total + xp,
@@ -63,30 +90,82 @@ export default function QuestsClient({
     router.refresh();
   }
 
-  async function acceptChallenge(challengeId: string, xpReward: number, title: string) {
-    setLoading(challengeId);
+  // ── WEEKLY: Accept ─────────────────────────────────────────
+  async function acceptWeeklyQuest() {
+    if (weeklyAccepted || loading) return;
+    setLoading("weekly_accept");
     const supabase = createClient();
-    await supabase.from("user_challenges").insert({
-      user_id: userId, challenge_id: challengeId, status: "active",
-      started_at: new Date().toISOString(),
-    });
+
+    await supabase.from("user_weekly_quests").upsert({
+      user_id:     userId,
+      quest_id:    thisWeeksQuest.id,
+      week_start:  currentWeekStart,
+      status:      "active",
+      accepted_at: new Date().toISOString(),
+    }, { onConflict: "user_id,week_start" });
+
     setLoading(null);
-    setCelebration({ show: true, title: `Quest Accepted!`, xp: 0, icon: "⚔️" });
+    // No XP on accept — just confirm
+    setCelebration({ show: true, title: "Weekly Quest Accepted! ⚔️", xp: 0, icon: thisWeeksQuest.icon });
     router.refresh();
   }
 
+  // ── WEEKLY: Complete ───────────────────────────────────────
+  async function completeWeeklyQuest() {
+    if (!weeklyAccepted || weeklyDone || loading) return;
+    setLoading("weekly_complete");
+    const supabase = createClient();
+    const xp = thisWeeksQuest.xpReward;
+
+    await supabase.from("user_weekly_quests").update({
+      status:       "completed",
+      completed_at: new Date().toISOString(),
+      xp_earned:    xp,
+    }).eq("user_id", userId).eq("week_start", currentWeekStart);
+
+    const { data: p } = await supabase.from("profiles")
+      .select("xp_total, weekly_quests_completed").eq("id", userId).single();
+    if (p) {
+      await supabase.from("profiles").update({
+        xp_total:               p.xp_total + xp,
+        weekly_quests_completed: (p.weekly_quests_completed ?? 0) + 1,
+      }).eq("id", userId);
+    }
+    await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xp });
+
+    setLoading(null);
+    setCelebration({ show: true, title: `Weekly Quest Complete! 🏆`, xp, icon: thisWeeksQuest.icon });
+    router.refresh();
+  }
+
+  // ── SEASONAL: Accept ───────────────────────────────────────
+  async function acceptChallenge(challengeId: string, title: string) {
+    if (loading) return;
+    setLoading(challengeId);
+    const supabase = createClient();
+    await supabase.from("user_challenges").insert({
+      user_id: userId, challenge_id: challengeId,
+      status: "active", started_at: new Date().toISOString(),
+    });
+    setLoading(null);
+    setCelebration({ show: true, title: `Quest Accepted: ${title}!`, xp: 0, icon: "⚔️" });
+    router.refresh();
+  }
+
+  // ── SEASONAL: Complete ─────────────────────────────────────
   async function completeChallenge(ucId: string, xpReward: number, title: string) {
+    if (loading) return;
     setLoading(ucId);
     const supabase = createClient();
     await supabase.from("user_challenges").update({
       status: "completed", completed_at: new Date().toISOString(),
     }).eq("id", ucId);
 
-    const { data: p } = await supabase.from("profiles").select("xp_total, weekly_quests_completed").eq("id", userId).single();
+    const { data: p } = await supabase.from("profiles")
+      .select("xp_total, weekly_quests_completed").eq("id", userId).single();
     if (p) {
       await supabase.from("profiles").update({
         xp_total: p.xp_total + xpReward,
-        weekly_quests_completed: (p.weekly_quests_completed ?? 0) + 1,
       }).eq("id", userId);
     }
     await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xpReward });
@@ -97,9 +176,9 @@ export default function QuestsClient({
   }
 
   const TABS: { id: QuestTab; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: "daily",      label: "Daily",      icon: <Calendar size={13} />, badge: dailyCompletedToday ? 0 : 1 },
-    { id: "weekly",     label: "Weekly",     icon: <Sparkles size={13} /> },
-    { id: "challenges", label: "Challenges", icon: <Trophy size={13} />, badge: activeUCs.length },
+    { id: "daily",    label: "Daily",    icon: <Calendar size={13} />, badge: dailyCompletedToday ? 0 : 1 },
+    { id: "weekly",   label: "Weekly",   icon: <Sparkles size={13} />, badge: weeklyAccepted && !weeklyDone ? 1 : 0 },
+    { id: "seasonal", label: "Seasonal", icon: <Trophy size={13} />,   badge: activeUCs.length },
   ];
 
   return (
@@ -138,7 +217,7 @@ export default function QuestsClient({
           ))}
         </div>
 
-        {/* ── DAILY TAB ──────────────────────────────────── */}
+        {/* ── DAILY TAB ──────────────────────────────────────── */}
         {activeTab === "daily" && (
           <div className="space-y-4">
             <div className="card p-4">
@@ -147,7 +226,6 @@ export default function QuestsClient({
                 <span className="text-xs text-brand-400 font-bold uppercase tracking-wider">Today's Quest</span>
                 <span className="ml-auto text-xs text-white/30">Resets at midnight</span>
               </div>
-
               <div className="flex items-start gap-3 mb-4">
                 <div className="w-12 h-12 rounded-2xl bg-brand-500/15 border border-brand-500/20 flex items-center justify-center text-2xl flex-shrink-0">
                   {todaysDailyQuest.icon}
@@ -162,30 +240,23 @@ export default function QuestsClient({
                         +{getXPForAction("DAILY_QUEST_COMPLETE", profile.streak_days)} XP
                       </span>
                     </div>
-                    <span className="text-xs text-white/30">
-                      {profile.streak_days >= 7 && "⚡ streak bonus applied"}
-                    </span>
+                    {profile.streak_days >= 7 && (
+                      <span className="text-xs text-white/30">⚡ streak bonus applied</span>
+                    )}
                   </div>
                 </div>
               </div>
-
               {dailyCompletedToday ? (
                 <div className="flex items-center gap-2 py-3 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
                   <CheckCircle size={16} className="text-emerald-400" />
                   <span className="text-emerald-400 text-sm font-medium">Completed! Come back tomorrow 🎉</span>
                 </div>
               ) : (
-                <button
-                  onClick={completeDailyQuest}
-                  disabled={loading === "daily"}
-                  className="btn-primary w-full"
-                >
+                <button onClick={completeDailyQuest} disabled={loading === "daily"} className="btn-primary w-full">
                   {loading === "daily" ? "Claiming…" : "Complete Quest ✓"}
                 </button>
               )}
             </div>
-
-            {/* Stats */}
             <div className="grid grid-cols-2 gap-3">
               <div className="card p-4 text-center">
                 <p className="font-display font-bold text-white text-2xl">{profile.daily_quests_completed}</p>
@@ -199,7 +270,7 @@ export default function QuestsClient({
           </div>
         )}
 
-        {/* ── WEEKLY TAB ─────────────────────────────────── */}
+        {/* ── WEEKLY TAB ─────────────────────────────────────── */}
         {activeTab === "weekly" && (
           <div className="space-y-4">
             <div className="card p-4">
@@ -216,43 +287,75 @@ export default function QuestsClient({
                 <div className="flex-1">
                   <h3 className="font-display font-bold text-white">{thisWeeksQuest.title}</h3>
                   <p className="text-sm text-white/50 mt-0.5">{thisWeeksQuest.description}</p>
-                  <div className="flex items-center gap-1.5 mt-2">
+                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                     <div className="flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 rounded-full px-2.5 py-1">
                       <Zap size={11} className="text-brand-400" />
                       <span className="text-brand-400 text-xs font-bold">+{thisWeeksQuest.xpReward} XP</span>
                     </div>
-                    <span className="text-xs text-white/30">
-                      ⏱ {thisWeeksQuest.type === "weekly" ? "7 days" : "Duration varies"}
-                    </span>
+                    {weeklyAccepted && (
+                      <div className="flex items-center gap-1 bg-surface-elevated border border-surface-border rounded-full px-2.5 py-1">
+                        <Timer size={11} className="text-white/40" />
+                        <span className="text-white/40 text-xs">{formatTimeRemaining(weekEndDate)}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
 
-              <button
-                onClick={() => acceptChallenge("weekly_current", thisWeeksQuest.xpReward, thisWeeksQuest.title)}
-                disabled={loading === "weekly_current"}
-                className="btn-primary w-full"
-              >
-                {loading === "weekly_current" ? "Accepting…" : "⚔️ Accept This Quest"}
-              </button>
+              {/* State-driven action area */}
+              {weeklyDone ? (
+                <div className="flex items-center gap-2 py-3 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                  <CheckCircle size={16} className="text-emerald-400" />
+                  <div>
+                    <p className="text-emerald-400 text-sm font-medium">Quest Complete! 🏆</p>
+                    <p className="text-emerald-400/60 text-xs">+{weeklyQuestState?.xp_earned ?? thisWeeksQuest.xpReward} XP earned</p>
+                  </div>
+                </div>
+              ) : weeklyAccepted ? (
+                <div className="space-y-2">
+                  {/* Progress context */}
+                  <div className="px-4 py-3 rounded-xl bg-brand-500/5 border border-brand-500/15">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-brand-400 font-medium">In Progress</span>
+                      <span className="text-xs text-white/30">{getDaysRemainingInWeek(weekEndDate)}d left</span>
+                    </div>
+                    <p className="text-xs text-white/40">{thisWeeksQuest.description}</p>
+                  </div>
+                  <button
+                    onClick={completeWeeklyQuest}
+                    disabled={loading === "weekly_complete"}
+                    className="btn-primary w-full"
+                  >
+                    {loading === "weekly_complete" ? "Claiming…" : "Complete Quest ✓"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={acceptWeeklyQuest}
+                  disabled={loading === "weekly_accept"}
+                  className="btn-primary w-full"
+                >
+                  {loading === "weekly_accept" ? "Accepting…" : "⚔️ Accept This Quest"}
+                </button>
+              )}
             </div>
 
             <div className="card p-4 text-center">
               <p className="font-display font-bold text-white text-2xl">{profile.weekly_quests_completed}</p>
-              <p className="text-xs text-white/40 mt-0.5">Weekly quests completed total</p>
+              <p className="text-xs text-white/40 mt-0.5">Weekly quests completed</p>
             </div>
           </div>
         )}
 
-        {/* ── CHALLENGES TAB ─────────────────────────────── */}
-        {activeTab === "challenges" && (
+        {/* ── SEASONAL TAB ───────────────────────────────────── */}
+        {activeTab === "seasonal" && (
           <div className="space-y-4">
             {/* Active */}
             {activeUCs.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <Clock size={13} className="text-brand-400" />
-                  <h2 className="text-xs font-bold text-brand-400 uppercase tracking-wider">Active</h2>
+                  <h2 className="text-xs font-bold text-brand-400 uppercase tracking-wider">In Progress</h2>
                 </div>
                 <div className="space-y-2">
                   {activeUCs.map(uc => {
@@ -303,7 +406,11 @@ export default function QuestsClient({
                             )}
                           </div>
                           <p className="text-xs text-white/40">{ch.description}</p>
-                          <p className="text-xs text-white/30 mt-1">⏱ {ch.duration_days}d</p>
+                          {ch.season_end && (
+                            <p className="text-xs text-white/30 mt-1">
+                              🍂 Season ends {new Date(ch.season_end).toLocaleDateString("en", { day: "numeric", month: "short" })}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-1 bg-surface-elevated border border-surface-border rounded-full px-2.5 py-1 ml-3">
                           <Zap size={11} className="text-white/40" />
@@ -311,7 +418,7 @@ export default function QuestsClient({
                         </div>
                       </div>
                       <button
-                        onClick={() => acceptChallenge(ch.id, ch.xp_reward, ch.title)}
+                        onClick={() => acceptChallenge(ch.id, ch.title)}
                         disabled={loading === ch.id}
                         className="btn-ghost w-full text-sm py-2.5"
                       >
@@ -352,8 +459,8 @@ export default function QuestsClient({
 
             {availableChallenges.length === 0 && activeUCs.length === 0 && (
               <div className="card p-10 text-center">
-                <div className="text-4xl mb-3">⚔️</div>
-                <p className="text-white/40 text-sm">All quests complete! New ones coming soon.</p>
+                <div className="text-4xl mb-3">🌸</div>
+                <p className="text-white/40 text-sm">No seasonal quests available right now.</p>
               </div>
             )}
           </div>

@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
 export function createClient() {
@@ -23,5 +24,18 @@ export function createClient() {
         },
       },
     }
+  );
+}
+
+/**
+ * Service-role client — bypasses RLS entirely.
+ * ONLY use in server-side admin routes after verifying is_admin = true.
+ * Never expose to the client.
+ */
+export function createServiceClient() {
+  return createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } }
   );
 }

@@ -8,8 +8,9 @@ import { getLevelFromXP, TIER_COLORS } from "@/lib/xp";
 import { ACHIEVEMENTS } from "@/lib/achievements";
 import { format, subDays } from "date-fns";
 import {
-  Users, Target, Zap, TrendingUp, Plus, Edit2,
-  ToggleLeft, ToggleRight, ShieldCheck, ChevronDown, ChevronUp, Check
+  Users, Target, Zap, TrendingUp, Plus, Edit2, Trash2,
+  ToggleLeft, ToggleRight, ShieldCheck, Check, AlertTriangle,
+  Calendar,
 } from "lucide-react";
 
 interface Props {
@@ -21,83 +22,120 @@ interface Props {
   userAchievements: any[];
   activityLog: any[];
   adminName: string;
+  dbEvents: any[];
 }
 
-type Tab = "overview" | "users" | "challenges" | "activity";
+type Tab = "overview" | "users" | "seasonal" | "events" | "activity";
+
+const BLANK_CHALLENGE = { title: "", description: "", type: "manual", xp_reward: 200, duration_days: 7, is_active: true };
+const BLANK_EVENT = { slug: "", title: "", description: "", emoji: "⚡", event_type: "savequest", xp_reward: 300, available_from: "", available_until: "", is_annual: false, preview_days: 5, is_active: true };
 
 export default function AdminClient({
   users, goals, transactions, challenges,
-  userChallenges, userAchievements, activityLog, adminName,
+  userChallenges, userAchievements, activityLog, adminName, dbEvents,
 }: Props) {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("overview");
-  const [editingChallenge, setEditingChallenge] = useState<any | null>(null);
-  const [newChallenge, setNewChallenge] = useState(false);
-  const [challengeForm, setChallengeForm] = useState({
-    title: "", description: "", type: "manual", xp_reward: 200, duration_days: 7, is_active: true,
-  });
-  const [saving, setSaving] = useState(false);
-  const [expandedUser, setExpandedUser] = useState<string | null>(null);
+  const [tab, setTab]           = useState<Tab>("overview");
+  const [saving, setSaving]     = useState(false);
 
-  // ── Platform stats ──────────────────────────────────────
-  const totalUsers = users.length;
-  const totalSaved = transactions.reduce((s, t) => s + Number(t.amount), 0);
-  const totalGoals = goals.length;
+  // ── Seasonal (challenge) form state ──────────────────────────
+  const [editingCh,  setEditingCh]  = useState<any | null>(null);
+  const [newCh,      setNewCh]      = useState(false);
+  const [chForm,     setChForm]     = useState({ ...BLANK_CHALLENGE });
+
+  // ── Events form state ─────────────────────────────────────────
+  const [editingEv,  setEditingEv]  = useState<any | null>(null);
+  const [newEv,      setNewEv]      = useState(false);
+  const [evForm,     setEvForm]     = useState({ ...BLANK_EVENT });
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // ── Platform stats ────────────────────────────────────────────
+  const totalUsers     = users.length;
+  const totalSaved     = transactions.filter(t => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+  const totalGoals     = goals.length;
   const completedGoals = goals.filter(g => g.is_complete).length;
-  const activeStreaks = users.filter(u => (u.streak_days ?? 0) >= 3).length;
-  const totalXPAwarded = users.reduce((s, u) => s + (u.xp_total ?? 0), 0);
-
-  // Active users in last 7 days
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
+  const activeStreaks  = users.filter(u => (u.streak_days ?? 0) >= 3).length;
+  const totalXP        = users.reduce((s, u) => s + (u.xp_total ?? 0), 0);
+  const sevenDaysAgo   = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
   const recentlyActive = users.filter(u => u.last_active_date && u.last_active_date >= sevenDaysAgo).length;
 
-  // Activity by date (last 30 days)
   const activityByDate = new Map<string, number>();
   for (const a of activityLog) {
-    activityByDate.set(a.activity_date, (activityByDate.get(a.activity_date) ?? 0) + a.actions_count);
+    activityByDate.set(a.activity_date, (activityByDate.get(a.activity_date) ?? 0) + (a.actions_count ?? 1));
   }
 
-  // ── Challenge CRUD ──────────────────────────────────────
-  function startEdit(ch: any) {
-    setEditingChallenge(ch);
-    setChallengeForm({
-      title: ch.title, description: ch.description, type: ch.type,
-      xp_reward: ch.xp_reward, duration_days: ch.duration_days, is_active: ch.is_active,
-    });
-    setNewChallenge(false);
+  // ── Seasonal CRUD ─────────────────────────────────────────────
+  function startEditCh(ch: any) {
+    setEditingCh(ch);
+    setChForm({ title: ch.title, description: ch.description, type: ch.type, xp_reward: ch.xp_reward, duration_days: ch.duration_days, is_active: ch.is_active });
+    setNewCh(false);
   }
-
-  function startNew() {
-    setEditingChallenge(null);
-    setChallengeForm({ title: "", description: "", type: "manual", xp_reward: 200, duration_days: 7, is_active: true });
-    setNewChallenge(true);
+  function startNewCh() {
+    setEditingCh(null);
+    setChForm({ ...BLANK_CHALLENGE });
+    setNewCh(true);
   }
-
-  async function saveChallenge() {
+  async function saveCh() {
     setSaving(true);
     const supabase = createClient();
-    if (newChallenge) {
-      await supabase.from("challenges").insert(challengeForm);
-    } else if (editingChallenge) {
-      await supabase.from("challenges").update(challengeForm).eq("id", editingChallenge.id);
-    }
-    setSaving(false);
-    setEditingChallenge(null);
-    setNewChallenge(false);
-    router.refresh();
+    if (newCh) await supabase.from("challenges").insert(chForm);
+    else if (editingCh) await supabase.from("challenges").update(chForm).eq("id", editingCh.id);
+    setSaving(false); setEditingCh(null); setNewCh(false); router.refresh();
   }
-
-  async function toggleChallenge(id: string, current: boolean) {
+  async function toggleCh(id: string, current: boolean) {
     const supabase = createClient();
     await supabase.from("challenges").update({ is_active: !current }).eq("id", id);
     router.refresh();
   }
 
+  // ── Events CRUD ───────────────────────────────────────────────
+  function startEditEv(ev: any) {
+    setEditingEv(ev);
+    setEvForm({
+      slug: ev.slug, title: ev.title, description: ev.description, emoji: ev.emoji,
+      event_type: ev.event_type, xp_reward: ev.xp_reward,
+      available_from: ev.available_from ?? "", available_until: ev.available_until ?? "",
+      is_annual: ev.is_annual, preview_days: ev.preview_days, is_active: ev.is_active,
+    });
+    setNewEv(false);
+  }
+  function startNewEv() {
+    setEditingEv(null);
+    setEvForm({ ...BLANK_EVENT, slug: `evt_${Date.now()}` });
+    setNewEv(true);
+  }
+  async function saveEv() {
+    setSaving(true);
+    const supabase = createClient();
+    const payload = {
+      ...evForm,
+      available_from:  evForm.available_from  || null,
+      available_until: evForm.available_until || null,
+    };
+    if (newEv) await supabase.from("events").insert(payload);
+    else if (editingEv) await supabase.from("events").update(payload).eq("id", editingEv.id);
+    setSaving(false); setEditingEv(null); setNewEv(false); router.refresh();
+  }
+  async function deleteEvent(ev: any) {
+    // Count participants
+    const supabase = createClient();
+    const { count } = await supabase.from("user_event_participation")
+      .select("id", { count: "exact", head: true })
+      .eq("event_slug", ev.slug);
+    if ((count ?? 0) > 0) {
+      alert(`Cannot delete — this event has ${count} participant(s). Edit or deactivate it instead.`);
+      setDeleteConfirm(null); return;
+    }
+    await supabase.from("events").delete().eq("id", ev.id);
+    setDeleteConfirm(null); router.refresh();
+  }
+
   const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: "overview",   label: "Overview",   icon: <TrendingUp size={14} /> },
-    { id: "users",      label: "Users",      icon: <Users size={14} /> },
-    { id: "challenges", label: "Challenges", icon: <Zap size={14} /> },
-    { id: "activity",   label: "Activity",   icon: <Target size={14} /> },
+    { id: "overview",  label: "Overview",  icon: <TrendingUp size={14} /> },
+    { id: "users",     label: "Users",     icon: <Users size={14} /> },
+    { id: "seasonal",  label: "Seasonal",  icon: <Zap size={14} /> },
+    { id: "events",    label: "Events",    icon: <Calendar size={14} /> },
+    { id: "activity",  label: "Activity",  icon: <Target size={14} /> },
   ];
 
   return (
@@ -110,17 +148,15 @@ export default function AdminClient({
             <span className="text-brand-400 text-xs font-bold uppercase tracking-wider">Admin</span>
           </div>
           <h1 className="font-display text-2xl font-bold text-white">Dashboard</h1>
-          <p className="text-white/40 text-sm">Welcome, {adminName}</p>
+          <p className="text-white/40 text-sm">Welcome, {adminName} · {totalUsers} users</p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1.5 mb-6 bg-surface-elevated p-1 rounded-2xl">
+      <div className="flex gap-1 mb-6 bg-surface-elevated p-1 rounded-2xl overflow-x-auto">
         {TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-medium transition-all duration-200 ${
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-medium transition-all duration-200 whitespace-nowrap min-w-[60px] ${
               tab === t.id ? "bg-brand-500 text-black" : "text-white/40 hover:text-white/70"
             }`}
           >
@@ -130,40 +166,37 @@ export default function AdminClient({
         ))}
       </div>
 
-      {/* ── OVERVIEW TAB ─────────────────────────────────── */}
+      {/* ── OVERVIEW ─────────────────────────────────── */}
       {tab === "overview" && (
         <div className="space-y-4">
-          {/* KPI grid */}
           <div className="grid grid-cols-2 gap-3">
-            <KPICard icon="👥" label="Total Users" value={String(totalUsers)} sub={`${recentlyActive} active last 7d`} />
-            <KPICard icon="💰" label="Platform Saved" value={formatCurrency(totalSaved)} sub={`${transactions.length} transactions`} />
-            <KPICard icon="🎯" label="Goals" value={String(totalGoals)} sub={`${completedGoals} completed`} />
-            <KPICard icon="🔥" label="Active Streaks" value={String(activeStreaks)} sub="3+ day streaks" />
-            <KPICard icon="⚡" label="XP Awarded" value={totalXPAwarded.toLocaleString()} sub="across all users" />
-            <KPICard icon="⚔️" label="Challenges Live" value={String(challenges.filter(c => c.is_active).length)} sub={`of ${challenges.length} total`} />
+            <KPICard icon="👥" label="Total Users"     value={String(totalUsers)}             sub={`${recentlyActive} active last 7d`} />
+            <KPICard icon="💰" label="Platform Saved"  value={formatCurrency(totalSaved)}     sub={`${transactions.filter(t=>Number(t.amount)>0).length} deposits`} />
+            <KPICard icon="🎯" label="Goals"           value={String(totalGoals)}             sub={`${completedGoals} completed`} />
+            <KPICard icon="🔥" label="Active Streaks"  value={String(activeStreaks)}           sub="3+ day streaks" />
+            <KPICard icon="⚡" label="XP Awarded"      value={totalXP.toLocaleString()}        sub="across all users" />
+            <KPICard icon="⚔️" label="Seasonal Live"   value={String(challenges.filter(c => c.is_active).length)} sub={`of ${challenges.length} total`} />
           </div>
 
           {/* Top savers */}
           <div className="card p-4">
             <h3 className="font-display font-semibold text-white text-sm mb-3">Top Savers by XP</h3>
             <div className="space-y-2">
-              {[...users]
-                .sort((a, b) => (b.xp_total ?? 0) - (a.xp_total ?? 0))
-                .slice(0, 5)
-                .map((u, i) => {
-                  const lv = getLevelFromXP(u.xp_total ?? 0);
-                  return (
-                    <div key={u.id} className="flex items-center gap-3">
-                      <span className="text-white/30 text-xs w-4">{i + 1}</span>
-                      <span className="text-lg">{u.avatar_emoji ?? "🌱"}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white truncate">{u.display_name}</p>
-                        <p className="text-xs" style={{ color: TIER_COLORS[lv.tier] }}>Lv {lv.level} · {lv.title}</p>
-                      </div>
-                      <span className="text-brand-400 text-xs font-bold">{(u.xp_total ?? 0).toLocaleString()} XP</span>
+              {[...users].sort((a, b) => (b.xp_total ?? 0) - (a.xp_total ?? 0)).slice(0, 5).map((u, i) => {
+                const lv = getLevelFromXP(u.xp_total ?? 0);
+                return (
+                  <div key={u.id} className="flex items-center gap-3">
+                    <span className="text-white/30 text-xs w-4">{i + 1}</span>
+                    <span className="text-lg">{u.avatar_emoji ?? "🌱"}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white truncate">{u.display_name}</p>
+                      <p className="text-xs" style={{ color: TIER_COLORS[lv.tier] }}>Lv {lv.level} · {lv.title}</p>
                     </div>
-                  );
-                })}
+                    <span className="text-brand-400 text-xs font-bold">{(u.xp_total ?? 0).toLocaleString()} XP</span>
+                  </div>
+                );
+              })}
+              {users.length === 0 && <p className="text-white/30 text-sm text-center py-4">No users yet.</p>}
             </div>
           </div>
 
@@ -186,6 +219,7 @@ export default function AdminClient({
                       <span className="text-xs text-white/40 w-6 text-right">{count}</span>
                     </div>
                   ))}
+                  {sorted.length === 0 && <p className="text-white/30 text-sm text-center py-2">No goals yet.</p>}
                 </div>
               );
             })()}
@@ -193,137 +227,100 @@ export default function AdminClient({
         </div>
       )}
 
-      {/* ── USERS TAB ────────────────────────────────────── */}
+      {/* ── USERS ────────────────────────────────────── */}
       {tab === "users" && (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          <div className="card p-3 flex items-center gap-3 text-xs text-white/30 font-medium uppercase tracking-wider">
+            <span className="w-8"></span>
+            <span className="flex-1">User</span>
+            <span className="w-16 text-right">Level</span>
+            <span className="w-16 text-right">XP</span>
+            <span className="w-12 text-right">Streak</span>
+          </div>
+          {users.length === 0 && (
+            <div className="card p-8 text-center">
+              <p className="text-white/30 text-sm">No users found. Check SUPABASE_SERVICE_ROLE_KEY env var.</p>
+            </div>
+          )}
           {users.map(u => {
             const lv = getLevelFromXP(u.xp_total ?? 0);
-            const userGoals = goals.filter(g => g.user_id === u.id);
-            const userTx = transactions.filter(t => t.user_id === u.id);
-            const userSaved = userTx.reduce((s, t) => s + Number(t.amount), 0);
-            const userBadges = userAchievements.filter(a => a.user_id === u.id).length;
-            const isExpanded = expandedUser === u.id;
-
             return (
-              <div key={u.id} className="card overflow-hidden">
-                <button
-                  className="w-full p-4 flex items-center gap-3 text-left"
-                  onClick={() => setExpandedUser(isExpanded ? null : u.id)}
-                >
-                  <span className="text-2xl">{u.avatar_emoji ?? "🌱"}</span>
+              <div key={u.id} className="card p-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl w-8">{u.avatar_emoji ?? "🌱"}</span>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-white text-sm truncate">{u.display_name}</p>
-                    <p className="text-xs" style={{ color: TIER_COLORS[lv.tier] }}>
-                      Lv {lv.level} {lv.title}
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm font-medium text-white truncate">{u.display_name}</p>
+                      {u.is_admin && <span className="text-[10px] bg-brand-500/20 text-brand-400 border border-brand-500/30 rounded px-1">admin</span>}
+                    </div>
+                    <p className="text-xs text-white/30 truncate">{u.email || "—"}</p>
+                    <p className="text-[10px] text-white/20 mt-0.5">
+                      Joined {u.created_at ? format(new Date(u.created_at), "d MMM yyyy") : "—"}
                     </p>
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-white/40">
-                    <span className={`px-2 py-0.5 rounded-full ${(u.streak_days ?? 0) >= 7 ? "bg-orange-500/10 text-orange-400" : "bg-surface-elevated"}`}>
-                      🔥 {u.streak_days ?? 0}d
-                    </span>
-                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  <div className="text-right">
+                    <p className="text-xs font-bold" style={{ color: TIER_COLORS[lv.tier] }}>Lv {lv.level}</p>
+                    <p className="text-[10px] text-white/40 mt-0.5">{(u.xp_total ?? 0).toLocaleString()} XP</p>
                   </div>
-                </button>
-
-                {isExpanded && (
-                  <div className="px-4 pb-4 border-t border-surface-border pt-3">
-                    <div className="grid grid-cols-3 gap-2 mb-3">
-                      <MiniStat label="Saved" value={formatCurrency(userSaved)} />
-                      <MiniStat label="Goals" value={String(userGoals.length)} />
-                      <MiniStat label="Badges" value={String(userBadges)} />
-                      <MiniStat label="XP" value={(u.xp_total ?? 0).toLocaleString()} />
-                      <MiniStat label="Streak" value={`${u.streak_days ?? 0}d`} />
-                      <MiniStat label="Shields" value={String(u.streak_shields ?? 2)} />
-                    </div>
-                    <div className="text-xs text-white/30 space-y-0.5">
-                      <p>Joined: {u.created_at ? format(new Date(u.created_at), "d MMM yyyy") : "—"}</p>
-                      <p>Last active: {u.last_active_date ?? "Never"}</p>
-                      <p>Longest streak: {u.longest_streak ?? 0} days</p>
-                    </div>
+                  <div className="text-right w-12">
+                    <p className="text-xs text-orange-400 font-bold">{u.streak_days ?? 0}🔥</p>
+                    <p className="text-[10px] text-white/20">{u.last_active_date ? format(new Date(u.last_active_date), "d MMM") : "—"}</p>
                   </div>
-                )}
+                </div>
               </div>
             );
           })}
-
-          {users.length === 0 && (
-            <div className="card p-10 text-center text-white/40 text-sm">No users yet.</div>
-          )}
         </div>
       )}
 
-      {/* ── CHALLENGES TAB ───────────────────────────────── */}
-      {tab === "challenges" && (
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-white/40 text-sm">{challenges.length} challenges</p>
-            <button onClick={startNew} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2">
-              <Plus size={14} /> New Challenge
+      {/* ── SEASONAL (challenges) ────────────────────── */}
+      {tab === "seasonal" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display font-semibold text-white">Seasonal Quests</h2>
+            <button onClick={startNewCh} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
+              <Plus size={14} /> New Quest
             </button>
           </div>
 
-          {/* Challenge form */}
-          {(newChallenge || editingChallenge) && (
-            <div className="card p-4 mb-4 border-brand-500/30">
-              <h3 className="font-display font-semibold text-white text-sm mb-3">
-                {newChallenge ? "New Challenge" : "Edit Challenge"}
+          {/* Form */}
+          {(newCh || editingCh) && (
+            <div className="card p-4 border-brand-500/30">
+              <h3 className="font-display font-semibold text-white text-sm mb-4">
+                {newCh ? "Create Seasonal Quest" : "Edit Quest"}
               </h3>
               <div className="space-y-3">
-                <input
-                  className="input-field"
-                  placeholder="Title"
-                  value={challengeForm.title}
-                  onChange={e => setChallengeForm(f => ({ ...f, title: e.target.value }))}
-                />
-                <textarea
-                  className="input-field resize-none"
-                  rows={2}
-                  placeholder="Description"
-                  value={challengeForm.description}
-                  onChange={e => setChallengeForm(f => ({ ...f, description: e.target.value }))}
-                />
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Title</label>
+                  <input className="input-field" value={chForm.title} onChange={e => setChForm(f => ({ ...f, title: e.target.value }))} placeholder="Quest title" />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Description</label>
+                  <input className="input-field" value={chForm.description} onChange={e => setChForm(f => ({ ...f, description: e.target.value }))} placeholder="What the user needs to do" />
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs text-white/40 mb-1">XP Reward</label>
-                    <input
-                      type="number"
-                      className="input-field"
-                      value={challengeForm.xp_reward}
-                      onChange={e => setChallengeForm(f => ({ ...f, xp_reward: Number(e.target.value) }))}
-                    />
+                    <input type="number" className="input-field" value={chForm.xp_reward} onChange={e => setChForm(f => ({ ...f, xp_reward: Number(e.target.value) }))} />
                   </div>
                   <div>
                     <label className="block text-xs text-white/40 mb-1">Duration (days)</label>
-                    <input
-                      type="number"
-                      className="input-field"
-                      value={challengeForm.duration_days}
-                      onChange={e => setChallengeForm(f => ({ ...f, duration_days: Number(e.target.value) }))}
-                    />
+                    <input type="number" className="input-field" value={chForm.duration_days} onChange={e => setChForm(f => ({ ...f, duration_days: Number(e.target.value) }))} />
                   </div>
                 </div>
                 <div>
                   <label className="block text-xs text-white/40 mb-1">Type</label>
-                  <select
-                    className="input-field"
-                    value={challengeForm.type}
-                    onChange={e => setChallengeForm(f => ({ ...f, type: e.target.value }))}
-                  >
+                  <select className="input-field" value={chForm.type} onChange={e => setChForm(f => ({ ...f, type: e.target.value }))}>
                     <option value="manual">Manual</option>
                     <option value="seasonal">Seasonal</option>
                     <option value="weekly">Weekly</option>
                   </select>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={saveChallenge} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2.5">
+                  <button onClick={saveCh} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2.5">
                     <Check size={14} /> {saving ? "Saving…" : "Save"}
                   </button>
-                  <button
-                    onClick={() => { setEditingChallenge(null); setNewChallenge(false); }}
-                    className="btn-ghost text-sm px-4 py-2.5"
-                  >
-                    Cancel
-                  </button>
+                  <button onClick={() => { setEditingCh(null); setNewCh(false); }} className="btn-ghost text-sm px-4 py-2.5">Cancel</button>
                 </div>
               </div>
             </div>
@@ -332,8 +329,7 @@ export default function AdminClient({
           <div className="space-y-2">
             {challenges.map(ch => {
               const completions = userChallenges.filter(uc => uc.challenge_id === ch.id && uc.status === "completed").length;
-              const active = userChallenges.filter(uc => uc.challenge_id === ch.id && uc.status === "active").length;
-
+              const active      = userChallenges.filter(uc => uc.challenge_id === ch.id && uc.status === "active").length;
               return (
                 <div key={ch.id} className={`card p-4 ${!ch.is_active ? "opacity-50" : ""}`}>
                   <div className="flex items-start gap-3">
@@ -351,34 +347,156 @@ export default function AdminClient({
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => startEdit(ch)}
-                        className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-white/70 transition-colors"
-                      >
+                      <button onClick={() => startEditCh(ch)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-white/70 transition-colors">
                         <Edit2 size={13} />
                       </button>
-                      <button
-                        onClick={() => toggleChallenge(ch.id, ch.is_active)}
-                        className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center transition-colors hover:border-brand-500/40"
-                      >
-                        {ch.is_active
-                          ? <ToggleRight size={16} className="text-brand-400" />
-                          : <ToggleLeft size={16} className="text-white/30" />
-                        }
+                      <button onClick={() => toggleCh(ch.id, ch.is_active)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center transition-colors hover:border-brand-500/40">
+                        {ch.is_active ? <ToggleRight size={16} className="text-brand-400" /> : <ToggleLeft size={16} className="text-white/30" />}
                       </button>
                     </div>
                   </div>
                 </div>
               );
             })}
+            {challenges.length === 0 && <p className="text-white/30 text-sm text-center py-8">No seasonal quests yet.</p>}
           </div>
         </div>
       )}
 
-      {/* ── ACTIVITY TAB ─────────────────────────────────── */}
+      {/* ── EVENTS ───────────────────────────────────── */}
+      {tab === "events" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display font-semibold text-white">Events</h2>
+            <button onClick={startNewEv} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
+              <Plus size={14} /> New Event
+            </button>
+          </div>
+
+          {/* Event form */}
+          {(newEv || editingEv) && (
+            <div className="card p-4 border-brand-500/30">
+              <h3 className="font-display font-semibold text-white text-sm mb-4">
+                {newEv ? "Create Event" : "Edit Event"}
+              </h3>
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="col-span-1">
+                    <label className="block text-xs text-white/40 mb-1">Emoji</label>
+                    <input className="input-field text-center" value={evForm.emoji} onChange={e => setEvForm(f => ({ ...f, emoji: e.target.value }))} />
+                  </div>
+                  <div className="col-span-3">
+                    <label className="block text-xs text-white/40 mb-1">Title</label>
+                    <input className="input-field" value={evForm.title} onChange={e => setEvForm(f => ({ ...f, title: e.target.value }))} placeholder="Event title" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Description</label>
+                  <input className="input-field" value={evForm.description} onChange={e => setEvForm(f => ({ ...f, description: e.target.value }))} placeholder="What participants need to do" />
+                </div>
+                {newEv && (
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Slug (unique ID)</label>
+                    <input className="input-field font-mono text-xs" value={evForm.slug} onChange={e => setEvForm(f => ({ ...f, slug: e.target.value }))} placeholder="evt_my_event" />
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">XP Reward</label>
+                    <input type="number" className="input-field" value={evForm.xp_reward} onChange={e => setEvForm(f => ({ ...f, xp_reward: Number(e.target.value) }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Type</label>
+                    <select className="input-field" value={evForm.event_type} onChange={e => setEvForm(f => ({ ...f, event_type: e.target.value }))}>
+                      <option value="savequest">SaveQuest Campaign</option>
+                      <option value="seasonal">Seasonal</option>
+                      <option value="calendar">Calendar</option>
+                      <option value="evergreen">Evergreen</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Available From (optional)</label>
+                    <input type="date" className="input-field" value={evForm.available_from} onChange={e => setEvForm(f => ({ ...f, available_from: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Available Until (optional)</label>
+                    <input type="date" className="input-field" value={evForm.available_until} onChange={e => setEvForm(f => ({ ...f, available_until: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 text-sm">
+                  <label className="flex items-center gap-2 text-white/60 cursor-pointer">
+                    <input type="checkbox" checked={evForm.is_annual} onChange={e => setEvForm(f => ({ ...f, is_annual: e.target.checked }))} className="rounded" />
+                    Annual (repeats yearly)
+                  </label>
+                  <label className="flex items-center gap-2 text-white/60 cursor-pointer">
+                    <input type="checkbox" checked={evForm.is_active} onChange={e => setEvForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                    Active
+                  </label>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={saveEv} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2.5">
+                    <Check size={14} /> {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button onClick={() => { setEditingEv(null); setNewEv(false); }} className="btn-ghost text-sm px-4 py-2.5">Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {dbEvents.map(ev => {
+              const regions: string[] = (ev.event_regions ?? []).map((r: any) => r.region);
+              const isConfirming = deleteConfirm === ev.id;
+              return (
+                <div key={ev.id} className={`card p-4 ${!ev.is_active ? "opacity-50" : ""}`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{ev.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                        <p className="font-medium text-white text-sm">{ev.title}</p>
+                        <span className="text-[10px] text-white/30 border border-surface-border rounded-full px-1.5 py-0.5">{ev.event_type}</span>
+                        {!ev.is_active && <span className="text-[10px] text-orange-400 border border-orange-400/30 rounded-full px-1.5 py-0.5">inactive</span>}
+                      </div>
+                      <p className="text-xs text-white/40 mb-1">{ev.description}</p>
+                      <div className="flex items-center gap-2 text-xs text-white/30 flex-wrap">
+                        <span className="text-brand-400">⚡ {ev.xp_reward} XP</span>
+                        {ev.available_from && <span>From {ev.available_from}</span>}
+                        {ev.available_until && <span>Until {ev.available_until}</span>}
+                        {!ev.available_from && !ev.available_until && <span>Evergreen</span>}
+                        {regions.length > 0 && <span>🌍 {regions.join(", ")}</span>}
+                      </div>
+
+                      {isConfirming && (
+                        <div className="mt-2 p-2 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
+                          <AlertTriangle size={13} className="text-red-400" />
+                          <p className="text-xs text-red-400">Delete this event? This cannot be undone.</p>
+                          <button onClick={() => deleteEvent(ev)} className="ml-auto text-xs text-red-400 font-bold hover:text-red-300">Confirm</button>
+                          <button onClick={() => setDeleteConfirm(null)} className="text-xs text-white/30 hover:text-white/60">Cancel</button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button onClick={() => startEditEv(ev)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-white/70 transition-colors">
+                        <Edit2 size={13} />
+                      </button>
+                      <button onClick={() => setDeleteConfirm(isConfirming ? null : ev.id)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-red-400 transition-colors">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {dbEvents.length === 0 && <p className="text-white/30 text-sm text-center py-8">No events in database yet. Create one above.</p>}
+          </div>
+        </div>
+      )}
+
+      {/* ── ACTIVITY ─────────────────────────────────── */}
       {tab === "activity" && (
         <div className="space-y-4">
-          {/* 30-day activity chart */}
           <div className="card p-4">
             <h3 className="font-display font-semibold text-white text-sm mb-3">Platform Activity — Last 30 Days</h3>
             <div className="grid grid-cols-10 gap-1 mb-2">
@@ -386,15 +504,8 @@ export default function AdminClient({
                 const d = subDays(new Date(), 29 - i);
                 const dateStr = format(d, "yyyy-MM-dd");
                 const count = activityByDate.get(dateStr) ?? 0;
-                const intensity = count === 0 ? "bg-surface-border"
-                  : count < 3  ? "bg-brand-900/40"
-                  : count < 8  ? "bg-brand-700/60"
-                  : count < 15 ? "bg-brand-500/70"
-                  : "bg-brand-400";
-                return (
-                  <div key={i} title={`${dateStr}: ${count} actions`}
-                    className={`aspect-square rounded-md ${intensity}`} />
-                );
+                const intensity = count === 0 ? "bg-surface-border" : count < 3 ? "bg-brand-900/40" : count < 8 ? "bg-brand-700/60" : count < 15 ? "bg-brand-500/70" : "bg-brand-400";
+                return <div key={i} title={`${dateStr}: ${count} actions`} className={`aspect-square rounded-md ${intensity}`} />;
               })}
             </div>
             <div className="flex items-center gap-1.5 text-[10px] text-white/30">
@@ -406,7 +517,6 @@ export default function AdminClient({
             </div>
           </div>
 
-          {/* Achievement distribution */}
           <div className="card p-4">
             <h3 className="font-display font-semibold text-white text-sm mb-3">Most Earned Badges</h3>
             {(() => {
@@ -440,26 +550,22 @@ export default function AdminClient({
             })()}
           </div>
 
-          {/* Recent transactions */}
           <div className="card p-4">
             <h3 className="font-display font-semibold text-white text-sm mb-3">Recent Transactions</h3>
             <div className="space-y-2">
-              {[...transactions]
-                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                .slice(0, 10)
-                .map(tx => {
-                  const u = users.find(u => u.id === tx.user_id);
-                  return (
-                    <div key={tx.id} className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        <span className="text-base">{u?.avatar_emoji ?? "🌱"}</span>
-                        <span className="text-white/60 truncate max-w-28">{u?.display_name ?? "User"}</span>
-                      </div>
-                      <span className="text-emerald-400 font-medium">{formatCurrency(Number(tx.amount))}</span>
-                      <span className="text-white/30 text-xs">{format(new Date(tx.created_at), "d MMM")}</span>
+              {[...transactions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 10).map(tx => {
+                const u = users.find(u => u.id === tx.user_id);
+                return (
+                  <div key={tx.id} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">{u?.avatar_emoji ?? "🌱"}</span>
+                      <span className="text-white/60 truncate max-w-28">{u?.display_name ?? "User"}</span>
                     </div>
-                  );
-                })}
+                    <span className="text-emerald-400 font-medium">{formatCurrency(Number(tx.amount))}</span>
+                    <span className="text-white/30 text-xs">{format(new Date(tx.created_at), "d MMM")}</span>
+                  </div>
+                );
+              })}
               {transactions.length === 0 && <p className="text-white/30 text-sm text-center py-4">No transactions yet.</p>}
             </div>
           </div>
@@ -476,15 +582,6 @@ function KPICard({ icon, label, value, sub }: { icon: string; label: string; val
       <div className="font-display font-bold text-white text-xl leading-tight">{value}</div>
       <div className="text-xs text-white/50 mt-0.5">{label}</div>
       <div className="text-[10px] text-white/30 mt-0.5">{sub}</div>
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-surface-elevated rounded-xl p-2 text-center">
-      <p className="font-display font-bold text-white text-sm">{value}</p>
-      <p className="text-[10px] text-white/40">{label}</p>
     </div>
   );
 }
