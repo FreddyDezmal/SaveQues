@@ -10,8 +10,35 @@ import { format, subDays } from "date-fns";
 import {
   Users, Target, Zap, TrendingUp, Plus, Edit2, Trash2,
   ToggleLeft, ToggleRight, ShieldCheck, Check, AlertTriangle,
-  Calendar,
+  Calendar, CheckCircle, XCircle,
 } from "lucide-react";
+
+interface Props {
+  users: any[];
+  goals: any[];
+  transactions: any[];
+  challenges: any[];
+  userChallenges: any[];
+  userAchievements: any[];
+  activityLog: any[];
+  adminName: string;
+  dbEvents: any[];
+}
+
+// Simple toast component
+function Toast({ message, type, onDone }: { message: string; type: "success" | "error"; onDone: () => void }) {
+  return (
+    <div
+      className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 rounded-2xl shadow-lg text-sm font-medium max-w-xs text-center ${
+        type === "success" ? "bg-emerald-500 text-black" : "bg-red-500 text-white"
+      }`}
+      style={{ animation: "badgePop 0.3s ease forwards" }}
+    >
+      {type === "success" ? <CheckCircle size={16} /> : <XCircle size={16} />}
+      <span>{message}</span>
+    </div>
+  );
+}
 
 interface Props {
   users: any[];
@@ -37,6 +64,12 @@ export default function AdminClient({
   const router = useRouter();
   const [tab, setTab]           = useState<Tab>("overview");
   const [saving, setSaving]     = useState(false);
+  const [toast, setToast]       = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  function showToast(message: string, type: "success" | "error") {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  }
 
   // ── Seasonal (challenge) form state ──────────────────────────
   const [editingCh,  setEditingCh]  = useState<any | null>(null);
@@ -88,7 +121,7 @@ export default function AdminClient({
     router.refresh();
   }
 
-  // ── Events CRUD ───────────────────────────────────────────────
+  // ── Events CRUD via server API (service role) ─────────────────
   function startEditEv(ev: any) {
     setEditingEv(ev);
     setEvForm({
@@ -104,30 +137,54 @@ export default function AdminClient({
     setEvForm({ ...BLANK_EVENT, slug: `evt_${Date.now()}` });
     setNewEv(true);
   }
+
   async function saveEv() {
+    if (!evForm.title.trim() || !evForm.slug.trim()) {
+      showToast("Title and slug are required.", "error"); return;
+    }
     setSaving(true);
-    const supabase = createClient();
     const payload = {
       ...evForm,
       available_from:  evForm.available_from  || null,
       available_until: evForm.available_until || null,
     };
-    if (newEv) await supabase.from("events").insert(payload);
-    else if (editingEv) await supabase.from("events").update(payload).eq("id", editingEv.id);
-    setSaving(false); setEditingEv(null); setNewEv(false); router.refresh();
-  }
-  async function deleteEvent(ev: any) {
-    // Count participants
-    const supabase = createClient();
-    const { count } = await supabase.from("user_event_participation")
-      .select("id", { count: "exact", head: true })
-      .eq("event_slug", ev.slug);
-    if ((count ?? 0) > 0) {
-      alert(`Cannot delete — this event has ${count} participant(s). Edit or deactivate it instead.`);
-      setDeleteConfirm(null); return;
+
+    try {
+      const res = await fetch("/api/admin/events", {
+        method: newEv ? "POST" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newEv ? payload : { id: editingEv.id, ...payload }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Save failed");
+      showToast(newEv ? "Event created!" : "Event updated!", "success");
+      setEditingEv(null); setNewEv(false);
+      router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Something went wrong", "error");
+    } finally {
+      setSaving(false);
     }
-    await supabase.from("events").delete().eq("id", ev.id);
-    setDeleteConfirm(null); router.refresh();
+  }
+
+  async function deleteEvent(ev: any) {
+    try {
+      const res = await fetch("/api/admin/events", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ev.id, slug: ev.slug }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error ?? "Delete failed", "error");
+        setDeleteConfirm(null); return;
+      }
+      showToast("Event deleted.", "success");
+      setDeleteConfirm(null); router.refresh();
+    } catch {
+      showToast("Network error — try again", "error");
+      setDeleteConfirm(null);
+    }
   }
 
   const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
@@ -140,6 +197,7 @@ export default function AdminClient({
 
   return (
     <div className="max-w-2xl mx-auto px-4 pt-6 pb-8">
+      {toast && <Toast message={toast.message} type={toast.type} onDone={() => setToast(null)} />}
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>

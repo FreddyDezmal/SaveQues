@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getXPForAction } from "@/lib/xp";
+import { checkAchievements } from "@/lib/achievements";
 import type { QuestTemplate } from "@/lib/quests";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import Link from "next/link";
@@ -50,6 +51,27 @@ export default function QuestsClient({
   const [activeTab, setActiveTab]   = useState<QuestTab>("daily");
   const [loading, setLoading]       = useState<string | null>(null);
   const [celebration, setCelebration] = useState({ show: false, title: "", xp: 0, icon: "" });
+  const [achievementQueue, setAchievementQueue] = useState<{ title: string; icon: string; xpReward: number }[]>([]);
+  const [currentAchievement, setCurrentAchievement] = useState<{ title: string; icon: string; xpReward: number } | null>(null);
+
+  function dismissAchievement() {
+    setCurrentAchievement(null);
+    setTimeout(() => {
+      setAchievementQueue(prev => {
+        if (prev.length === 0) return prev;
+        const [next, ...rest] = prev;
+        setCurrentAchievement(next);
+        return rest;
+      });
+    }, 400);
+  }
+
+  function queueAchievements(achievements: { title: string; icon: string; xpReward: number }[]) {
+    if (achievements.length === 0) return;
+    const [first, ...rest] = achievements;
+    setCurrentAchievement(first);
+    setAchievementQueue(rest);
+  }
 
   // ── Seasonal (challenges) state ────────────────────────────
   const activeUCs    = userChallenges.filter(uc => uc.status === "active");
@@ -82,6 +104,34 @@ export default function QuestsClient({
         xp_total: p.xp_total + xp,
         daily_quests_completed: (p.daily_quests_completed ?? 0) + 1,
       }).eq("id", userId);
+
+      // Check achievements with updated daily count
+      const newDailyCount = (p.daily_quests_completed ?? 0) + 1;
+      const [earnedRes, weeklyRes, chainRes] = await Promise.all([
+        supabase.from("user_achievements").select("achievement_id").eq("user_id", userId),
+        supabase.from("user_weekly_quests").select("id").eq("user_id", userId).eq("status", "completed"),
+        supabase.from("quest_chain_progress").select("id").eq("user_id", userId).eq("status", "completed"),
+      ]);
+      const earnedIds = (earnedRes.data ?? []).map((a: any) => a.achievement_id);
+      const newAchievements = checkAchievements({
+        streakDays: profile.streak_days,
+        totalSaved: 0,
+        goalsCompleted: 0,
+        activeGoals: 0,
+        challengesCompleted: weeklyRes.data?.length ?? 0,
+        dailyQuestsCompleted: newDailyCount,
+        weeklyQuestsCompleted: profile.weekly_quests_completed ?? 0,
+        questChainsCompleted: chainRes.data?.length ?? 0,
+        earnedIds,
+      });
+      if (newAchievements.length > 0) {
+        await supabase.from("user_achievements").insert(
+          newAchievements.map((a: any) => ({ user_id: userId, achievement_id: a.id, earned_at: new Date().toISOString() }))
+        );
+        const achXP = newAchievements.reduce((s: number, a: any) => s + a.xpReward, 0);
+        if (achXP > 0) await supabase.from("profiles").update({ xp_total: p.xp_total + xp + achXP }).eq("id", userId);
+        queueAchievements(newAchievements);
+      }
     }
     await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xp });
 
@@ -124,12 +174,38 @@ export default function QuestsClient({
     }).eq("user_id", userId).eq("week_start", currentWeekStart);
 
     const { data: p } = await supabase.from("profiles")
-      .select("xp_total, weekly_quests_completed").eq("id", userId).single();
+      .select("xp_total, weekly_quests_completed, streak_days, daily_quests_completed").eq("id", userId).single();
     if (p) {
+      const newWeeklyCount = (p.weekly_quests_completed ?? 0) + 1;
       await supabase.from("profiles").update({
         xp_total:               p.xp_total + xp,
-        weekly_quests_completed: (p.weekly_quests_completed ?? 0) + 1,
+        weekly_quests_completed: newWeeklyCount,
       }).eq("id", userId);
+
+      // Achievement check
+      const [earnedRes, weeklyCountRes, chainRes] = await Promise.all([
+        supabase.from("user_achievements").select("achievement_id").eq("user_id", userId),
+        supabase.from("user_weekly_quests").select("id").eq("user_id", userId).eq("status", "completed"),
+        supabase.from("quest_chain_progress").select("id").eq("user_id", userId).eq("status", "completed"),
+      ]);
+      const earnedIds = (earnedRes.data ?? []).map((a: any) => a.achievement_id);
+      const newAchievements = checkAchievements({
+        streakDays: p.streak_days ?? profile.streak_days,
+        totalSaved: 0, goalsCompleted: 0, activeGoals: 0,
+        challengesCompleted: weeklyCountRes.data?.length ?? 0,
+        dailyQuestsCompleted: p.daily_quests_completed ?? 0,
+        weeklyQuestsCompleted: newWeeklyCount,
+        questChainsCompleted: chainRes.data?.length ?? 0,
+        earnedIds,
+      });
+      if (newAchievements.length > 0) {
+        await supabase.from("user_achievements").insert(
+          newAchievements.map((a: any) => ({ user_id: userId, achievement_id: a.id, earned_at: new Date().toISOString() }))
+        );
+        const achXP = newAchievements.reduce((s: number, a: any) => s + a.xpReward, 0);
+        if (achXP > 0) await supabase.from("profiles").update({ xp_total: p.xp_total + xp + achXP }).eq("id", userId);
+        queueAchievements(newAchievements);
+      }
     }
     await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xp });
 
@@ -162,11 +238,36 @@ export default function QuestsClient({
     }).eq("id", ucId);
 
     const { data: p } = await supabase.from("profiles")
-      .select("xp_total, weekly_quests_completed").eq("id", userId).single();
+      .select("xp_total, streak_days, daily_quests_completed, weekly_quests_completed").eq("id", userId).single();
     if (p) {
-      await supabase.from("profiles").update({
-        xp_total: p.xp_total + xpReward,
-      }).eq("id", userId);
+      await supabase.from("profiles").update({ xp_total: p.xp_total + xpReward }).eq("id", userId);
+
+      // Achievement check — count all completed challenges (seasonal + weekly)
+      const [earnedRes, weeklyRes, seasonalRes, chainRes] = await Promise.all([
+        supabase.from("user_achievements").select("achievement_id").eq("user_id", userId),
+        supabase.from("user_weekly_quests").select("id").eq("user_id", userId).eq("status", "completed"),
+        supabase.from("user_challenges").select("id").eq("user_id", userId).eq("status", "completed"),
+        supabase.from("quest_chain_progress").select("id").eq("user_id", userId).eq("status", "completed"),
+      ]);
+      const earnedIds = (earnedRes.data ?? []).map((a: any) => a.achievement_id);
+      const totalChallenges = (weeklyRes.data?.length ?? 0) + (seasonalRes.data?.length ?? 0);
+      const newAchievements = checkAchievements({
+        streakDays: p.streak_days ?? profile.streak_days,
+        totalSaved: 0, goalsCompleted: 0, activeGoals: 0,
+        challengesCompleted: totalChallenges,
+        dailyQuestsCompleted: p.daily_quests_completed ?? 0,
+        weeklyQuestsCompleted: p.weekly_quests_completed ?? 0,
+        questChainsCompleted: chainRes.data?.length ?? 0,
+        earnedIds,
+      });
+      if (newAchievements.length > 0) {
+        await supabase.from("user_achievements").insert(
+          newAchievements.map((a: any) => ({ user_id: userId, achievement_id: a.id, earned_at: new Date().toISOString() }))
+        );
+        const achXP = newAchievements.reduce((s: number, a: any) => s + a.xpReward, 0);
+        if (achXP > 0) await supabase.from("profiles").update({ xp_total: p.xp_total + xpReward + achXP }).eq("id", userId);
+        queueAchievements(newAchievements);
+      }
     }
     await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xpReward });
 
@@ -474,6 +575,18 @@ export default function QuestsClient({
         xpGained={celebration.xp}
         icon={celebration.icon || "⚔️"}
         onClose={() => setCelebration(p => ({ ...p, show: false }))}
+      />
+
+      {/* Achievement badge overlays */}
+      <CelebrationOverlay
+        show={!!currentAchievement && !celebration.show}
+        type="achievement"
+        title={currentAchievement?.title ?? ""}
+        subtitle="Badge unlocked!"
+        xpGained={currentAchievement?.xpReward}
+        icon={currentAchievement?.icon}
+        onClose={dismissAchievement}
+        autoDismissMs={3000}
       />
     </>
   );

@@ -5,34 +5,57 @@ import { X } from "lucide-react";
 
 interface Props {
   show: boolean;
-  type: "xp" | "levelup" | "badge" | "goal" | "streak";
+  type: "xp" | "levelup" | "badge" | "goal" | "streak" | "achievement";
   title: string;
   subtitle?: string;
   icon?: string;
   xpGained?: number;
   onClose: () => void;
+  autoDismissMs?: number; // if set, auto-closes after this many ms
 }
 
-export default function CelebrationOverlay({ show, type, title, subtitle, icon, xpGained, onClose }: Props) {
+export default function CelebrationOverlay({ show, type, title, subtitle, icon, xpGained, onClose, autoDismissMs }: Props) {
   const [confetti, setConfetti] = useState<{ x: number; y: number; color: string; delay: number }[]>([]);
 
   useEffect(() => {
-      if (show) {
-        const count = type === "goal" ? 35 : 15;
-        const pieces = Array.from({ length: count }, () => ({
-          x: Math.random() * 100,
-          y: Math.random() * 40,
-          color: ["#ffb800", "#10b981", "#8b5cf6", "#ef4444", "#3b82f6"][Math.floor(Math.random() * 5)],
-          delay: Math.random() * 0.6,
-        }));
-        setConfetti(pieces);
-      }
-    }, [show, type]);
+    if (show) {
+      const count = type === "goal" ? 35 : 15;
+      const pieces = Array.from({ length: count }, () => ({
+        x: Math.random() * 100,
+        y: Math.random() * 40,
+        color: ["#ffb800", "#10b981", "#8b5cf6", "#ef4444", "#3b82f6"][Math.floor(Math.random() * 5)],
+        delay: Math.random() * 0.6,
+      }));
+      setConfetti(pieces);
+    }
+  }, [show, type]);
+
+  // Auto-dismiss for achievement overlays (and any caller that sets autoDismissMs)
+  useEffect(() => {
+    if (!show) return;
+    const ms = autoDismissMs ?? (type === "achievement" ? 3000 : undefined);
+    if (!ms) return;
+    const t = setTimeout(onClose, ms);
+    return () => clearTimeout(t);
+  }, [show, type, autoDismissMs, onClose]);
 
   if (!show) return null;
 
-const isGoalComplete = type === "goal";
-  const confettiCount = isGoalComplete ? 35 : 15;
+  const isGoalComplete = type === "goal";
+  const isAchievement  = type === "achievement";
+
+  const defaultIcon =
+    type === "levelup"      ? "⬆️" :
+    type === "badge"        ? "🏅" :
+    type === "goal"         ? "🏆" :
+    type === "streak"       ? "🔥" :
+    type === "achievement"  ? "🏅" : "⚡";
+
+  const ctaLabel =
+    isGoalComplete  ? "Claim Reward! 🎊" :
+    type === "streak" ? "Keep it up! 🔥" :
+    isAchievement   ? "Nice! 🏅" :
+    "Awesome! 🚀";
 
   return (
     <div
@@ -44,7 +67,7 @@ const isGoalComplete = type === "goal";
         onClick={e => e.stopPropagation()}
         style={{ animation: "badgePop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards" }}
       >
-        {/* Confetti — more pieces for goal completions */}
+        {/* Confetti */}
         {confetti.map((c, i) => (
           <div
             key={i}
@@ -66,12 +89,19 @@ const isGoalComplete = type === "goal";
           <X size={18} />
         </button>
 
-        {/* Icon — pops in with slight delay for stagger feel */}
+        {/* Achievement label */}
+        {isAchievement && (
+          <p className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-3">
+            🏅 Badge Unlocked
+          </p>
+        )}
+
+        {/* Icon */}
         <div
           className="text-6xl mb-4"
           style={{ animation: "badgePop 0.5s 0.1s cubic-bezier(0.175, 0.885, 0.32, 1.275) both" }}
         >
-          {icon ?? (type === "levelup" ? "⬆️" : type === "badge" ? "🏅" : type === "goal" ? "🏆" : type === "streak" ? "🔥" : "⚡")}
+          {icon ?? defaultIcon}
         </div>
 
         {/* Title */}
@@ -91,8 +121,8 @@ const isGoalComplete = type === "goal";
           </p>
         )}
 
-        {/* XP pill — animates in last for stagger */}
-        {xpGained && (
+        {/* XP pill */}
+        {!!xpGained && xpGained > 0 && (
           <div
             className="inline-flex items-center gap-1.5 bg-brand-500/15 border border-brand-500/30 rounded-full px-4 py-1.5 mb-5"
             style={{ animation: "badgePop 0.4s 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both" }}
@@ -101,14 +131,26 @@ const isGoalComplete = type === "goal";
           </div>
         )}
 
+        {/* Auto-dismiss progress bar for achievements */}
+        {isAchievement && (
+          <div className="w-full h-0.5 bg-surface-border rounded-full overflow-hidden mb-4">
+            <div
+              className="h-full bg-purple-400 rounded-full"
+              style={{ animation: "progressDrain 3s linear forwards" }}
+            />
+          </div>
+        )}
+
         <button
           onClick={onClose}
           className="btn-primary w-full"
           style={{ animation: "badgePop 0.4s 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both" }}
         >
-          {isGoalComplete ? "Claim Reward! 🎊" : type === "streak" ? "Keep it up! 🔥" : "Awesome! 🚀"}
+          {ctaLabel}
         </button>
       </div>
     </div>
   );
 }
+
+

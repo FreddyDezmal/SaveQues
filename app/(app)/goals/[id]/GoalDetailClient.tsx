@@ -50,6 +50,23 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
     goal_purchase:{ label: "Goal Purchase",    placeholder: "Amount spent",      icon: <ShoppingBag size={14} />, buttonText: "Mark as Purchased", hint: "e.g. bought the flights, got the laptop" },
   };
 
+  // Achievement overlay state — shown after deposits when badges unlock
+  const [achievementQueue, setAchievementQueue] = useState<{ title: string; icon: string; xpReward: number }[]>([]);
+  const [currentAchievement, setCurrentAchievement] = useState<{ title: string; icon: string; xpReward: number } | null>(null);
+
+  function dismissAchievement() {
+    setCurrentAchievement(null);
+    // Small delay before showing next in queue
+    setTimeout(() => {
+      setAchievementQueue(prev => {
+        if (prev.length === 0) return prev;
+        const [next, ...rest] = prev;
+        setCurrentAchievement(next);
+        return rest;
+      });
+    }, 400);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!amount || Number(amount) <= 0) return;
@@ -62,6 +79,46 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
 
     const depositAmount = Number(amount);
 
+    // Route deposits through /api/transactions for achievement checking.
+    // Withdrawals and purchases insert directly (no achievement triggers for those).
+    if (txType === "deposit") {
+      const res  = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal_id: goal.id, amount: depositAmount, note: note || null }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) { setError(data.error ?? "Failed to log saving"); setLoading(false); return; }
+
+      const newAmount      = Number(goal.current_amount) + depositAmount;
+      const isNowComplete  = newAmount >= Number(goal.target_amount);
+
+      setGoal((prev: any) => ({ ...prev, current_amount: newAmount, is_complete: isNowComplete }));
+      setTransactions((prev: any[]) => [{ id: Date.now(), goal_id: goal.id, amount: depositAmount, note: note || null, transaction_type: "deposit", created_at: new Date().toISOString() }, ...prev]);
+      setAmount(""); setNote(""); setLoading(false);
+
+      // Queue achievement overlays
+      if (data.newAchievements?.length > 0) {
+        const [first, ...rest] = data.newAchievements as { id: string; title: string; icon: string; xpReward: number }[];
+        setCurrentAchievement({ title: first.title, icon: first.icon, xpReward: first.xpReward });
+        setAchievementQueue(rest.map((a: any) => ({ title: a.title, icon: a.icon, xpReward: a.xpReward })));
+      }
+
+      const prevPct = (Number(goal.current_amount)) / Number(goal.target_amount) * 100;
+      const nextPct = newAmount / Number(goal.target_amount) * 100;
+      let subtitle = `${fc(depositAmount)} added to your goal`;
+      if (prevPct < 25 && nextPct >= 25)  subtitle = "25% there! You're building something real 🎯";
+      else if (prevPct < 50 && nextPct >= 50) subtitle = "Halfway there! Keep this momentum 🔥";
+      else if (prevPct < 75 && nextPct >= 75) subtitle = "75%! One more push and you're done ⚡";
+      else if (isNowComplete) subtitle = "You did it. 🏆";
+
+      setCelebration({ show: true, type: isNowComplete ? "goal" : "xp", title: isNowComplete ? "Goal Complete! 🎉" : "Saved!", subtitle, xpGained: data.xpGained, icon: goal.goal_emoji || category.icon });
+      router.refresh();
+      return;
+    }
+
+    // Withdrawals and purchases — direct insert (no achievement triggers)
     const { data: tx, error: txErr } = await supabase
       .from("transactions")
       .insert({ user_id: user.id, goal_id: goal.id, amount: depositAmount, note: note || null, transaction_type: txType })
@@ -70,60 +127,29 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
 
     if (txErr) { setError(txErr.message); setLoading(false); return; }
 
-    // Compute new balance locally (trigger handles DB)
     let newAmount = Number(goal.current_amount);
-    if (txType === "deposit") {
-      newAmount += depositAmount;
+    if (txType === "goal_purchase") {
+      newAmount = Math.max(0, newAmount - depositAmount);
     } else {
       newAmount = Math.max(0, newAmount - depositAmount);
     }
+    const isNowComplete = txType === "goal_purchase" && newAmount <= 0;
 
-    const isNowComplete = (txType === "goal_purchase" || txType === "deposit") && newAmount >= Number(goal.target_amount);
-
-    // XP — only for deposits
-    let xpGained = 0;
-    if (txType === "deposit") {
-      xpGained = getXPForAction(isNowComplete ? "GOAL_COMPLETE" : "LOG_SAVING", streakDays);
+    if (txType === "goal_purchase" && isNowComplete) {
+      const xpGained = getXPForAction("GOAL_COMPLETE", streakDays);
       const { data: p } = await supabase.from("profiles").select("xp_total").eq("id", user.id).single();
       if (p) await supabase.from("profiles").update({ xp_total: p.xp_total + xpGained }).eq("id", user.id);
       await supabase.rpc("log_activity", { p_user_id: user.id, p_xp: xpGained });
+      setCelebration({ show: true, type: "goal", title: `${goal.title} — Done! 🎉`, subtitle: "You followed through. That's everything.", xpGained, icon: goal.goal_emoji || "🏆" });
+      setShowNextGoal(true);
+    } else {
+      const newPct = Math.round(newAmount / Number(goal.target_amount) * 100);
+      setCelebration({ show: true, type: "xp", title: "Withdrawal logged", subtitle: `Life happens. Your goal is still ${newPct}% complete — keep going when you're ready.`, xpGained: 0, icon: "🛡️" });
     }
 
     setGoal((prev: any) => ({ ...prev, current_amount: newAmount, is_complete: isNowComplete }));
     setTransactions((prev: any[]) => [{ ...tx, transaction_type: txType }, ...prev]);
-    setAmount("");
-    setNote("");
-    setLoading(false);
-
-    // Celebrations
-    if (txType === "goal_purchase" && isNowComplete) {
-      xpGained = getXPForAction("GOAL_COMPLETE", streakDays);
-      setCelebration({
-        show: true, type: "goal",
-        title: `${goal.title} — Done! 🎉`,
-        subtitle: "You followed through. That's everything.",
-        xpGained, icon: goal.goal_emoji || "🏆",
-      });
-      setShowNextGoal(true);
-    } else if (txType === "withdrawal") {
-      const newPct = Math.round(newAmount / Number(goal.target_amount) * 100);
-      setCelebration({
-        show: true, type: "xp",
-        title: "Withdrawal logged",
-        subtitle: `Life happens. Your goal is still ${newPct}% complete — keep going when you're ready.`,
-        xpGained: 0, icon: "🛡️",
-      });
-    } else if (txType === "deposit") {
-      const prevPct = (Number(goal.current_amount) - depositAmount) / Number(goal.target_amount) * 100;
-      const nextPct = newAmount / Number(goal.target_amount) * 100;
-      let subtitle = `${fc(depositAmount)} added to your goal`;
-      if (prevPct < 25 && nextPct >= 25) subtitle = "25% there! You're building something real 🎯";
-      else if (prevPct < 50 && nextPct >= 50) subtitle = "Halfway there! Keep this momentum 🔥";
-      else if (prevPct < 75 && nextPct >= 75) subtitle = "75%! One more push and you're done ⚡";
-      else if (isNowComplete) subtitle = "You did it. 🏆";
-      setCelebration({ show: true, type: isNowComplete ? "goal" : "xp", title: isNowComplete ? "Goal Complete! 🎉" : "Saved!", subtitle, xpGained, icon: goal.goal_emoji || category.icon });
-    }
-
+    setAmount(""); setNote(""); setLoading(false);
     router.refresh();
   }
 
@@ -307,6 +333,18 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
         xpGained={celebration.xpGained}
         icon={celebration.icon}
         onClose={() => setCelebration(prev => ({ ...prev, show: false }))}
+      />
+
+      {/* Achievement overlays — queued, auto-dismiss 3s */}
+      <CelebrationOverlay
+        show={!!currentAchievement && !celebration.show}
+        type="achievement"
+        title={currentAchievement?.title ?? ""}
+        subtitle="Badge unlocked!"
+        xpGained={currentAchievement?.xpReward}
+        icon={currentAchievement?.icon}
+        onClose={dismissAchievement}
+        autoDismissMs={3000}
       />
 
       {/* Next goal prompt — after goal purchase completion */}
