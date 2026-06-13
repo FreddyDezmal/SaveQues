@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { SUPPORTED_CURRENCIES } from "@/lib/currency";
 import { ArrowLeft, ChevronRight, Trash2 } from "lucide-react";
 import Link from "next/link";
+import NotificationSettings from "@/components/notifications/NotificationSettings";
 
 interface Props {
   profile: any;
@@ -94,6 +95,13 @@ export default function SettingsClient({ profile, email }: Props) {
           </p>
         </div>
       </div>
+
+      {/* Notifications */}
+      <NotificationSettings
+        profileId={profile.id}
+        currentHour={profile.last_notification_hour ?? 20}
+        notificationsEnabled={profile.notifications_enabled ?? false}
+      />
 
       {/* Password */}
       <div className="mb-6">

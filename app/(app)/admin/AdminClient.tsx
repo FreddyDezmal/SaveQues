@@ -43,7 +43,7 @@ interface Props {
   dailyActivity: { date: string; user_id: string; deposit_count: number; xp_gained: number; quests_completed: number }[];
 }
 
-type Tab = "overview" | "users" | "seasonal" | "events" | "activity" | "analytics";
+type Tab = "overview" | "users" | "seasonal" | "events" | "activity" | "analytics" | "notifications";
 
 const BLANK_CHALLENGE = { title: "", description: "", type: "manual", xp_reward: 200, duration_days: 7, is_active: true };
 const BLANK_EVENT = { slug: "", title: "", description: "", emoji: "⚡", event_type: "savequest", xp_reward: 300, available_from: "", available_until: "", is_annual: false, preview_days: 5, is_active: true };
@@ -73,6 +73,8 @@ export default function AdminClient({
   const [newEv,      setNewEv]      = useState(false);
   const [evForm,     setEvForm]     = useState({ ...BLANK_EVENT });
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [notifMetrics, setNotifMetrics]   = useState<any | null>(null);
+  const [notifLoading, setNotifLoading]   = useState(false);
 
   // ── Platform stats ────────────────────────────────────────────
   const totalUsers     = users.length;
@@ -754,6 +756,79 @@ export default function AdminClient({
           </div>
         );
       })()}
+      {tab === "notifications" && (() => {
+        async function loadMetrics() {
+          setNotifLoading(true);
+          try {
+            const res = await fetch("/api/admin/notifications");
+            if (res.ok) setNotifMetrics(await res.json());
+          } finally {
+            setNotifLoading(false);
+          }
+        }
+        if (!notifMetrics && !notifLoading) loadMetrics();
+
+        const m = notifMetrics?.metrics;
+        return (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display font-bold text-white">Push Notification Metrics</h2>
+              <button onClick={() => { setNotifMetrics(null); }} className="text-xs text-white/40 hover:text-white/70">Refresh</button>
+            </div>
+
+            {notifLoading && <p className="text-white/40 text-sm text-center py-8">Loading metrics…</p>}
+
+            {m && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="card p-4">
+                    <div className="font-display font-bold text-white text-2xl">{notifMetrics.subscriberCount ?? 0}</div>
+                    <div className="text-xs text-white/50 mt-0.5">Active subscribers</div>
+                  </div>
+                  <div className="card p-4">
+                    <div className="font-display font-bold text-white text-2xl">{m.total_sent}</div>
+                    <div className="text-xs text-white/50 mt-0.5">Total sent</div>
+                  </div>
+                  <div className="card p-4">
+                    <div className="font-display font-bold text-emerald-400 text-2xl">{m.delivery_rate}%</div>
+                    <div className="text-xs text-white/50 mt-0.5">Delivery rate</div>
+                    <div className="text-[10px] text-white/30">{m.total_delivered} delivered</div>
+                  </div>
+                  <div className="card p-4">
+                    <div className="font-display font-bold text-brand-400 text-2xl">{m.click_rate}%</div>
+                    <div className="text-xs text-white/50 mt-0.5">Click-through rate</div>
+                    <div className="text-[10px] text-white/30">{m.total_clicked} clicked</div>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="font-display font-semibold text-white text-sm mb-3 flex items-center gap-2">
+                    <Bell size={14} className="text-brand-400" /> By notification type
+                  </h3>
+                  <div className="card divide-y divide-surface-border">
+                    {m.by_type.map((t: any) => (
+                      <div key={t.type} className="p-3 flex items-center justify-between gap-4">
+                        <div>
+                          <p className="text-sm text-white font-medium capitalize">{t.type.replace(/_/g, " ")}</p>
+                          <p className="text-[10px] text-white/30">{t.sent} sent</p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="text-xs text-emerald-400">{t.sent > 0 ? ((t.delivered / t.sent) * 100).toFixed(0) : 0}% delivered</div>
+                          <div className="text-xs text-brand-400">{t.delivered > 0 ? ((t.clicked / t.delivered) * 100).toFixed(0) : 0}% clicked</div>
+                        </div>
+                      </div>
+                    ))}
+                    {m.by_type.length === 0 && (
+                      <p className="text-white/30 text-sm text-center py-8">No notifications sent yet.</p>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
     </div>
   );
 }
