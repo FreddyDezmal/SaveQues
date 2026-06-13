@@ -34,7 +34,7 @@ export default function SignupPage() {
     setError("");
     const supabase = createClient();
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { display_name: displayName } },
@@ -43,9 +43,18 @@ export default function SignupPage() {
     if (error) {
       setError(error.message);
       setLoading(false);
-    } else {
+      return;
+    }
+
+    // If Supabase email confirmation is ON:
+    //   data.session will be null — route to verify-email.
+    // If email confirmation is OFF:
+    //   data.session is set — route straight to dashboard.
+    if (data.session) {
       router.push("/dashboard");
       router.refresh();
+    } else {
+      router.push("/auth/verify-email");
     }
   }
 

@@ -1,8 +1,15 @@
 "use client";
 
+/**
+ * components/gamification/DailyQuestCard.tsx — SECURITY HARDENED
+ *
+ * This is the dashboard widget version of the daily quest card.
+ * XP is now awarded through POST /api/quest/daily/complete — identical
+ * to QuestsClient. No direct Supabase profile writes.
+ */
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { getTodaysDailyQuest } from "@/lib/quests";
 import { getXPForAction } from "@/lib/xp";
 import CelebrationOverlay from "./CelebrationOverlay";
@@ -15,44 +22,35 @@ interface Props {
   todayQuestId?: string;
 }
 
-export default function DailyQuestCard({ userId, streakDays, completedToday: initialCompleted, todayQuestId }: Props) {
+export default function DailyQuestCard({ userId, streakDays, completedToday: initialCompleted }: Props) {
   const router = useRouter();
-  const [completed, setCompleted] = useState(initialCompleted);
-  const [loading, setLoading] = useState(false);
+  const [completed, setCompleted]     = useState(initialCompleted);
+  const [loading, setLoading]         = useState(false);
   const [celebration, setCelebration] = useState({ show: false, xp: 0 });
 
-  const quest = getTodaysDailyQuest();
-  const xpReward = getXPForAction("DAILY_QUEST_COMPLETE", streakDays);
+  const quest     = getTodaysDailyQuest();
+  const xpReward  = getXPForAction("DAILY_QUEST_COMPLETE", streakDays);
 
   async function completeQuest() {
-    if (completed) return;
+    if (completed || loading) return;
     setLoading(true);
-    const supabase = createClient();
 
-    // Log the daily quest
-    const today = new Date().toISOString().split("T")[0];
-    await supabase.from("daily_quest_logs").upsert({
-      user_id: userId,
-      quest_id: quest.id,
-      quest_date: today,
-      xp_earned: xpReward,
-    }, { onConflict: "user_id,quest_date" });
+    const res  = await fetch("/api/quest/daily/complete", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ questId: quest.id }),
+    });
+    const data = await res.json();
 
-    // Award XP
-    const { data: profile } = await supabase.from("profiles").select("xp_total, daily_quests_completed").eq("id", userId).single();
-    if (profile) {
-      await supabase.from("profiles").update({
-        xp_total: profile.xp_total + xpReward,
-        daily_quests_completed: (profile.daily_quests_completed ?? 0) + 1,
-      }).eq("id", userId);
+    if (!res.ok) {
+      console.error("[DailyQuestCard]", data.error);
+      setLoading(false);
+      return;
     }
-
-    // Log activity
-    await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xpReward });
 
     setCompleted(true);
     setLoading(false);
-    setCelebration({ show: true, xp: xpReward });
+    setCelebration({ show: true, xp: data.xpGained ?? 0 });
     router.refresh();
   }
 
@@ -104,7 +102,7 @@ export default function DailyQuestCard({ userId, streakDays, completedToday: ini
         subtitle={quest.title}
         xpGained={celebration.xp}
         icon={quest.icon}
-        onClose={() => { setCelebration({ show: false, xp: 0 }); }}
+        onClose={() => setCelebration({ show: false, xp: 0 })}
       />
     </>
   );

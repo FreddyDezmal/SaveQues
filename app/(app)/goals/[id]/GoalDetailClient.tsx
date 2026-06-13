@@ -136,11 +136,14 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
     const isNowComplete = txType === "goal_purchase" && newAmount <= 0;
 
     if (txType === "goal_purchase" && isNowComplete) {
-      const xpGained = getXPForAction("GOAL_COMPLETE", streakDays);
-      const { data: p } = await supabase.from("profiles").select("xp_total").eq("id", user.id).single();
-      if (p) await supabase.from("profiles").update({ xp_total: p.xp_total + xpGained }).eq("id", user.id);
-      await supabase.rpc("log_activity", { p_user_id: user.id, p_xp: xpGained });
-      setCelebration({ show: true, type: "goal", title: `${goal.title} — Done! 🎉`, subtitle: "You followed through. That's everything.", xpGained, icon: goal.goal_emoji || "🏆" });
+      // XP awarded server-side through awardGoalCompleteXP() — no direct browser write.
+      const xpRes  = await fetch("/api/goal/purchase-complete", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ goalId: goal.id }),
+      });
+      const xpData = xpRes.ok ? await xpRes.json() : { xpGained: 0 };
+      setCelebration({ show: true, type: "goal", title: `${goal.title} — Done! 🎉`, subtitle: "You followed through. That's everything.", xpGained: xpData.xpGained ?? 0, icon: goal.goal_emoji || "🏆" });
       setShowNextGoal(true);
     } else {
       const newPct = Math.round(newAmount / Number(goal.target_amount) * 100);

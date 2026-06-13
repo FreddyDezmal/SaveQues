@@ -1,5 +1,16 @@
 "use client";
 
+/**
+ * components/events/EventCard.tsx — SECURITY HARDENED
+ *
+ * Changes from original:
+ *  • handleComplete() now calls POST /api/events/complete — no direct
+ *    Supabase profile writes from the browser.
+ *  • handleJoin() still calls Supabase directly (join is XP-free and
+ *    the user_event_participation table is RLS-scoped to the user).
+ *  • XP reward displayed from server-resolved event prop only.
+ */
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -15,7 +26,7 @@ interface Props {
 
 export default function EventCard({ event, userId, participationStatus }: Props) {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading]         = useState(false);
   const [localStatus, setLocalStatus] = useState(participationStatus);
 
   const isJoined    = localStatus === "active";
@@ -23,6 +34,9 @@ export default function EventCard({ event, userId, participationStatus }: Props)
   const canJoin     = event.window.canJoin && localStatus === "none";
   const isUpcoming  = event.window.status === "upcoming";
 
+  // Join is XP-free — direct Supabase insert is acceptable here.
+  // The user_event_participation table has RLS (auth.uid() = user_id)
+  // and a UNIQUE (user_id, event_slug) constraint.
   async function handleJoin() {
     if (!canJoin) return;
     setLoading(true);
@@ -38,22 +52,23 @@ export default function EventCard({ event, userId, participationStatus }: Props)
     router.refresh();
   }
 
+  // Complete goes through the server route — no direct profile.xp_total write.
   async function handleComplete() {
     if (!isJoined) return;
     setLoading(true);
-    const supabase = createClient();
 
-    await supabase.from("user_event_participation").update({
-      status:      "completed",
-      completed_at: new Date().toISOString(),
-      xp_earned:   event.xp_reward,
-    }).eq("user_id", userId).eq("event_slug", event.id);
+    const res  = await fetch("/api/events/complete", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ eventSlug: event.id }),
+    });
+    const data = await res.json();
 
-    const { data: p } = await supabase.from("profiles").select("xp_total").eq("id", userId).single();
-    if (p) {
-      await supabase.from("profiles").update({ xp_total: p.xp_total + event.xp_reward }).eq("id", userId);
+    if (!res.ok) {
+      console.error("[EventCard.handleComplete]", data.error);
+      setLoading(false);
+      return;
     }
-    await supabase.rpc("log_activity", { p_user_id: userId, p_xp: event.xp_reward });
 
     setLocalStatus("completed");
     setLoading(false);
@@ -68,7 +83,6 @@ export default function EventCard({ event, userId, participationStatus }: Props)
                     ""
     }`}>
       <div className="flex items-start gap-3 mb-3">
-        {/* Emoji icon */}
         <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-2xl flex-shrink-0 border ${
           isUpcoming  ? "bg-surface-elevated border-surface-border" :
           isCompleted ? "bg-emerald-500/10 border-emerald-500/20" :
@@ -81,15 +95,12 @@ export default function EventCard({ event, userId, participationStatus }: Props)
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2 mb-0.5">
             <p className="font-display font-semibold text-white text-sm leading-tight">{event.title}</p>
-            {/* XP badge */}
             <div className="flex items-center gap-1 bg-surface-elevated border border-surface-border rounded-full px-2 py-0.5 flex-shrink-0">
               <Zap size={10} className="text-white/40" />
               <span className="text-white/50 text-[10px] font-bold">{event.xp_reward}</span>
             </div>
           </div>
           <p className="text-xs text-white/40 leading-snug">{event.description}</p>
-
-          {/* Event type pill */}
           <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
             <span className="text-[10px] text-white/25 border border-surface-border rounded-full px-1.5 py-0.5 capitalize">
               {event.event_type.replace("_", " ")}
@@ -99,7 +110,6 @@ export default function EventCard({ event, userId, participationStatus }: Props)
         </div>
       </div>
 
-      {/* Action area */}
       {isCompleted && (
         <div className="text-center text-emerald-400 text-xs font-medium py-1.5">
           ✅ Completed · +{event.xp_reward} XP earned

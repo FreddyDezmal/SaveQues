@@ -59,21 +59,27 @@ export default async function DashboardPage() {
     } else if (diff === 2 && (profile.streak_shields ?? 0) > 0) {
       // Grace day absorbs the missed day
       newStreak = profile.streak_days + 1;
-      await supabase.from("profiles").update({
-        streak_shields: (profile.streak_shields ?? 0) - 1,
-        total_shields_used: (profile.total_shields_used ?? 0) + 1,
-      }).eq("id", user.id);
     } else if (diff > 1) {
       newStreak = 1;
     }
 
-    const longestStreak = Math.max(newStreak, profile.longest_streak ?? 0);
-    await supabase.from("profiles").update({
-      last_active_date: today,
-      streak_days: newStreak,
-      longest_streak: longestStreak,
-    }).eq("id", user.id);
-    profile.streak_days = newStreak;
+    const usedShield     = diff === 2 && (profile.streak_shields ?? 0) > 0;
+    const newShields     = usedShield ? (profile.streak_shields ?? 0) - 1 : (profile.streak_shields ?? 0);
+    const newShieldsUsed = usedShield ? (profile.total_shields_used ?? 0) + 1 : (profile.total_shields_used ?? 0);
+    const longestStreak  = Math.max(newStreak, profile.longest_streak ?? 0);
+
+    // update_streak() is SECURITY DEFINER — bypasses the hardened RLS on
+    // streak_days and related columns. Direct .update() is no longer allowed
+    // since those columns are now protected from browser writes.
+    await supabase.rpc("update_streak", {
+      p_user_id:      user.id,
+      p_today:        today,
+      p_new_streak:   newStreak,
+      p_longest:      longestStreak,
+      p_shields:      newShields,
+      p_shields_used: newShieldsUsed,
+    });
+    profile.streak_days      = newStreak;
     profile.last_active_date = today;
   }
 

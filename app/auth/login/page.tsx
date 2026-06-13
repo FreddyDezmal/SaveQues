@@ -27,10 +27,15 @@ function LoginForm() {
     if (error) {
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
+
       if (newAttempts >= 5) {
         setError("Too many attempts. Please reset your password or wait a few minutes.");
+      } else if (error.message.toLowerCase().includes("email not confirmed")) {
+        setError("Please verify your email first. Check your inbox for a confirmation link.");
       } else {
-        setError("Incorrect email or password.");
+        // Show the real error — do not replace with a generic message.
+        // Common real errors: "Invalid login credentials", rate limiting, etc.
+        setError(error.message);
       }
       setLoading(false);
     } else {
@@ -51,6 +56,12 @@ function LoginForm() {
         {reason === "session_expired" && (
           <div className="bg-surface-elevated border border-surface-border rounded-xl px-4 py-3 text-white/50 text-sm mb-4 text-center">
             Your session ended — sign back in to continue.
+          </div>
+        )}
+
+        {reason === "confirmation_failed" && (
+          <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-red-400 text-sm mb-4 text-center">
+            Your confirmation link has expired or already been used. Please sign in and request a new one.
           </div>
         )}
 
