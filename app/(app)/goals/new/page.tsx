@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { GOAL_CATEGORIES, GOAL_EMOJIS } from "@/lib/utils";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { trackEvent, AnalyticsEvents } from "@/lib/analytics";
 
 type Step = 1 | 2 | 3;
 
@@ -49,6 +50,26 @@ export default function NewGoalPage() {
       setError(err.message);
       setLoading(false);
     } else {
+      // Track goal creation and first-goal activation milestone
+      const { data: existingGoals } = await supabase
+        .from("savings_goals")
+        .select("id")
+        .eq("user_id", user.id);
+
+      const isFirstGoal = (existingGoals?.length ?? 0) <= 1;
+
+      trackEvent(AnalyticsEvents.GOAL_CREATED, {
+        goal_category:  category,
+        target_amount:  Number(targetAmount),
+      });
+
+      if (isFirstGoal) {
+        trackEvent(AnalyticsEvents.FIRST_GOAL_CREATED, {
+          goal_category: category,
+          target_amount: Number(targetAmount),
+        });
+      }
+
       router.push("/goals");
       router.refresh();
     }

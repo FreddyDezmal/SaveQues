@@ -1,0 +1,170 @@
+/**
+ * lib/awardXP.ts
+ * ─────────────────────────────────────────────────────────────
+ * THE single authoritative path for awarding XP in SaveQuest.
+ *
+ * Rules:
+ *  • Only call this from server-side code (API routes / Server Components).
+ *  • Never call this from client components.
+ *  • Every XP grant must have a source_type and a source_id that together
+ *    form a unique key for that specific real-world event.
+ *
+ * Idempotency guarantee:
+ *  • The underlying award_xp() Postgres function inserts into xp_awards
+ *    with a UNIQUE (user_id, source_type, source_id) constraint.
+ *  • A duplicate call returns { xpAwarded: 0, reason: "already_awarded" }
+ *    without throwing — callers can treat this as a success.
+ */
+
+import { createClient } from "@/lib/supabase/server";
+import { checkAchievements, ACHIEVEMENTS } from "@/lib/achievements";
+
+// ── Types ─────────────────────────────────────────────────────
+
+export type XPSourceType =
+  | "daily_quest"
+  | "weekly_quest"
+  | "challenge"
+  | "chain_step"
+  | "chain_complete"
+  | "log_saving"
+  | "goal_complete"
+  | "event_complete"
+  | "achievement"
+  | "admin_grant";
+
+export interface AwardXPResult {
+  success: boolean;
+  xpAwarded: number;
+  newTotal: number;
+  alreadyAwarded: boolean;
+  error?: string;
+}
+
+export interface AwardXPWithAchievementsResult extends AwardXPResult {
+  newAchievements: {
+    id: string;
+    title: string;
+    icon: string;
+    xpReward: number;
+  }[];
+}
+
+// ── Core awardXP ─────────────────────────────────────────────
+
+/**
+ * Awards XP for a single action.
+ * Idempotent: calling twice with the same (userId, sourceType, sourceId)
+ * is safe — the second call returns alreadyAwarded: true, xpAwarded: 0.
+ */
+export async function awardXP(
+  userId: string,
+  sourceType: XPSourceType,
+  sourceId: string,
+  xp: number
+): Promise<AwardXPResult> {
+  const supabase = createClient();
+
+  const { data, error } = await supabase.rpc("award_xp", {
+    p_user_id:     userId,
+    p_source_type: sourceType,
+    p_source_id:   sourceId,
+    p_xp:          xp,
+  });
+
+  if (error) {
+    console.error("[awardXP] RPC error:", error);
+    return { success: false, xpAwarded: 0, newTotal: 0, alreadyAwarded: false, error: error.message };
+  }
+
+  const result = data as { success: boolean; xp_awarded: number; new_total: number; reason?: string; error?: string };
+
+  return {
+    success:        result.success,
+    xpAwarded:      result.xp_awarded ?? 0,
+    newTotal:       result.new_total  ?? 0,
+    alreadyAwarded: result.reason === "already_awarded",
+    error:          result.error,
+  };
+}
+
+// ── Achievement checker ───────────────────────────────────────
+
+/**
+ * Checks for newly unlocked achievements and awards their XP atomically.
+ * Returns the list of newly unlocked achievements (for UI celebration).
+ */
+export async function checkAndAwardAchievements(
+  userId: string,
+  params: Parameters<typeof checkAchievements>[0]
+): Promise<{ id: string; title: string; icon: string; xpReward: number }[]> {
+  const supabase = createClient();
+
+  const newAchievements = checkAchievements(params);
+  if (newAchievements.length === 0) return [];
+
+  const awarded: typeof newAchievements = [];
+
+  for (const achievement of newAchievements) {
+    const { data, error } = await supabase.rpc("award_achievement", {
+      p_user_id:        userId,
+      p_achievement_id: achievement.id,
+      p_xp:             achievement.xpReward,
+    });
+
+    if (error) {
+      console.error("[checkAndAwardAchievements] RPC error for", achievement.id, error);
+      continue;
+    }
+
+    const result = data as { success: boolean; xp_awarded: number; reason?: string };
+    // Only surface to the UI if it was actually newly granted this call
+    if (result.success && (result.xp_awarded ?? 0) > 0) {
+      awarded.push(achievement);
+    }
+  }
+
+  return awarded;
+}
+
+// ── Composite helpers used by API routes ─────────────────────
+
+/**
+ * Awards XP for a LOG_SAVING action and checks achievements.
+ * sourceId = transaction UUID (ensures one XP award per transaction).
+ */
+export async function awardSavingXP(params: {
+  userId: string;
+  transactionId: string;
+  xp: number;
+  achievementParams: Parameters<typeof checkAchievements>[0];
+}): Promise<AwardXPWithAchievementsResult> {
+  const primary = await awardXP(params.userId, "log_saving", params.transactionId, params.xp);
+  if (!primary.success) return { ...primary, newAchievements: [] };
+
+  const newAchievements = primary.alreadyAwarded
+    ? []
+    : await checkAndAwardAchievements(params.userId, params.achievementParams);
+
+  return { ...primary, newAchievements };
+}
+
+/**
+ * Awards XP for a GOAL_COMPLETE action and checks achievements.
+ * sourceId = goal UUID (ensures one award per goal completion).
+ */
+export async function awardGoalCompleteXP(params: {
+  userId: string;
+  goalId: string;
+  xp: number;
+  achievementParams: Parameters<typeof checkAchievements>[0];
+}): Promise<AwardXPWithAchievementsResult> {
+  const primary = await awardXP(params.userId, "goal_complete", params.goalId, params.xp);
+  if (!primary.success) return { ...primary, newAchievements: [] };
+
+  const newAchievements = primary.alreadyAwarded
+    ? []
+    : await checkAndAwardAchievements(params.userId, params.achievementParams);
+
+  return { ...primary, newAchievements };
+}

@@ -28,6 +28,8 @@ export default async function AdminPage() {
     achievementsRes,
     activityRes,
     eventsRes,
+    engagementRes,
+    dailyActivityRes,
   ] = await Promise.all([
     service.from("profiles").select("id, display_name, avatar_emoji, xp_total, current_level, streak_days, longest_streak, last_active_date, is_admin, country_code, created_at").order("created_at", { ascending: false }),
     service.from("savings_goals").select("id, user_id, title, category, target_amount, current_amount, is_complete, created_at"),
@@ -40,6 +42,21 @@ export default async function AdminPage() {
       new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0]
     ),
     service.from("events").select("*, event_regions(region)").order("created_at", { ascending: false }),
+    // Analytics: engagement status counts
+    service.from("user_engagement_status").select("status").then(res => {
+      if (res.error) return { data: [] };
+      const counts = new Map<string, number>();
+      for (const row of res.data ?? []) {
+        counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+      }
+      return { data: Array.from(counts.entries()).map(([status, count]) => ({ status, count })) };
+    }),
+    // Analytics: daily activity last 35 days (enough for D30 retention)
+    service.from("analytics_daily_activity")
+      .select("date, user_id, deposit_count, xp_gained, quests_completed")
+      .gte("date", new Date(Date.now() - 35 * 86400000).toISOString().split("T")[0])
+      .order("date", { ascending: true })
+      .then(res => ({ data: res.data ?? [], error: res.error })),
   ]);
 
   // Fetch auth emails via admin API — only available with service role
@@ -69,6 +86,8 @@ export default async function AdminPage() {
       activityLog={activityRes.data ?? []}
       adminName={profile.display_name}
       dbEvents={eventsRes.data ?? []}
+      engagementStatuses={engagementRes.data ?? []}
+      dailyActivity={dailyActivityRes.data ?? []}
     />
   );
 }

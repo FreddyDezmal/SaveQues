@@ -10,20 +10,8 @@ import { format, subDays } from "date-fns";
 import {
   Users, Target, Zap, TrendingUp, Plus, Edit2, Trash2,
   ToggleLeft, ToggleRight, ShieldCheck, Check, AlertTriangle,
-  Calendar, CheckCircle, XCircle,
+  Calendar, CheckCircle, XCircle, BarChart2,
 } from "lucide-react";
-
-interface Props {
-  users: any[];
-  goals: any[];
-  transactions: any[];
-  challenges: any[];
-  userChallenges: any[];
-  userAchievements: any[];
-  activityLog: any[];
-  adminName: string;
-  dbEvents: any[];
-}
 
 // Simple toast component
 function Toast({ message, type, onDone }: { message: string; type: "success" | "error"; onDone: () => void }) {
@@ -50,9 +38,12 @@ interface Props {
   activityLog: any[];
   adminName: string;
   dbEvents: any[];
+  // Analytics data (Step 7)
+  engagementStatuses: { status: string; count: number }[];
+  dailyActivity: { date: string; user_id: string; deposit_count: number; xp_gained: number; quests_completed: number }[];
 }
 
-type Tab = "overview" | "users" | "seasonal" | "events" | "activity";
+type Tab = "overview" | "users" | "seasonal" | "events" | "activity" | "analytics";
 
 const BLANK_CHALLENGE = { title: "", description: "", type: "manual", xp_reward: 200, duration_days: 7, is_active: true };
 const BLANK_EVENT = { slug: "", title: "", description: "", emoji: "⚡", event_type: "savequest", xp_reward: 300, available_from: "", available_until: "", is_annual: false, preview_days: 5, is_active: true };
@@ -60,6 +51,7 @@ const BLANK_EVENT = { slug: "", title: "", description: "", emoji: "⚡", event_
 export default function AdminClient({
   users, goals, transactions, challenges,
   userChallenges, userAchievements, activityLog, adminName, dbEvents,
+  engagementStatuses, dailyActivity,
 }: Props) {
   const router = useRouter();
   const [tab, setTab]           = useState<Tab>("overview");
@@ -193,6 +185,7 @@ export default function AdminClient({
     { id: "seasonal",  label: "Seasonal",  icon: <Zap size={14} /> },
     { id: "events",    label: "Events",    icon: <Calendar size={14} /> },
     { id: "activity",  label: "Activity",  icon: <Target size={14} /> },
+    { id: "analytics", label: "Analytics", icon: <BarChart2 size={14} /> },
   ];
 
   return (
@@ -629,6 +622,138 @@ export default function AdminClient({
           </div>
         </div>
       )}
+
+      {/* ── ANALYTICS ────────────────────────────────── */}
+      {tab === "analytics" && (() => {
+        // ── Compute metrics from props ──────────────────────────────
+        const totalUsers   = users.length;
+        const deposits     = transactions.filter(t => Number(t.amount) > 0);
+        const today        = new Date();
+
+        // Engagement status counts
+        const statusMap = Object.fromEntries(engagementStatuses.map(s => [s.status, s.count]));
+        const activeUsers  = statusMap["active"]  ?? 0;
+        const atRiskUsers  = statusMap["at_risk"]  ?? 0;
+        const churnedUsers = statusMap["churned"]  ?? 0;
+
+        // Fallback: compute from users array if engagement table not yet populated
+        const sevenDaysAgo   = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
+        const recentlyActive = users.filter(u => u.last_active_date && u.last_active_date >= sevenDaysAgo).length;
+        const displayActive  = engagementStatuses.length > 0 ? activeUsers : recentlyActive;
+
+        // Activation funnel
+        const usersWithGoals    = new Set(goals.map(g => g.user_id)).size;
+        const usersWithDeposits = new Set(deposits.map(t => t.user_id)).size;
+        const usersWithAchieves = new Set(userAchievements.map(a => a.user_id)).size;
+        const signupToGoalPct   = totalUsers > 0 ? ((usersWithGoals    / totalUsers)    * 100).toFixed(1) : "0";
+        const goalToDepositPct  = usersWithGoals > 0 ? ((usersWithDeposits / usersWithGoals) * 100).toFixed(1) : "0";
+        const depositToAchPct   = usersWithDeposits > 0 ? ((usersWithAchieves / usersWithDeposits) * 100).toFixed(1) : "0";
+
+        // Retention — D1 / D7 / D30
+        // For each cohort day, check what % came back on day N
+        function retentionRate(cohortDays: number, returnDays: number): string {
+          const cohortDate = new Date(Date.now() - cohortDays * 86400000).toISOString().split("T")[0];
+          const returnDate = new Date(Date.now() - returnDays * 86400000).toISOString().split("T")[0];
+          const cohortUsers = new Set(
+            dailyActivity.filter(a => a.date === cohortDate).map(a => a.user_id)
+          );
+          if (cohortUsers.size === 0) return "—";
+          const returned = dailyActivity.filter(a => a.date === returnDate && cohortUsers.has(a.user_id)).length;
+          return ((returned / cohortUsers.size) * 100).toFixed(1) + "%";
+        }
+        const d1  = retentionRate(1,  0);
+        const d7  = retentionRate(7,  0);
+        const d30 = retentionRate(30, 0);
+
+        // Engagement averages (last 28 days)
+        const last28Days = Array.from({ length: 28 }, (_, i) =>
+          new Date(Date.now() - (27 - i) * 86400000).toISOString().split("T")[0]
+        );
+        const recentActivity = dailyActivity.filter(a => last28Days.includes(a.date));
+        const uniqueActiveWeekUsers = new Set(recentActivity.map(a => a.user_id)).size;
+        const totalDepositsLast28   = recentActivity.reduce((s, a) => s + a.deposit_count, 0);
+        const totalXPLast28         = recentActivity.reduce((s, a) => s + a.xp_gained, 0);
+        const totalQuestsLast28     = recentActivity.reduce((s, a) => s + a.quests_completed, 0);
+        const avgDepositsPerWeek    = uniqueActiveWeekUsers > 0
+          ? ((totalDepositsLast28 / 4) / uniqueActiveWeekUsers).toFixed(1) : "0";
+        const avgXPPerWeek          = uniqueActiveWeekUsers > 0
+          ? Math.round((totalXPLast28 / 4) / uniqueActiveWeekUsers) : 0;
+        const avgQuestsCompleted    = uniqueActiveWeekUsers > 0
+          ? ((totalQuestsLast28 / 4) / uniqueActiveWeekUsers).toFixed(1) : "0";
+
+        return (
+          <div className="space-y-4">
+            {/* Users */}
+            <div>
+              <h3 className="font-display font-semibold text-white text-sm mb-3 flex items-center gap-2">
+                <Users size={14} className="text-brand-400" /> Users
+              </h3>
+              <div className="grid grid-cols-2 gap-3">
+                <AnalyticsCard label="Total Users"   value={String(totalUsers)}   color="text-white" />
+                <AnalyticsCard label="Active"        value={String(displayActive)} color="text-emerald-400" sub="last 7 days" />
+                <AnalyticsCard label="At Risk"       value={String(atRiskUsers)}  color="text-amber-400"   sub="4–7 days inactive" />
+                <AnalyticsCard label="Churned"       value={String(churnedUsers)} color="text-red-400"     sub="8+ days inactive" />
+              </div>
+            </div>
+
+            {/* Activation Funnel */}
+            <div>
+              <h3 className="font-display font-semibold text-white text-sm mb-3 flex items-center gap-2">
+                <TrendingUp size={14} className="text-brand-400" /> Activation Funnel
+              </h3>
+              <div className="card p-4 space-y-3">
+                <FunnelStep label="Signup → Goal Created"      pct={signupToGoalPct}  users={usersWithGoals}    total={totalUsers} />
+                <FunnelStep label="Goal → First Deposit"       pct={goalToDepositPct} users={usersWithDeposits} total={usersWithGoals} />
+                <FunnelStep label="Deposit → First Achievement" pct={depositToAchPct} users={usersWithAchieves} total={usersWithDeposits} />
+              </div>
+            </div>
+
+            {/* Retention */}
+            <div>
+              <h3 className="font-display font-semibold text-white text-sm mb-3 flex items-center gap-2">
+                <BarChart2 size={14} className="text-brand-400" /> Retention
+              </h3>
+              <div className="grid grid-cols-3 gap-3">
+                <AnalyticsCard label="D1 Retention"  value={d1}  color="text-brand-400" sub="day-1 return" />
+                <AnalyticsCard label="D7 Retention"  value={d7}  color="text-brand-400" sub="day-7 return" />
+                <AnalyticsCard label="D30 Retention" value={d30} color="text-brand-400" sub="day-30 return" />
+              </div>
+              <p className="text-[10px] text-white/25 mt-2 px-1">
+                Retention = users from a cohort who were active on a later day. Requires analytics_daily_activity data to populate.
+              </p>
+            </div>
+
+            {/* Engagement */}
+            <div>
+              <h3 className="font-display font-semibold text-white text-sm mb-3 flex items-center gap-2">
+                <Zap size={14} className="text-brand-400" /> Engagement (last 28 days)
+              </h3>
+              <div className="grid grid-cols-3 gap-3">
+                <AnalyticsCard label="Avg Deposits / Week"  value={avgDepositsPerWeek}    color="text-emerald-400" sub="per active user" />
+                <AnalyticsCard label="Avg XP / Week"        value={String(avgXPPerWeek)}   color="text-brand-400"   sub="per active user" />
+                <AnalyticsCard label="Avg Quests / Week"    value={avgQuestsCompleted}     color="text-purple-400"  sub="per active user" />
+              </div>
+            </div>
+
+            {/* Churn breakdown bar */}
+            {totalUsers > 0 && (
+              <div className="card p-4">
+                <h3 className="font-display font-semibold text-white text-sm mb-3">User Health Distribution</h3>
+                <div className="flex h-3 rounded-full overflow-hidden gap-0.5 mb-2">
+                  {displayActive > 0  && <div className="bg-emerald-500 transition-all" style={{ width: `${(displayActive / totalUsers) * 100}%` }} />}
+                  {atRiskUsers > 0    && <div className="bg-amber-500  transition-all" style={{ width: `${(atRiskUsers  / totalUsers) * 100}%` }} />}
+                  {churnedUsers > 0   && <div className="bg-red-500    transition-all" style={{ width: `${(churnedUsers / totalUsers) * 100}%` }} />}
+                </div>
+                <div className="flex items-center gap-4 text-xs text-white/40">
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Active {displayActive}</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />At Risk {atRiskUsers}</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />Churned {churnedUsers}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -640,6 +765,36 @@ function KPICard({ icon, label, value, sub }: { icon: string; label: string; val
       <div className="font-display font-bold text-white text-xl leading-tight">{value}</div>
       <div className="text-xs text-white/50 mt-0.5">{label}</div>
       <div className="text-[10px] text-white/30 mt-0.5">{sub}</div>
+    </div>
+  );
+}
+
+function AnalyticsCard({
+  label, value, color, sub,
+}: { label: string; value: string; color: string; sub?: string }) {
+  return (
+    <div className="card p-4">
+      <div className={`font-display font-bold text-2xl leading-tight ${color}`}>{value}</div>
+      <div className="text-xs text-white/50 mt-0.5">{label}</div>
+      {sub && <div className="text-[10px] text-white/25 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function FunnelStep({
+  label, pct, users, total,
+}: { label: string; pct: string; users: number; total: number }) {
+  const width = total > 0 ? (users / total) * 100 : 0;
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-white/60">{label}</span>
+        <span className="text-xs font-bold text-brand-400">{pct}%</span>
+      </div>
+      <div className="h-1.5 bg-surface-border rounded-full overflow-hidden">
+        <div className="h-full bg-brand-500 rounded-full transition-all" style={{ width: `${width}%` }} />
+      </div>
+      <div className="text-[10px] text-white/25 mt-0.5">{users} of {total} users</div>
     </div>
   );
 }

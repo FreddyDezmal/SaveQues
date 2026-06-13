@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { trackEvent, identifyUser, AnalyticsEvents } from "@/lib/analytics";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -24,6 +25,11 @@ export default function SignupPage() {
     { id: "custom",    label: "Something Else",  icon: "⭐" },
   ];
 
+  // Track signup_started once when the page first loads
+  useEffect(() => {
+    trackEvent(AnalyticsEvents.SIGNUP_STARTED);
+  }, []);
+
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
     if (step === 1) { setStep(2); return; }
@@ -34,7 +40,7 @@ export default function SignupPage() {
     setError("");
     const supabase = createClient();
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { data: { display_name: displayName } },
@@ -43,9 +49,30 @@ export default function SignupPage() {
     if (error) {
       setError(error.message);
       setLoading(false);
-    } else {
+      return;
+    }
+
+    // Track successful signup and identify the new user
+    if (data.user) {
+      trackEvent(AnalyticsEvents.SIGNUP_COMPLETED, {
+        saving_for: savingFor,
+      });
+      identifyUser(data.user.id, {
+        display_name: displayName,
+        saving_for:   savingFor,
+        created_at:   new Date().toISOString(),
+      });
+    }
+
+    // If Supabase email confirmation is ON:
+    //   data.session will be null — route to verify-email.
+    // If email confirmation is OFF:
+    //   data.session is set — route straight to dashboard.
+    if (data.session) {
       router.push("/dashboard");
       router.refresh();
+    } else {
+      router.push("/auth/verify-email");
     }
   }
 

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 // @ts-ignore
 import "./globals.css";
+import AnalyticsProvider from "@/components/AnalyticsProvider";
 
 export const metadata: Metadata = {
   title: "SaveQuest — Level Up Your Savings",
@@ -23,7 +24,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="font-body bg-surface-base text-white antialiased min-h-screen">
-        {children}
+        <AnalyticsProvider>
+          {children}
+        </AnalyticsProvider>
       </body>
     </html>
   );

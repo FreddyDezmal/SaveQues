@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import { getXPForAction } from "@/lib/xp";
-import { checkAchievements } from "@/lib/achievements";
 import type { QuestTemplate } from "@/lib/quests";
+import { getXPForAction } from "@/lib/xp";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import Link from "next/link";
 import { Zap, CheckCircle, Clock, Trophy, Calendar, Sparkles, Timer } from "lucide-react";
@@ -18,16 +16,15 @@ interface Props {
   todaysDailyQuest: QuestTemplate;
   thisWeeksQuest: QuestTemplate;
   dailyCompletedToday: boolean;
-  weeklyQuestState: any | null;   // row from user_weekly_quests
-  currentWeekStart: string;       // ISO Monday date
-  weekEndDate: string;            // ISO Sunday 23:59 — everyone sees the same deadline
+  weeklyQuestState: any | null;
+  currentWeekStart: string;
+  weekEndDate: string;
 }
 
 type QuestTab = "daily" | "weekly" | "seasonal";
 
-// ── helpers ────────────────────────────────────────────────────
 function getDaysRemainingInWeek(weekEndDate: string): number {
-  const end = new Date(weekEndDate).getTime() + 86400000; // inclusive end of Sunday
+  const end = new Date(weekEndDate).getTime() + 86400000;
   const now  = Date.now();
   return Math.max(0, Math.ceil((end - now) / 86400000));
 }
@@ -48,8 +45,8 @@ export default function QuestsClient({
   weeklyQuestState, currentWeekStart, weekEndDate,
 }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab]   = useState<QuestTab>("daily");
-  const [loading, setLoading]       = useState<string | null>(null);
+  const [activeTab, setActiveTab]     = useState<QuestTab>("daily");
+  const [loading, setLoading]         = useState<string | null>(null);
   const [celebration, setCelebration] = useState({ show: false, title: "", xp: 0, icon: "" });
   const [achievementQueue, setAchievementQueue] = useState<{ title: string; icon: string; xpReward: number }[]>([]);
   const [currentAchievement, setCurrentAchievement] = useState<{ title: string; icon: string; xpReward: number } | null>(null);
@@ -73,206 +70,156 @@ export default function QuestsClient({
     setAchievementQueue(rest);
   }
 
-  // ── Seasonal (challenges) state ────────────────────────────
-  const activeUCs    = userChallenges.filter(uc => uc.status === "active");
-  const completedUCs = userChallenges.filter(uc => uc.status === "completed");
-  const activeIds    = new Set(activeUCs.map(uc => uc.challenge_id));
-  const completedIds = new Set(completedUCs.map(uc => uc.challenge_id));
+  // Derived state
+  const activeUCs        = userChallenges.filter(uc => uc.status === "active");
+  const completedUCs     = userChallenges.filter(uc => uc.status === "completed");
+  const activeIds        = new Set(activeUCs.map(uc => uc.challenge_id));
+  const completedIds     = new Set(completedUCs.map(uc => uc.challenge_id));
   const availableChallenges = allChallenges.filter(c => !activeIds.has(c.id) && !completedIds.has(c.id));
 
-  // ── Weekly derived state ───────────────────────────────────
-  const weeklyStatus   = weeklyQuestState?.status ?? "none"; // "none"|"active"|"completed"|"expired"
+  const weeklyStatus   = weeklyQuestState?.status ?? "none";
   const weeklyAccepted = weeklyStatus !== "none";
   const weeklyDone     = weeklyStatus === "completed";
 
-  // ── DAILY ──────────────────────────────────────────────────
+  // ── DAILY ──────────────────────────────────────────────────────────────────
+  // All XP logic moved to POST /api/quest/daily/complete — no direct Supabase
   async function completeDailyQuest() {
     if (dailyCompletedToday || loading) return;
     setLoading("daily");
-    const supabase = createClient();
-    const today    = new Date().toISOString().split("T")[0];
-    const xp       = getXPForAction("DAILY_QUEST_COMPLETE", profile.streak_days);
 
-    await supabase.from("daily_quest_logs").upsert(
-      { user_id: userId, quest_id: todaysDailyQuest.id, quest_date: today, xp_earned: xp },
-      { onConflict: "user_id,quest_date" }
-    );
-    const { data: p } = await supabase.from("profiles")
-      .select("xp_total, daily_quests_completed").eq("id", userId).single();
-    if (p) {
-      await supabase.from("profiles").update({
-        xp_total: p.xp_total + xp,
-        daily_quests_completed: (p.daily_quests_completed ?? 0) + 1,
-      }).eq("id", userId);
+    const res  = await fetch("/api/quest/daily/complete", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ questId: todaysDailyQuest.id }),
+    });
+    const data = await res.json();
 
-      // Check achievements with updated daily count
-      const newDailyCount = (p.daily_quests_completed ?? 0) + 1;
-      const [earnedRes, weeklyRes, chainRes] = await Promise.all([
-        supabase.from("user_achievements").select("achievement_id").eq("user_id", userId),
-        supabase.from("user_weekly_quests").select("id").eq("user_id", userId).eq("status", "completed"),
-        supabase.from("quest_chain_progress").select("id").eq("user_id", userId).eq("status", "completed"),
-      ]);
-      const earnedIds = (earnedRes.data ?? []).map((a: any) => a.achievement_id);
-      const newAchievements = checkAchievements({
-        streakDays: profile.streak_days,
-        totalSaved: 0,
-        goalsCompleted: 0,
-        activeGoals: 0,
-        challengesCompleted: weeklyRes.data?.length ?? 0,
-        dailyQuestsCompleted: newDailyCount,
-        weeklyQuestsCompleted: profile.weekly_quests_completed ?? 0,
-        questChainsCompleted: chainRes.data?.length ?? 0,
-        earnedIds,
-      });
-      if (newAchievements.length > 0) {
-        await supabase.from("user_achievements").insert(
-          newAchievements.map((a: any) => ({ user_id: userId, achievement_id: a.id, earned_at: new Date().toISOString() }))
-        );
-        const achXP = newAchievements.reduce((s: number, a: any) => s + a.xpReward, 0);
-        if (achXP > 0) await supabase.from("profiles").update({ xp_total: p.xp_total + xp + achXP }).eq("id", userId);
-        queueAchievements(newAchievements);
-      }
+    if (!res.ok) {
+      console.error("[completeDailyQuest]", data.error);
+      setLoading(null);
+      return;
     }
-    await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xp });
+
+    if (!data.alreadyAwarded && data.newAchievements?.length > 0) {
+      queueAchievements(data.newAchievements);
+    }
 
     setLoading(null);
-    setCelebration({ show: true, title: "Daily Quest Done! 🎉", xp, icon: todaysDailyQuest.icon });
+    setCelebration({
+      show:  true,
+      title: data.alreadyAwarded ? "Already done today! 🎉" : "Daily Quest Done! 🎉",
+      xp:    data.xpGained ?? 0,
+      icon:  todaysDailyQuest.icon,
+    });
     router.refresh();
   }
 
-  // ── WEEKLY: Accept ─────────────────────────────────────────
+  // ── WEEKLY: Accept ─────────────────────────────────────────────────────────
+  // Accept is non-XP — still a direct Supabase call but it only writes
+  // user_weekly_quests (which is correctly RLS-scoped and XP-free).
   async function acceptWeeklyQuest() {
     if (weeklyAccepted || loading) return;
     setLoading("weekly_accept");
-    const supabase = createClient();
 
-    await supabase.from("user_weekly_quests").upsert({
-      user_id:     userId,
-      quest_id:    thisWeeksQuest.id,
-      week_start:  currentWeekStart,
-      status:      "active",
-      accepted_at: new Date().toISOString(),
-    }, { onConflict: "user_id,week_start" });
+    const res = await fetch("/api/quest/weekly/accept", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ questId: thisWeeksQuest.id, weekStart: currentWeekStart }),
+    });
+
+    if (!res.ok) {
+      console.error("[acceptWeeklyQuest]", await res.text());
+    }
 
     setLoading(null);
-    // No XP on accept — just confirm
     setCelebration({ show: true, title: "Weekly Quest Accepted! ⚔️", xp: 0, icon: thisWeeksQuest.icon });
     router.refresh();
   }
 
-  // ── WEEKLY: Complete ───────────────────────────────────────
+  // ── WEEKLY: Complete ───────────────────────────────────────────────────────
   async function completeWeeklyQuest() {
     if (!weeklyAccepted || weeklyDone || loading) return;
     setLoading("weekly_complete");
-    const supabase = createClient();
-    const xp = thisWeeksQuest.xpReward;
 
-    await supabase.from("user_weekly_quests").update({
-      status:       "completed",
-      completed_at: new Date().toISOString(),
-      xp_earned:    xp,
-    }).eq("user_id", userId).eq("week_start", currentWeekStart);
+    const res  = await fetch("/api/quest/weekly/complete", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({
+        questId:   thisWeeksQuest.id,
+        weekStart: currentWeekStart,
+        xpReward:  thisWeeksQuest.xpReward,
+      }),
+    });
+    const data = await res.json();
 
-    const { data: p } = await supabase.from("profiles")
-      .select("xp_total, weekly_quests_completed, streak_days, daily_quests_completed").eq("id", userId).single();
-    if (p) {
-      const newWeeklyCount = (p.weekly_quests_completed ?? 0) + 1;
-      await supabase.from("profiles").update({
-        xp_total:               p.xp_total + xp,
-        weekly_quests_completed: newWeeklyCount,
-      }).eq("id", userId);
-
-      // Achievement check
-      const [earnedRes, weeklyCountRes, chainRes] = await Promise.all([
-        supabase.from("user_achievements").select("achievement_id").eq("user_id", userId),
-        supabase.from("user_weekly_quests").select("id").eq("user_id", userId).eq("status", "completed"),
-        supabase.from("quest_chain_progress").select("id").eq("user_id", userId).eq("status", "completed"),
-      ]);
-      const earnedIds = (earnedRes.data ?? []).map((a: any) => a.achievement_id);
-      const newAchievements = checkAchievements({
-        streakDays: p.streak_days ?? profile.streak_days,
-        totalSaved: 0, goalsCompleted: 0, activeGoals: 0,
-        challengesCompleted: weeklyCountRes.data?.length ?? 0,
-        dailyQuestsCompleted: p.daily_quests_completed ?? 0,
-        weeklyQuestsCompleted: newWeeklyCount,
-        questChainsCompleted: chainRes.data?.length ?? 0,
-        earnedIds,
-      });
-      if (newAchievements.length > 0) {
-        await supabase.from("user_achievements").insert(
-          newAchievements.map((a: any) => ({ user_id: userId, achievement_id: a.id, earned_at: new Date().toISOString() }))
-        );
-        const achXP = newAchievements.reduce((s: number, a: any) => s + a.xpReward, 0);
-        if (achXP > 0) await supabase.from("profiles").update({ xp_total: p.xp_total + xp + achXP }).eq("id", userId);
-        queueAchievements(newAchievements);
-      }
+    if (!res.ok) {
+      console.error("[completeWeeklyQuest]", data.error);
+      setLoading(null);
+      return;
     }
-    await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xp });
+
+    if (!data.alreadyAwarded && data.newAchievements?.length > 0) {
+      queueAchievements(data.newAchievements);
+    }
 
     setLoading(null);
-    setCelebration({ show: true, title: `Weekly Quest Complete! 🏆`, xp, icon: thisWeeksQuest.icon });
+    setCelebration({
+      show:  true,
+      title: `Weekly Quest Complete! 🏆`,
+      xp:    data.xpGained ?? 0,
+      icon:  thisWeeksQuest.icon,
+    });
     router.refresh();
   }
 
-  // ── SEASONAL: Accept ───────────────────────────────────────
+  // ── SEASONAL: Accept ───────────────────────────────────────────────────────
+  // Accept is XP-free — direct Supabase insert is fine here.
   async function acceptChallenge(challengeId: string, title: string) {
     if (loading) return;
     setLoading(challengeId);
-    const supabase = createClient();
-    await supabase.from("user_challenges").insert({
-      user_id: userId, challenge_id: challengeId,
-      status: "active", started_at: new Date().toISOString(),
+
+    const res = await fetch("/api/quest/challenge/accept", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ challengeId }),
     });
+
+    if (!res.ok) console.error("[acceptChallenge]", await res.text());
+
     setLoading(null);
     setCelebration({ show: true, title: `Quest Accepted: ${title}!`, xp: 0, icon: "⚔️" });
     router.refresh();
   }
 
-  // ── SEASONAL: Complete ─────────────────────────────────────
-  async function completeChallenge(ucId: string, xpReward: number, title: string) {
+  // ── SEASONAL: Complete ─────────────────────────────────────────────────────
+  async function completeChallenge(ucId: string, title: string) {
     if (loading) return;
     setLoading(ucId);
-    const supabase = createClient();
-    await supabase.from("user_challenges").update({
-      status: "completed", completed_at: new Date().toISOString(),
-    }).eq("id", ucId);
 
-    const { data: p } = await supabase.from("profiles")
-      .select("xp_total, streak_days, daily_quests_completed, weekly_quests_completed").eq("id", userId).single();
-    if (p) {
-      await supabase.from("profiles").update({ xp_total: p.xp_total + xpReward }).eq("id", userId);
+    const res  = await fetch("/api/quest/challenge/complete", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ userChallengeId: ucId }),
+    });
+    const data = await res.json();
 
-      // Achievement check — count all completed challenges (seasonal + weekly)
-      const [earnedRes, weeklyRes, seasonalRes, chainRes] = await Promise.all([
-        supabase.from("user_achievements").select("achievement_id").eq("user_id", userId),
-        supabase.from("user_weekly_quests").select("id").eq("user_id", userId).eq("status", "completed"),
-        supabase.from("user_challenges").select("id").eq("user_id", userId).eq("status", "completed"),
-        supabase.from("quest_chain_progress").select("id").eq("user_id", userId).eq("status", "completed"),
-      ]);
-      const earnedIds = (earnedRes.data ?? []).map((a: any) => a.achievement_id);
-      const totalChallenges = (weeklyRes.data?.length ?? 0) + (seasonalRes.data?.length ?? 0);
-      const newAchievements = checkAchievements({
-        streakDays: p.streak_days ?? profile.streak_days,
-        totalSaved: 0, goalsCompleted: 0, activeGoals: 0,
-        challengesCompleted: totalChallenges,
-        dailyQuestsCompleted: p.daily_quests_completed ?? 0,
-        weeklyQuestsCompleted: p.weekly_quests_completed ?? 0,
-        questChainsCompleted: chainRes.data?.length ?? 0,
-        earnedIds,
-      });
-      if (newAchievements.length > 0) {
-        await supabase.from("user_achievements").insert(
-          newAchievements.map((a: any) => ({ user_id: userId, achievement_id: a.id, earned_at: new Date().toISOString() }))
-        );
-        const achXP = newAchievements.reduce((s: number, a: any) => s + a.xpReward, 0);
-        if (achXP > 0) await supabase.from("profiles").update({ xp_total: p.xp_total + xpReward + achXP }).eq("id", userId);
-        queueAchievements(newAchievements);
-      }
+    if (!res.ok) {
+      console.error("[completeChallenge]", data.error);
+      setLoading(null);
+      return;
     }
-    await supabase.rpc("log_activity", { p_user_id: userId, p_xp: xpReward });
+
+    if (!data.alreadyAwarded && data.newAchievements?.length > 0) {
+      queueAchievements(data.newAchievements);
+    }
 
     setLoading(null);
-    setCelebration({ show: true, title: `Quest Complete: ${title}! 🎉`, xp: xpReward, icon: "⚔️" });
+    setCelebration({
+      show:  true,
+      title: `Quest Complete: ${title}! 🎉`,
+      xp:    data.xpGained ?? 0,
+      icon:  "⚔️",
+    });
     router.refresh();
   }
 
@@ -380,7 +327,6 @@ export default function QuestsClient({
                 <span className="text-xs text-brand-400 font-bold uppercase tracking-wider">This Week's Quest</span>
                 <span className="ml-auto text-xs text-white/30">Resets Monday</span>
               </div>
-
               <div className="flex items-start gap-3 mb-4">
                 <div className="w-12 h-12 rounded-2xl bg-brand-500/15 border border-brand-500/20 flex items-center justify-center text-2xl flex-shrink-0">
                   {thisWeeksQuest.icon}
@@ -402,8 +348,6 @@ export default function QuestsClient({
                   </div>
                 </div>
               </div>
-
-              {/* State-driven action area */}
               {weeklyDone ? (
                 <div className="flex items-center gap-2 py-3 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
                   <CheckCircle size={16} className="text-emerald-400" />
@@ -414,7 +358,6 @@ export default function QuestsClient({
                 </div>
               ) : weeklyAccepted ? (
                 <div className="space-y-2">
-                  {/* Progress context */}
                   <div className="px-4 py-3 rounded-xl bg-brand-500/5 border border-brand-500/15">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs text-brand-400 font-medium">In Progress</span>
@@ -440,7 +383,6 @@ export default function QuestsClient({
                 </button>
               )}
             </div>
-
             <div className="card p-4 text-center">
               <p className="font-display font-bold text-white text-2xl">{profile.weekly_quests_completed}</p>
               <p className="text-xs text-white/40 mt-0.5">Weekly quests completed</p>
@@ -451,7 +393,6 @@ export default function QuestsClient({
         {/* ── SEASONAL TAB ───────────────────────────────────── */}
         {activeTab === "seasonal" && (
           <div className="space-y-4">
-            {/* Active */}
             {activeUCs.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -475,7 +416,7 @@ export default function QuestsClient({
                           </div>
                         </div>
                         <button
-                          onClick={() => completeChallenge(uc.id, ch.xp_reward, ch.title)}
+                          onClick={() => completeChallenge(uc.id, ch.title)}
                           disabled={loading === uc.id}
                           className="btn-primary w-full text-sm py-2.5"
                         >
@@ -488,7 +429,6 @@ export default function QuestsClient({
               </div>
             )}
 
-            {/* Available */}
             {availableChallenges.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -531,7 +471,6 @@ export default function QuestsClient({
               </div>
             )}
 
-            {/* Completed */}
             {completedUCs.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -577,7 +516,6 @@ export default function QuestsClient({
         onClose={() => setCelebration(p => ({ ...p, show: false }))}
       />
 
-      {/* Achievement badge overlays */}
       <CelebrationOverlay
         show={!!currentAchievement && !celebration.show}
         type="achievement"

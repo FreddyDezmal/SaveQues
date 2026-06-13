@@ -1,26 +1,37 @@
-import { createClient } from "@/lib/supabase/server";
-import { NextRequest, NextResponse } from "next/server";
-import { getXPForAction, type XPAction } from "@/lib/xp";
+/**
+ * app/api/xp/route.ts
+ * ─────────────────────────────────────────────────────────────
+ * SECURITY HARDENED — this endpoint is intentionally disabled.
+ *
+ * The old generic /api/xp accepted any XPAction from the client and
+ * immediately awarded XP with zero idempotency — a critical replay vector.
+ *
+ * XP is now awarded through dedicated action-specific routes only:
+ *   POST /api/quest/daily/complete
+ *   POST /api/quest/weekly/complete
+ *   POST /api/quest/challenge/complete
+ *   POST /api/quest/chain/step
+ *   POST /api/events/complete
+ *   POST /api/transactions  (log_saving / goal_complete)
+ *
+ * Returning 410 Gone so cached client references get a clear signal.
+ */
 
-export async function POST(req: NextRequest) {
-  const supabase = createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+import { NextResponse } from "next/server";
 
-  const { action }: { action: XPAction } = await req.json();
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("xp_total, streak_days")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
-
-  const xpGained = getXPForAction(action, profile.streak_days);
-  const newXP = profile.xp_total + xpGained;
-
-  await supabase.from("profiles").update({ xp_total: newXP }).eq("id", user.id);
-
-  return NextResponse.json({ xpGained, newXP });
+export async function POST() {
+  return NextResponse.json(
+    {
+      error: "This endpoint has been deprecated for security reasons.",
+      replacement: [
+        "POST /api/quest/daily/complete",
+        "POST /api/quest/weekly/complete",
+        "POST /api/quest/challenge/complete",
+        "POST /api/quest/chain/step",
+        "POST /api/events/complete",
+        "POST /api/transactions",
+      ],
+    },
+    { status: 410 }
+  );
 }
