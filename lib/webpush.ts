@@ -104,7 +104,7 @@ async function encryptPayload(
   const ikm = await crypto.subtle.importKey("raw", sharedSecretBuf, "HKDF", false, ["deriveBits"]);
 
   const prkBuf = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: authSecretBuf, info: authInfo },
+    { name: "HKDF", hash: "SHA-256", salt: authSecretBuf, info: authInfo.buffer as ArrayBuffer },
     ikm,
     256
   ) as ArrayBuffer;
@@ -122,12 +122,13 @@ async function encryptPayload(
     return out;
   }
 
-  function concat(...arrays: Uint8Array[]): Uint8Array {
+  function concat(...arrays: Uint8Array[]): Uint8Array<ArrayBuffer> {
     const total = arrays.reduce((n, a) => n + a.length, 0);
-    const out   = new Uint8Array(total);
+    const buf   = new ArrayBuffer(total);
+    const out   = new Uint8Array(buf);
     let   pos   = 0;
     for (let i = 0; i < arrays.length; i++) { out.set(arrays[i], pos); pos += arrays[i].length; }
-    return out;
+    return out as Uint8Array<ArrayBuffer>;
   }
 
   const p256Label = enc.encode("P-256");
@@ -138,13 +139,13 @@ async function encryptPayload(
   const nonceInfo = concat(enc.encode("Content-Encoding: nonce\0"),  context);
 
   const cekBuf = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: prkBuf, info: cekInfo },
+    { name: "HKDF", hash: "SHA-256", salt: prkBuf, info: cekInfo.buffer as ArrayBuffer },
     prkKey,
     128
   ) as ArrayBuffer;
 
   const nonceBuf = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: prkBuf, info: nonceInfo },
+    { name: "HKDF", hash: "SHA-256", salt: prkBuf, info: nonceInfo.buffer as ArrayBuffer },
     prkKey,
     96
   ) as ArrayBuffer;
