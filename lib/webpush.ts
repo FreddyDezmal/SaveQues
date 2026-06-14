@@ -67,7 +67,7 @@ async function encryptPayload(
   payloadStr: string,
   p256dh: string,
   auth: string
-): Promise<{ body: Uint8Array; salt: string; serverPublicKey: string }> {
+): Promise<{ body: ArrayBuffer; salt: string; serverPublicKey: string }> {
   const enc     = new TextEncoder();
   const content = enc.encode(payloadStr);
 
@@ -162,7 +162,7 @@ async function encryptPayload(
   ) as ArrayBuffer;
 
   return {
-    body:            new Uint8Array(encryptedBuf),
+    body:            encryptedBuf,
     salt:            toB64Url(saltBuf),
     serverPublicKey: toB64Url(serverPubRaw),
   };
