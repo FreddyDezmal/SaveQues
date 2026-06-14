@@ -256,34 +256,27 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
       notifications_sent += r.sent; errors += r.errors;
     }
 
-    // 4. Weekly quest nearing expiry (1-2 days left)
+    // 4. Weekly quest nearing expiry (1-2 days left in the week)
     const daysLeftInWeek = getDaysRemainingInWeek();
     if (daysLeftInWeek <= 2) {
-      // Check if they have an active accepted weekly quest
-      const { data: weeklyQuestLog } = await supabase
-        .from("daily_quest_logs")
-        .select("id")
+      // Check user_weekly_quests — the actual table for weekly quest state
+      const { data: weeklyQuest } = await supabase
+        .from("user_weekly_quests")
+        .select("id, status")
         .eq("user_id", userId)
-        .gte("quest_date", getWeekStart())
-        .ilike("quest_id", "weekly_%")
+        .eq("status", "active")             // active = accepted but not yet completed
+        .eq("week_start", getWeekStart())
         .limit(1)
         .maybeSingle();
 
-      if (!weeklyQuestLog) {
+      if (weeklyQuest) {
+        // They have an incomplete weekly quest this week — remind them
         const r = await sendWeeklyQuestExpiry(userId, daysLeftInWeek);
         notifications_sent += r.sent; errors += r.errors;
       }
     }
 
     // 5. Seasonal challenge nearing expiry (≤3 days)
-    const { data: activeChallenges } = await supabase
-      .from("user_challenges")
-      .select("challenge_id, challenges!inner(title, is_active)")
-      .eq("user_id", userId)
-      .eq("status", "active")
-      .eq("challenges.is_active", true) as any;
-
-    // We don't have expiry dates on challenges, so we check duration_days vs started_at
     const { data: activeChallengesFull } = await supabase
       .from("user_challenges")
       .select("started_at, challenges!inner(title, duration_days)")
