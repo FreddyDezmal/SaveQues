@@ -10,7 +10,7 @@ import { format, subDays } from "date-fns";
 import {
   Users, Target, Zap, TrendingUp, Plus, Edit2, Trash2,
   ToggleLeft, ToggleRight, ShieldCheck, Check, AlertTriangle,
-  Calendar, CheckCircle, XCircle, BarChart2,
+  Calendar, CheckCircle, XCircle, BarChart2, Bell,
 } from "lucide-react";
 
 // Simple toast component
