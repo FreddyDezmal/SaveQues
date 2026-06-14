@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 // @ts-ignore
 import "./globals.css";
+import { createClient } from "@/lib/supabase/server";
 import AnalyticsProvider from "@/components/AnalyticsProvider";
 
 export const metadata: Metadata = {
@@ -12,7 +13,12 @@ export const viewport: Viewport = {
   themeColor: "#0f0f14",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Fetch the session server-side so we can pass userId to the analytics
+  // provider. This never blocks rendering — getUser() is cached per-request.
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
   return (
     <html lang="en" className="dark">
       <head>
@@ -24,7 +30,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="font-body bg-surface-base text-white antialiased min-h-screen">
-        <AnalyticsProvider>
+        {/*
+          Pass userId from the server so PostHog can identify the user
+          on every page load, not just after a login event.
+          userId is undefined for unauthenticated visitors — PostHog
+          will track them as anonymous until they log in.
+        */}
+        <AnalyticsProvider userId={user?.id}>
           {children}
         </AnalyticsProvider>
       </body>

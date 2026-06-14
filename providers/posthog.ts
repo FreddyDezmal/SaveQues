@@ -1,94 +1,68 @@
 /**
  * providers/posthog.ts
- * ─────────────────────────────────────────────────────────────────────────────
- * PostHog implementation of the AnalyticsProvider interface.
- *
- * This is the ONLY file in the codebase that imports posthog-js.
- * Application code must always go through lib/analytics.ts.
- *
- * SETUP
- *  1. pnpm add posthog-js
- *  2. Set NEXT_PUBLIC_POSTHOG_KEY in .env.local
- *  3. Call initPostHog() from your root layout (client component).
- *
- * PRIVACY
- *  • autocapture disabled — we control exactly what's tracked.
- *  • session_recording disabled by default.
- *  • No personal data in event properties; userId is a UUID.
+ * Client-side PostHog — single source of truth.
+ * posthog-js is imported once here; everything calls through this module.
  */
 
+import posthog from "posthog-js";
+import { registerProvider } from "@/lib/analytics";
 import type { AnalyticsProvider } from "@/lib/analytics";
 
-// ── Factory ───────────────────────────────────────────────────────────────────
+let _initialised = false;
 
-/**
- * Creates and initialises a PostHog analytics provider.
- * Returns null if the API key is missing (e.g., in CI / test environments).
- */
-export function createPostHogProvider(): AnalyticsProvider | null {
-  if (typeof window === "undefined") {
-    // Server-side: use posthog-server.ts instead
-    return null;
-  }
+export function initPostHog(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (_initialised) return Promise.resolve();
 
   const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
   if (!key) {
     if (process.env.NODE_ENV === "development") {
-      console.warn("[posthog] NEXT_PUBLIC_POSTHOG_KEY is not set — analytics disabled.");
+      console.warn("[posthog] NEXT_PUBLIC_POSTHOG_KEY is not set.");
     }
-    return null;
+    return Promise.resolve();
   }
 
-  // Lazy-import so posthog-js is only bundled when the key exists
-  // We use a synchronous require here because this runs client-side only
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const posthog = require("posthog-js").default;
+  return new Promise<void>((resolve) => {
+    posthog.init(key, {
+      api_host:                  process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com",
+      autocapture:               false,
+      capture_pageview:          false,
+      disable_session_recording: true,
+      batch_size:                20,
+      request_timeout:           3000,
+      loaded(ph) {
+        _initialised = true;
 
-  posthog.init(key, {
-    api_host:             process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://app.posthog.com",
-    // Privacy defaults
-    autocapture:          false,   // No automatic click/form tracking
-    capture_pageview:     false,   // We track page views manually if needed
-    disable_session_recording: true,
-    // Performance
-    batch_size:           20,
-    request_timeout:      3000,
-    loaded(ph: any) {
-      if (process.env.NODE_ENV === "development") {
-        // Log to console in dev so you can see events without PostHog dashboard
-        ph.debug();
-      }
-    },
+        const provider: AnalyticsProvider = {
+          identify(userId, traits) { ph.identify(userId, traits ?? {}); },
+          capture(eventName, properties) { ph.capture(eventName, properties ?? {}); },
+          async flush() {},
+        };
+
+        registerProvider(provider);
+
+        if (process.env.NODE_ENV === "development") {
+          (window as any).__ph = ph;
+          ph.debug();
+        }
+
+        resolve();
+      },
+    });
   });
-
-  return {
-    identify(userId: string, traits?: Record<string, unknown>): void {
-      posthog.identify(userId, traits ?? {});
-    },
-
-    capture(eventName: string, properties?: Record<string, unknown>): void {
-      posthog.capture(eventName, properties ?? {});
-    },
-
-    async flush(): Promise<void> {
-      // posthog-js flushes automatically; no-op here
-    },
-  };
 }
 
 /**
- * Convenience: initialise PostHog and register with the analytics layer.
- * Import and call this once from your root Client Layout.
- *
- * Example:
- *   "use client";
- *   import { initPostHog } from "@/providers/posthog";
- *   initPostHog();   // call at module level or in useEffect
+ * Identify the current user directly via posthog-js.
+ * Bypasses the analytics abstraction singleton to avoid module re-evaluation
+ * issues in Next.js App Router where _provider can reset to null.
  */
-export function initPostHog(): void {
-  const { registerProvider } = require("@/lib/analytics");
-  const provider = createPostHogProvider();
-  if (provider) {
-    registerProvider(provider);
+export function identifyPostHogUser(userId: string, traits?: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  if (!_initialised) return;
+  posthog.identify(userId, traits ?? {});
+
+  if (process.env.NODE_ENV === "development") {
+    console.log("[posthog] identify →", userId, "distinct_id is now:", posthog.get_distinct_id());
   }
 }

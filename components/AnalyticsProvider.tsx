@@ -1,33 +1,25 @@
 "use client";
 
-/**
- * components/AnalyticsProvider.tsx
- * ─────────────────────────────────────────────────────────────────────────────
- * Client component that initialises the PostHog analytics provider once
- * the app mounts in the browser.
- *
- * Place this inside your root layout (app/layout.tsx) as a sibling to
- * the main content — it renders nothing visible.
- *
- * <AnalyticsProvider>
- *   {children}
- * </AnalyticsProvider>
- */
-
 import { useEffect } from "react";
-import { initPostHog } from "@/providers/posthog";
+import { initPostHog, identifyPostHogUser } from "@/providers/posthog";
 
 interface Props {
   children?: React.ReactNode;
+  userId?: string;
+  traits?: Record<string, unknown>;
 }
 
-export default function AnalyticsProvider({ children }: Props) {
+export default function AnalyticsProvider({ children, userId, traits }: Props) {
   useEffect(() => {
-    // Initialise PostHog exactly once when the app mounts.
-    // Subsequent re-renders are no-ops because posthog-js guards
-    // against double-initialisation internally.
-    initPostHog();
-  }, []);
+    initPostHog().then(() => {
+      if (userId) {
+        // Call identifyPostHogUser directly — bypasses the lib/analytics.ts
+        // singleton which can reset to null on module re-evaluation in
+        // Next.js App Router, causing silent no-ops.
+        identifyPostHogUser(userId, traits);
+      }
+    });
+  }, [userId]);
 
   return <>{children}</>;
 }

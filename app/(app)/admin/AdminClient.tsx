@@ -10,8 +10,9 @@ import { format, subDays } from "date-fns";
 import {
   Users, Target, Zap, TrendingUp, Plus, Edit2, Trash2,
   ToggleLeft, ToggleRight, ShieldCheck, Check, AlertTriangle,
-  Calendar, CheckCircle, XCircle, BarChart2, Bell,
+  Calendar, CheckCircle, XCircle, BarChart2, Bell, ChevronRight,
 } from "lucide-react";
+import UserActivityDrawer from "@/components/admin/UserActivityDrawer";
 
 // Simple toast component
 function Toast({ message, type, onDone }: { message: string; type: "success" | "error"; onDone: () => void }) {
@@ -73,8 +74,9 @@ export default function AdminClient({
   const [newEv,      setNewEv]      = useState(false);
   const [evForm,     setEvForm]     = useState({ ...BLANK_EVENT });
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-  const [notifMetrics, setNotifMetrics]   = useState<any | null>(null);
-  const [notifLoading, setNotifLoading]   = useState(false);
+  const [selectedUser, setSelectedUser]     = useState<typeof users[0] | null>(null);
+  const [notifMetrics, setNotifMetrics]     = useState<any | null>(null);
+  const [notifLoading, setNotifLoading]     = useState(false);
 
   // ── Platform stats ────────────────────────────────────────────
   const totalUsers     = users.length;
@@ -298,7 +300,7 @@ export default function AdminClient({
           {users.map(u => {
             const lv = getLevelFromXP(u.xp_total ?? 0);
             return (
-              <div key={u.id} className="card p-3">
+              <div key={u.id} className="card p-3 cursor-pointer hover:border-white/10 transition-colors active:opacity-80" onClick={() => setSelectedUser(u)}>
                 <div className="flex items-center gap-3">
                   <span className="text-2xl w-8">{u.avatar_emoji ?? "🌱"}</span>
                   <div className="flex-1 min-w-0">
@@ -319,6 +321,7 @@ export default function AdminClient({
                     <p className="text-xs text-orange-400 font-bold">{u.streak_days ?? 0}🔥</p>
                     <p className="text-[10px] text-white/20">{u.last_active_date ? format(new Date(u.last_active_date), "d MMM") : "—"}</p>
                   </div>
+                  <ChevronRight size={14} className="text-white/20 shrink-0" />
                 </div>
               </div>
             );
@@ -756,6 +759,15 @@ export default function AdminClient({
           </div>
         );
       })()}
+      {/* ── USER ACTIVITY DRAWER ──────────────────────── */}
+      {selectedUser && (
+        <UserActivityDrawer
+          user={selectedUser}
+          onClose={() => setSelectedUser(null)}
+        />
+      )}
+
+      {/* ── NOTIFICATIONS TAB ────────────────────────── */}
       {tab === "notifications" && (() => {
         async function loadMetrics() {
           setNotifLoading(true);
