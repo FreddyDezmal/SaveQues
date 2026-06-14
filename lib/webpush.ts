@@ -10,11 +10,13 @@ import type { PushPayload, WebPushSubscription } from "./types.notifications";
 
 // ── VAPID helpers ────────────────────────────────────────────────────────────
 
-function base64UrlToUint8Array(base64url: string): Uint8Array {
-  const pad = "=".repeat((4 - (base64url.length % 4)) % 4);
+function base64UrlToUint8Array(base64url: string): Uint8Array<ArrayBuffer> {
+  const pad    = "=".repeat((4 - (base64url.length % 4)) % 4);
   const base64 = (base64url + pad).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = Buffer.from(base64, "base64");
-  return new Uint8Array(raw);
+  const raw    = atob(base64);
+  const bytes  = new Uint8Array(raw.length) as Uint8Array<ArrayBuffer>;
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
 }
 
 function uint8ArrayToBase64Url(bytes: Uint8Array): string {
@@ -71,7 +73,7 @@ async function buildVapidJwt(audience: string, privateKeyB64: string, subject: s
     enc.encode(sigInput)
   );
 
-  const sig64 = uint8ArrayToBase64Url(new Uint8Array(sigBuf));
+  const sig64 = uint8ArrayToBase64Url(new Uint8Array(sigBuf as ArrayBuffer));
   return `${sigInput}.${sig64}`;
 }
 
@@ -85,7 +87,7 @@ async function encryptPayload(
   payloadStr: string,
   p256dh: string,
   auth: string
-): Promise<{ body: Uint8Array; salt: string; serverPublicKey: string }> {
+): Promise<{ body: Uint8Array<ArrayBuffer>; salt: string; serverPublicKey: string }> {
   const enc     = new TextEncoder();
   const content = enc.encode(payloadStr);
 
@@ -114,7 +116,7 @@ async function encryptPayload(
 
   // Export server public key
   const serverPubRaw = new Uint8Array(
-    await crypto.subtle.exportKey("raw", serverKeyPair.publicKey)
+    await crypto.subtle.exportKey("raw", serverKeyPair.publicKey) as ArrayBuffer
   );
 
   // Auth secret
@@ -137,7 +139,7 @@ async function encryptPayload(
   const prkKey = await crypto.subtle.importKey("raw", prk, "HKDF", false, ["deriveBits"]);
 
   // Context
-  const receiverPubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", receiverPub));
+  const receiverPubRaw = new Uint8Array(await crypto.subtle.exportKey("raw", receiverPub) as ArrayBuffer);
   function lengthPrefix(buf: Uint8Array) {
     const out = new Uint8Array(2 + buf.length);
     new DataView(out.buffer).setUint16(0, buf.length, false);
@@ -172,7 +174,7 @@ async function encryptPayload(
   );
 
   return {
-    body: new Uint8Array(encrypted),
+    body: new Uint8Array(encrypted as ArrayBuffer),
     salt: uint8ArrayToBase64Url(salt),
     serverPublicKey: uint8ArrayToBase64Url(serverPubRaw),
   };
@@ -241,8 +243,8 @@ export async function generateVapidKeys(): Promise<{ publicKey: string; privateK
     true,
     ["sign", "verify"]
   );
-  const pub  = new Uint8Array(await crypto.subtle.exportKey("raw",   keyPair.publicKey));
-  const priv = new Uint8Array(await crypto.subtle.exportKey("pkcs8", keyPair.privateKey));
+  const pub  = new Uint8Array(await crypto.subtle.exportKey("raw",   keyPair.publicKey)  as ArrayBuffer);
+  const priv = new Uint8Array(await crypto.subtle.exportKey("pkcs8", keyPair.privateKey) as ArrayBuffer);
   return {
     publicKey:  uint8ArrayToBase64Url(pub),
     privateKey: uint8ArrayToBase64Url(priv),
