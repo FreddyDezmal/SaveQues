@@ -122,14 +122,20 @@ async function encryptPayload(
     return out;
   }
 
-  const context = new Uint8Array([
-    ...enc.encode("P-256"), 0,
-    ...lengthPrefix(receiverPubRaw),
-    ...lengthPrefix(serverPubRaw),
-  ]);
+  function concat(...arrays: Uint8Array[]): Uint8Array {
+    const total = arrays.reduce((n, a) => n + a.length, 0);
+    const out   = new Uint8Array(total);
+    let   pos   = 0;
+    for (let i = 0; i < arrays.length; i++) { out.set(arrays[i], pos); pos += arrays[i].length; }
+    return out;
+  }
 
-  const cekInfo   = new Uint8Array([...enc.encode("Content-Encoding: aesgcm\0"), ...context]);
-  const nonceInfo = new Uint8Array([...enc.encode("Content-Encoding: nonce\0"),  ...context]);
+  const p256Label = enc.encode("P-256");
+  const zeroBytes = new Uint8Array([0]);
+  const context   = concat(p256Label, zeroBytes, lengthPrefix(receiverPubRaw), lengthPrefix(serverPubRaw));
+
+  const cekInfo   = concat(enc.encode("Content-Encoding: aesgcm\0"), context);
+  const nonceInfo = concat(enc.encode("Content-Encoding: nonce\0"),  context);
 
   const cekBuf = await crypto.subtle.deriveBits(
     { name: "HKDF", hash: "SHA-256", salt: prkBuf, info: cekInfo },
