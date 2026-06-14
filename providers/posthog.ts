@@ -28,8 +28,6 @@ export function initPostHog(): Promise<void> {
       autocapture:               false,
       capture_pageview:          false,
       disable_session_recording: true,
-      batch_size:                20,
-      request_timeout:           3000,
       loaded(ph) {
         _initialised = true;
 
