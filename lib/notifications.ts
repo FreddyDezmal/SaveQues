@@ -215,7 +215,7 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
     });
   }
 
-  for (const [userId, userInfo] of usersToProcess) {
+  for (const [userId, userInfo] of Array.from(usersToProcess.entries())) {
     const { timezone, notificationHour, streakDays, lastActiveDate } = userInfo;
     const localHour = currentHourInTZ(timezone);
     const today     = todayInTZ(timezone);
