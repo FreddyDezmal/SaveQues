@@ -2,6 +2,8 @@
 // States are more emotionally resonant than scores.
 // A user can't game a state — they can only live it.
 
+import { getLastNUTCDateStrings } from "./dateUtils";
+
 export type MomentumState = "building" | "consistent" | "on_fire" | "unstoppable";
 
 export interface MomentumInfo {
@@ -24,14 +26,15 @@ export interface MomentumInfo {
  *   Unstoppable  — 12+  active days  (elite territory)
  *
  * Also weights recent days more than older days (last 7 > first 7).
+ *
+ * IMPORTANT: "day" here means UTC calendar day, matching how
+ * activity_log.activity_date is written (see lib/dateUtils.ts).
+ * All callers — including MomentumHeatmap's day grid — must use
+ * getUTCDateString()/getLastNUTCDateStrings() so this score and the
+ * heatmap agree on which cell is "today".
  */
 export function getMomentumState(activityLog: { date: string; xp_earned: number }[]): MomentumInfo {
-  const today = new Date();
-  const last14 = Array.from({ length: 14 }, (_, i) => {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    return d.toISOString().split("T")[0];
-  });
+  const last14 = getLastNUTCDateStrings(14);
 
   // Recent 7 days weighted 2×, older 7 days weighted 1×
   const activitySet = new Set(activityLog.map(a => a.date));
@@ -39,7 +42,7 @@ export function getMomentumState(activityLog: { date: string; xp_earned: number 
 
   last14.forEach((date, i) => {
     if (activitySet.has(date)) {
-      weightedScore += i < 7 ? 2 : 1; // more recent = higher weight
+      weightedScore += i >= 7 ? 2 : 1; // last7 (indices 7-13) = more recent = higher weight
     }
   });
 

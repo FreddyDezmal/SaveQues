@@ -1,7 +1,7 @@
 "use client";
 
-import { format, subDays } from "date-fns";
 import { getMomentumState } from "@/lib/momentum";
+import { getUTCDateString, getLastNUTCDateStrings } from "@/lib/dateUtils";
 
 interface ActivityDay {
   date: string;
@@ -18,15 +18,20 @@ export default function MomentumHeatmap({ activityLog, userStage = "established"
   const activityMap = new Map(activityLog.map(a => [a.date, a]));
   const daysToShow = userStage === "building" ? 14 : 30;
 
-  const days = Array.from({ length: daysToShow }, (_, i) => {
-    const d = subDays(new Date(), daysToShow - 1 - i);
-    const dateStr = format(d, "yyyy-MM-dd");
+  // Use UTC calendar dates throughout — must match activity_log.activity_date
+  // (written via CURRENT_DATE / explicit UTC dates) and getMomentumState's
+  // 14-day window, or "today" can disappear or land on the wrong cell near
+  // midnight for users in non-UTC timezones. See lib/dateUtils.ts.
+  const todayStr = getUTCDateString();
+  const dateStrings = getLastNUTCDateStrings(daysToShow);
+
+  const days = dateStrings.map(dateStr => {
     const activity = activityMap.get(dateStr);
     return {
       date: dateStr,
       xp: activity?.xp_earned ?? 0,
       actions: activity?.actions_count ?? 0,
-      isToday: dateStr === format(new Date(), "yyyy-MM-dd"),
+      isToday: dateStr === todayStr,
     };
   });
 

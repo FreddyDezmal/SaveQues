@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/utils";
 import { getLevelFromXP, TIER_COLORS } from "@/lib/xp";
 import { ACHIEVEMENTS } from "@/lib/achievements";
@@ -11,6 +10,7 @@ import {
   Users, Target, Zap, TrendingUp, Plus, Edit2, Trash2,
   ToggleLeft, ToggleRight, ShieldCheck, Check, AlertTriangle,
   Calendar, CheckCircle, XCircle, BarChart2, Bell, ChevronRight,
+  ListChecks, Link2, Award, X,
 } from "lucide-react";
 import UserActivityDrawer from "@/components/admin/UserActivityDrawer";
 
@@ -42,17 +42,32 @@ interface Props {
   // Analytics data (Step 7)
   engagementStatuses: { status: string; count: number }[];
   dailyActivity: { date: string; user_id: string; deposit_count: number; xp_gained: number; quests_completed: number }[];
+  // Task 3: Admin CRUD content tables
+  dailyQuests: any[];
+  weeklyQuests: any[];
+  questChains: any[];
+  badges: any[];
+  dailyQuestUsage: Record<string, number>;
+  chainUsage: Record<string, number>;
+  badgeUsage: Record<string, number>;
 }
 
-type Tab = "overview" | "users" | "seasonal" | "events" | "activity" | "analytics" | "notifications";
+type Tab = "overview" | "users" | "seasonal" | "events" | "quests" | "chains" | "badges" | "activity" | "analytics" | "notifications";
 
-const BLANK_CHALLENGE = { title: "", description: "", type: "manual", xp_reward: 200, duration_days: 7, is_active: true };
+const BLANK_CHALLENGE = { title: "", description: "", type: "manual", xp_reward: 200, duration_days: 7, is_active: true, quest_type: "evergreen", start_date: "", end_date: "", preview_days: 3, year_agnostic: false };
 const BLANK_EVENT = { slug: "", title: "", description: "", emoji: "⚡", event_type: "savequest", xp_reward: 300, available_from: "", available_until: "", is_annual: false, preview_days: 5, is_active: true };
+const BLANK_DAILY_QUEST  = { id: "", title: "", description: "", category: "behavioral", xp_reward: 50, icon: "⭐", day_of_week: null as number | null, is_active: true };
+const BLANK_WEEKLY_QUEST = { id: "", title: "", description: "", category: "behavioral", xp_reward: 300, icon: "⭐", is_active: true };
+const BLANK_BADGE = { id: "", title: "", description: "", unlock_criteria: "", category: "special", icon: "🏅", xp_reward: 0, secret: false, visibility: "visible", is_active: true };
+const BLANK_CHAIN = { id: "", title: "", description: "", icon: "🔗", completion_xp: 0, completion_badge_id: "", is_active: true, steps: [] as any[] };
+const BLANK_STEP = { step_number: 1, title: "", description: "", xp_reward: 50, requires_type: "save_amount", requires_value: 1, requires_quest_id: "" };
 
 export default function AdminClient({
   users, goals, transactions, challenges,
   userChallenges, userAchievements, activityLog, adminName, dbEvents,
   engagementStatuses, dailyActivity,
+  dailyQuests, weeklyQuests, questChains, badges,
+  dailyQuestUsage, chainUsage, badgeUsage,
 }: Props) {
   const router = useRouter();
   const [tab, setTab]           = useState<Tab>("overview");
@@ -78,6 +93,25 @@ export default function AdminClient({
   const [notifMetrics, setNotifMetrics]     = useState<any | null>(null);
   const [notifLoading, setNotifLoading]     = useState(false);
 
+  // ── Quests tab (daily / weekly sub-tabs) ───────────────────────
+  const [questSubTab, setQuestSubTab] = useState<"daily" | "weekly">("daily");
+  const [editingDQ, setEditingDQ] = useState<any | null>(null);
+  const [newDQ,     setNewDQ]     = useState(false);
+  const [dqForm,    setDqForm]    = useState({ ...BLANK_DAILY_QUEST });
+  const [editingWQ, setEditingWQ] = useState<any | null>(null);
+  const [newWQ,     setNewWQ]     = useState(false);
+  const [wqForm,    setWqForm]    = useState({ ...BLANK_WEEKLY_QUEST });
+
+  // ── Badges tab ──────────────────────────────────────────────────
+  const [editingBadge, setEditingBadge] = useState<any | null>(null);
+  const [newBadge,     setNewBadge]     = useState(false);
+  const [badgeForm,    setBadgeForm]    = useState({ ...BLANK_BADGE });
+
+  // ── Quest Chains tab ────────────────────────────────────────────
+  const [editingChain, setEditingChain] = useState<any | null>(null);
+  const [newChain,     setNewChain]     = useState(false);
+  const [chainForm,    setChainForm]    = useState<typeof BLANK_CHAIN>({ ...BLANK_CHAIN, steps: [] });
+
   // ── Platform stats ────────────────────────────────────────────
   const totalUsers     = users.length;
   const totalSaved     = transactions.filter(t => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
@@ -93,10 +127,16 @@ export default function AdminClient({
     activityByDate.set(a.activity_date, (activityByDate.get(a.activity_date) ?? 0) + (a.actions_count ?? 1));
   }
 
-  // ── Seasonal CRUD ─────────────────────────────────────────────
+  // ── Seasonal CRUD via server API (service role) ────────────────
   function startEditCh(ch: any) {
     setEditingCh(ch);
-    setChForm({ title: ch.title, description: ch.description, type: ch.type, xp_reward: ch.xp_reward, duration_days: ch.duration_days, is_active: ch.is_active });
+    setChForm({
+      title: ch.title, description: ch.description, type: ch.type,
+      xp_reward: ch.xp_reward, duration_days: ch.duration_days, is_active: ch.is_active,
+      quest_type: ch.quest_type ?? "evergreen",
+      start_date: ch.start_date ?? "", end_date: ch.end_date ?? "",
+      preview_days: ch.preview_days ?? 3, year_agnostic: ch.year_agnostic ?? false,
+    });
     setNewCh(false);
   }
   function startNewCh() {
@@ -105,16 +145,65 @@ export default function AdminClient({
     setNewCh(true);
   }
   async function saveCh() {
+    if (!chForm.title.trim() || !chForm.description.trim()) {
+      showToast("Title and description are required.", "error"); return;
+    }
     setSaving(true);
-    const supabase = createClient();
-    if (newCh) await supabase.from("challenges").insert(chForm);
-    else if (editingCh) await supabase.from("challenges").update(chForm).eq("id", editingCh.id);
-    setSaving(false); setEditingCh(null); setNewCh(false); router.refresh();
+    const payload = {
+      ...chForm,
+      start_date: chForm.start_date || null,
+      end_date:   chForm.end_date   || null,
+    };
+    try {
+      const res = await fetch("/api/admin/seasonal", {
+        method: newCh ? "POST" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newCh ? payload : { id: editingCh.id, ...payload }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Save failed");
+      showToast(newCh ? "Seasonal quest created!" : "Seasonal quest updated!", "success");
+      setEditingCh(null); setNewCh(false);
+      router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Something went wrong", "error");
+    } finally {
+      setSaving(false);
+    }
   }
   async function toggleCh(id: string, current: boolean) {
-    const supabase = createClient();
-    await supabase.from("challenges").update({ is_active: !current }).eq("id", id);
-    router.refresh();
+    // Optimistic UI: flip immediately, roll back on failure.
+    try {
+      const res = await fetch("/api/admin/seasonal", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, is_active: !current }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Update failed");
+      router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Something went wrong", "error");
+    }
+  }
+  async function deleteChallenge(ch: any) {
+    try {
+      const res = await fetch("/api/admin/seasonal", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: ch.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error ?? "Delete failed", "error");
+        setDeleteConfirm(null); return;
+      }
+      showToast("Seasonal quest deleted.", "success");
+      setDeleteConfirm(null); router.refresh();
+    } catch {
+      showToast("Network error — try again", "error");
+      setDeleteConfirm(null);
+    }
   }
 
   // ── Events CRUD via server API (service role) ─────────────────
@@ -183,9 +272,238 @@ export default function AdminClient({
     }
   }
 
+  // ── Generic helper: CRUD against /api/admin/<endpoint> ──────────
+  async function apiSave(endpoint: string, isNew: boolean, payload: any, idForUpdate?: string) {
+    const res = await fetch(`/api/admin/${endpoint}`, {
+      method: isNew ? "POST" : "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(isNew ? payload : { id: idForUpdate, ...payload }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Save failed");
+    return data;
+  }
+  async function apiDelete(endpoint: string, id: string) {
+    const res = await fetch(`/api/admin/${endpoint}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Delete failed");
+    return data;
+  }
+  async function apiToggle(endpoint: string, id: string, current: boolean) {
+    try {
+      await apiSave(endpoint, false, { is_active: !current }, id);
+      router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Something went wrong", "error");
+    }
+  }
+
+  // ── Daily Quest CRUD ──────────────────────────────────────────
+  function startEditDQ(q: any) {
+    setEditingDQ(q);
+    setDqForm({ id: q.id, title: q.title, description: q.description, category: q.category, xp_reward: q.xp_reward, icon: q.icon, day_of_week: q.day_of_week, is_active: q.is_active });
+    setNewDQ(false);
+  }
+  function startNewDQ() {
+    setEditingDQ(null);
+    setDqForm({ ...BLANK_DAILY_QUEST });
+    setNewDQ(true);
+  }
+  async function saveDQ() {
+    if (!dqForm.title.trim() || !dqForm.description.trim() || (newDQ && !dqForm.id.trim())) {
+      showToast("ID, title, and description are required.", "error"); return;
+    }
+    setSaving(true);
+    try {
+      await apiSave("daily-quests", newDQ, dqForm, editingDQ?.id);
+      showToast(newDQ ? "Daily quest created!" : "Daily quest updated!", "success");
+      setEditingDQ(null); setNewDQ(false);
+      router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Something went wrong", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function deleteDQ(q: any) {
+    try {
+      await apiDelete("daily-quests", q.id);
+      showToast("Daily quest deleted.", "success");
+      setDeleteConfirm(null); router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Delete failed", "error");
+      setDeleteConfirm(null);
+    }
+  }
+
+  // ── Weekly Quest CRUD ─────────────────────────────────────────
+  function startEditWQ(q: any) {
+    setEditingWQ(q);
+    setWqForm({ id: q.id, title: q.title, description: q.description, category: q.category, xp_reward: q.xp_reward, icon: q.icon, is_active: q.is_active });
+    setNewWQ(false);
+  }
+  function startNewWQ() {
+    setEditingWQ(null);
+    setWqForm({ ...BLANK_WEEKLY_QUEST });
+    setNewWQ(true);
+  }
+  async function saveWQ() {
+    if (!wqForm.title.trim() || !wqForm.description.trim() || (newWQ && !wqForm.id.trim())) {
+      showToast("ID, title, and description are required.", "error"); return;
+    }
+    setSaving(true);
+    try {
+      await apiSave("weekly-quests", newWQ, wqForm, editingWQ?.id);
+      showToast(newWQ ? "Weekly quest created!" : "Weekly quest updated!", "success");
+      setEditingWQ(null); setNewWQ(false);
+      router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Something went wrong", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function deleteWQ(q: any) {
+    try {
+      await apiDelete("weekly-quests", q.id);
+      showToast("Weekly quest deleted.", "success");
+      setDeleteConfirm(null); router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Delete failed", "error");
+      setDeleteConfirm(null);
+    }
+  }
+
+  // ── Badge CRUD ────────────────────────────────────────────────
+  function startEditBadge(b: any) {
+    setEditingBadge(b);
+    setBadgeForm({
+      id: b.id, title: b.title, description: b.description,
+      unlock_criteria: b.unlock_criteria ?? b.description, category: b.category,
+      icon: b.icon, xp_reward: b.xp_reward, secret: b.secret, visibility: b.visibility ?? "visible",
+      is_active: b.is_active,
+    });
+    setNewBadge(false);
+  }
+  function startNewBadge() {
+    setEditingBadge(null);
+    setBadgeForm({ ...BLANK_BADGE });
+    setNewBadge(true);
+  }
+  async function saveBadge() {
+    if (!badgeForm.title.trim() || !badgeForm.description.trim() || (newBadge && !badgeForm.id.trim())) {
+      showToast("ID, title, and description are required.", "error"); return;
+    }
+    setSaving(true);
+    try {
+      await apiSave("badges", newBadge, badgeForm, editingBadge?.id);
+      showToast(newBadge ? "Badge created!" : "Badge updated!", "success");
+      setEditingBadge(null); setNewBadge(false);
+      router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Something went wrong", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function deleteBadge(b: any) {
+    try {
+      await apiDelete("badges", b.id);
+      showToast("Badge deleted.", "success");
+      setDeleteConfirm(null); router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Delete failed", "error");
+      setDeleteConfirm(null);
+    }
+  }
+
+  // ── Quest Chain CRUD ──────────────────────────────────────────
+  function startEditChain(c: any) {
+    setEditingChain(c);
+    setChainForm({
+      id: c.id, title: c.title, description: c.description, icon: c.icon,
+      completion_xp: c.completion_xp, completion_badge_id: c.completion_badge_id ?? "",
+      is_active: c.is_active,
+      steps: (c.steps ?? []).map((s: any) => ({ ...s })).sort((a: any, b: any) => a.step_number - b.step_number),
+    });
+    setNewChain(false);
+  }
+  function startNewChain() {
+    setEditingChain(null);
+    setChainForm({ ...BLANK_CHAIN, steps: [{ ...BLANK_STEP, step_number: 1 }] });
+    setNewChain(true);
+  }
+  function addStep() {
+    setChainForm(f => ({ ...f, steps: [...f.steps, { ...BLANK_STEP, step_number: f.steps.length + 1 }] }));
+  }
+  function removeStep(index: number) {
+    setChainForm(f => {
+      const steps = f.steps.filter((_, i) => i !== index).map((s, i) => ({ ...s, step_number: i + 1 }));
+      return { ...f, steps };
+    });
+  }
+  function updateStep(index: number, patch: Partial<typeof BLANK_STEP>) {
+    setChainForm(f => ({ ...f, steps: f.steps.map((s, i) => (i === index ? { ...s, ...patch } : s)) }));
+  }
+  function moveStep(index: number, direction: -1 | 1) {
+    setChainForm(f => {
+      const target = index + direction;
+      if (target < 0 || target >= f.steps.length) return f;
+      const steps = [...f.steps];
+      [steps[index], steps[target]] = [steps[target], steps[index]];
+      return { ...f, steps: steps.map((s, i) => ({ ...s, step_number: i + 1 })) };
+    });
+  }
+  async function saveChain() {
+    if (!chainForm.title.trim() || !chainForm.description.trim() || (newChain && !chainForm.id.trim())) {
+      showToast("ID, title, and description are required.", "error"); return;
+    }
+    if (chainForm.steps.length === 0) {
+      showToast("Add at least one step.", "error"); return;
+    }
+    for (const step of chainForm.steps) {
+      if (!step.title.trim() || !step.description.trim()) {
+        showToast("Every step needs a title and description.", "error"); return;
+      }
+    }
+    setSaving(true);
+    const payload = {
+      ...chainForm,
+      completion_badge_id: chainForm.completion_badge_id || null,
+      steps: chainForm.steps.map(s => ({ ...s, requires_quest_id: s.requires_quest_id || null })),
+    };
+    try {
+      await apiSave("quest-chains", newChain, payload, editingChain?.id);
+      showToast(newChain ? "Quest chain created!" : "Quest chain updated!", "success");
+      setEditingChain(null); setNewChain(false);
+      router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Something went wrong", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function deleteChain(c: any) {
+    try {
+      await apiDelete("quest-chains", c.id);
+      showToast("Quest chain deleted.", "success");
+      setDeleteConfirm(null); router.refresh();
+    } catch (err: any) {
+      showToast(err.message ?? "Delete failed", "error");
+      setDeleteConfirm(null);
+    }
+  }
+
   const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "overview",  label: "Overview",  icon: <TrendingUp size={14} /> },
     { id: "users",     label: "Users",     icon: <Users size={14} /> },
+    { id: "quests",    label: "Quests",    icon: <ListChecks size={14} /> },
+    { id: "chains",    label: "Chains",    icon: <Link2 size={14} /> },
+    { id: "badges",    label: "Badges",    icon: <Award size={14} /> },
     { id: "seasonal",  label: "Seasonal",  icon: <Zap size={14} /> },
     { id: "events",    label: "Events",    icon: <Calendar size={14} /> },
     { id: "activity",  label: "Activity",  icon: <Target size={14} /> },
@@ -386,6 +704,7 @@ export default function AdminClient({
             {challenges.map(ch => {
               const completions = userChallenges.filter(uc => uc.challenge_id === ch.id && uc.status === "completed").length;
               const active      = userChallenges.filter(uc => uc.challenge_id === ch.id && uc.status === "active").length;
+              const isConfirming = deleteConfirm === `ch_${ch.id}`;
               return (
                 <div key={ch.id} className={`card p-4 ${!ch.is_active ? "opacity-50" : ""}`}>
                   <div className="flex items-start gap-3">
@@ -393,6 +712,7 @@ export default function AdminClient({
                       <div className="flex items-center gap-2 mb-0.5">
                         <p className="font-medium text-white text-sm truncate">{ch.title}</p>
                         <span className="text-[10px] text-white/30 border border-surface-border rounded-full px-1.5 py-0.5">{ch.type}</span>
+                        {!ch.is_active && <span className="text-[10px] text-orange-400 border border-orange-400/30 rounded-full px-1.5 py-0.5">inactive</span>}
                       </div>
                       <p className="text-xs text-white/40 mb-2">{ch.description}</p>
                       <div className="flex items-center gap-3 text-xs text-white/30">
@@ -401,6 +721,15 @@ export default function AdminClient({
                         <span>✅ {completions} completed</span>
                         <span>🔄 {active} active</span>
                       </div>
+
+                      {isConfirming && (
+                        <div className="mt-2 p-2 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
+                          <AlertTriangle size={13} className="text-red-400" />
+                          <p className="text-xs text-red-400">Delete this seasonal quest? This cannot be undone.</p>
+                          <button onClick={() => deleteChallenge(ch)} className="ml-auto text-xs text-red-400 font-bold hover:text-red-300">Confirm</button>
+                          <button onClick={() => setDeleteConfirm(null)} className="text-xs text-white/30 hover:text-white/60">Cancel</button>
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <button onClick={() => startEditCh(ch)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-white/70 transition-colors">
@@ -409,12 +738,572 @@ export default function AdminClient({
                       <button onClick={() => toggleCh(ch.id, ch.is_active)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center transition-colors hover:border-brand-500/40">
                         {ch.is_active ? <ToggleRight size={16} className="text-brand-400" /> : <ToggleLeft size={16} className="text-white/30" />}
                       </button>
+                      <button onClick={() => setDeleteConfirm(isConfirming ? null : `ch_${ch.id}`)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-red-400 transition-colors">
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
                 </div>
               );
             })}
             {challenges.length === 0 && <p className="text-white/30 text-sm text-center py-8">No seasonal quests yet.</p>}
+          </div>
+        </div>
+      )}
+
+      {/* ── QUESTS (Daily / Weekly) ────────────────────── */}
+      {tab === "quests" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display font-semibold text-white">Quests</h2>
+            <button
+              onClick={questSubTab === "daily" ? startNewDQ : startNewWQ}
+              className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2"
+            >
+              <Plus size={14} /> New {questSubTab === "daily" ? "Daily" : "Weekly"} Quest
+            </button>
+          </div>
+
+          {/* Sub-tab toggle */}
+          <div className="flex gap-2 p-1 bg-surface-elevated rounded-xl border border-surface-border w-fit">
+            <button
+              onClick={() => setQuestSubTab("daily")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${questSubTab === "daily" ? "bg-brand-500 text-black" : "text-white/50 hover:text-white"}`}
+            >
+              Daily ({dailyQuests.length})
+            </button>
+            <button
+              onClick={() => setQuestSubTab("weekly")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${questSubTab === "weekly" ? "bg-brand-500 text-black" : "text-white/50 hover:text-white"}`}
+            >
+              Weekly ({weeklyQuests.length})
+            </button>
+          </div>
+
+          {/* ── Daily Quest form ── */}
+          {questSubTab === "daily" && (newDQ || editingDQ) && (
+            <div className="card p-4 border-brand-500/30">
+              <h3 className="font-display font-semibold text-white text-sm mb-4">
+                {newDQ ? "Create Daily Quest" : "Edit Daily Quest"}
+              </h3>
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="col-span-1">
+                    <label className="block text-xs text-white/40 mb-1">Icon</label>
+                    <input className="input-field text-center" value={dqForm.icon} onChange={e => setDqForm(f => ({ ...f, icon: e.target.value }))} />
+                  </div>
+                  <div className="col-span-3">
+                    <label className="block text-xs text-white/40 mb-1">Title</label>
+                    <input className="input-field" value={dqForm.title} onChange={e => setDqForm(f => ({ ...f, title: e.target.value }))} placeholder="Quest title" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Description</label>
+                  <input className="input-field" value={dqForm.description} onChange={e => setDqForm(f => ({ ...f, description: e.target.value }))} placeholder="What the user needs to do" />
+                </div>
+                {newDQ && (
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">ID (unique, lowercase, underscores)</label>
+                    <input className="input-field font-mono text-xs" value={dqForm.id} onChange={e => setDqForm(f => ({ ...f, id: e.target.value }))} placeholder="daily_my_quest" />
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">XP Reward</label>
+                    <input type="number" className="input-field" value={dqForm.xp_reward} onChange={e => setDqForm(f => ({ ...f, xp_reward: Number(e.target.value) }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Category</label>
+                    <select className="input-field" value={dqForm.category} onChange={e => setDqForm(f => ({ ...f, category: e.target.value }))}>
+                      <option value="savings">Savings</option>
+                      <option value="behavioral">Behavioral</option>
+                      <option value="streak">Streak</option>
+                      <option value="challenge">Challenge</option>
+                    </select>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-white/60 cursor-pointer text-sm">
+                  <input type="checkbox" checked={dqForm.is_active} onChange={e => setDqForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                  Active
+                </label>
+                <div className="flex gap-2">
+                  <button onClick={saveDQ} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2.5">
+                    <Check size={14} /> {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button onClick={() => { setEditingDQ(null); setNewDQ(false); }} className="btn-ghost text-sm px-4 py-2.5">Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Weekly Quest form ── */}
+          {questSubTab === "weekly" && (newWQ || editingWQ) && (
+            <div className="card p-4 border-brand-500/30">
+              <h3 className="font-display font-semibold text-white text-sm mb-4">
+                {newWQ ? "Create Weekly Quest" : "Edit Weekly Quest"}
+              </h3>
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="col-span-1">
+                    <label className="block text-xs text-white/40 mb-1">Icon</label>
+                    <input className="input-field text-center" value={wqForm.icon} onChange={e => setWqForm(f => ({ ...f, icon: e.target.value }))} />
+                  </div>
+                  <div className="col-span-3">
+                    <label className="block text-xs text-white/40 mb-1">Title</label>
+                    <input className="input-field" value={wqForm.title} onChange={e => setWqForm(f => ({ ...f, title: e.target.value }))} placeholder="Quest title" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Description</label>
+                  <input className="input-field" value={wqForm.description} onChange={e => setWqForm(f => ({ ...f, description: e.target.value }))} placeholder="What the user needs to do" />
+                </div>
+                {newWQ && (
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">ID (unique, lowercase, underscores)</label>
+                    <input className="input-field font-mono text-xs" value={wqForm.id} onChange={e => setWqForm(f => ({ ...f, id: e.target.value }))} placeholder="weekly_my_quest" />
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">XP Reward</label>
+                    <input type="number" className="input-field" value={wqForm.xp_reward} onChange={e => setWqForm(f => ({ ...f, xp_reward: Number(e.target.value) }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Category</label>
+                    <select className="input-field" value={wqForm.category} onChange={e => setWqForm(f => ({ ...f, category: e.target.value }))}>
+                      <option value="savings">Savings</option>
+                      <option value="behavioral">Behavioral</option>
+                      <option value="streak">Streak</option>
+                      <option value="challenge">Challenge</option>
+                    </select>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-white/60 cursor-pointer text-sm">
+                  <input type="checkbox" checked={wqForm.is_active} onChange={e => setWqForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                  Active
+                </label>
+                <div className="flex gap-2">
+                  <button onClick={saveWQ} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2.5">
+                    <Check size={14} /> {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button onClick={() => { setEditingWQ(null); setNewWQ(false); }} className="btn-ghost text-sm px-4 py-2.5">Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Daily quest list ── */}
+          {questSubTab === "daily" && (
+            <div className="space-y-2">
+              {dailyQuests.map(q => {
+                const usage = dailyQuestUsage[q.id] ?? 0;
+                const isConfirming = deleteConfirm === `dq_${q.id}`;
+                return (
+                  <div key={q.id} className={`card p-4 ${!q.is_active ? "opacity-50" : ""}`}>
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">{q.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                          <p className="font-medium text-white text-sm">{q.title}</p>
+                          <span className="text-[10px] text-white/30 border border-surface-border rounded-full px-1.5 py-0.5">{q.category}</span>
+                          {!q.is_active && <span className="text-[10px] text-orange-400 border border-orange-400/30 rounded-full px-1.5 py-0.5">disabled</span>}
+                        </div>
+                        <p className="text-xs text-white/40 mb-1">{q.description}</p>
+                        <div className="flex items-center gap-3 text-xs text-white/30">
+                          <span className="text-brand-400">⚡ {q.xp_reward} XP</span>
+                          <span className="font-mono">{q.id}</span>
+                          {usage > 0 && <span>📊 {usage} completion(s)</span>}
+                        </div>
+
+                        {isConfirming && (
+                          <div className="mt-2 p-2 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
+                            <AlertTriangle size={13} className="text-red-400" />
+                            <p className="text-xs text-red-400">Delete this quest? This cannot be undone.</p>
+                            <button onClick={() => deleteDQ(q)} className="ml-auto text-xs text-red-400 font-bold hover:text-red-300">Confirm</button>
+                            <button onClick={() => setDeleteConfirm(null)} className="text-xs text-white/30 hover:text-white/60">Cancel</button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button onClick={() => startEditDQ(q)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-white/70 transition-colors">
+                          <Edit2 size={13} />
+                        </button>
+                        <button onClick={() => apiToggle("daily-quests", q.id, q.is_active)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center transition-colors hover:border-brand-500/40">
+                          {q.is_active ? <ToggleRight size={16} className="text-brand-400" /> : <ToggleLeft size={16} className="text-white/30" />}
+                        </button>
+                        <button
+                          onClick={() => usage > 0 ? showToast(`Cannot delete — ${usage} user(s) have completion logs. Disable it instead.`, "error") : setDeleteConfirm(isConfirming ? null : `dq_${q.id}`)}
+                          className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {dailyQuests.length === 0 && <p className="text-white/30 text-sm text-center py-8">No daily quests in database yet.</p>}
+            </div>
+          )}
+
+          {/* ── Weekly quest list ── */}
+          {questSubTab === "weekly" && (
+            <div className="space-y-2">
+              {weeklyQuests.map(q => {
+                const isConfirming = deleteConfirm === `wq_${q.id}`;
+                return (
+                  <div key={q.id} className={`card p-4 ${!q.is_active ? "opacity-50" : ""}`}>
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">{q.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                          <p className="font-medium text-white text-sm">{q.title}</p>
+                          <span className="text-[10px] text-white/30 border border-surface-border rounded-full px-1.5 py-0.5">{q.category}</span>
+                          {!q.is_active && <span className="text-[10px] text-orange-400 border border-orange-400/30 rounded-full px-1.5 py-0.5">disabled</span>}
+                        </div>
+                        <p className="text-xs text-white/40 mb-1">{q.description}</p>
+                        <div className="flex items-center gap-3 text-xs text-white/30">
+                          <span className="text-brand-400">⚡ {q.xp_reward} XP</span>
+                          <span className="font-mono">{q.id}</span>
+                        </div>
+
+                        {isConfirming && (
+                          <div className="mt-2 p-2 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
+                            <AlertTriangle size={13} className="text-red-400" />
+                            <p className="text-xs text-red-400">Delete this quest? This cannot be undone.</p>
+                            <button onClick={() => deleteWQ(q)} className="ml-auto text-xs text-red-400 font-bold hover:text-red-300">Confirm</button>
+                            <button onClick={() => setDeleteConfirm(null)} className="text-xs text-white/30 hover:text-white/60">Cancel</button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button onClick={() => startEditWQ(q)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-white/70 transition-colors">
+                          <Edit2 size={13} />
+                        </button>
+                        <button onClick={() => apiToggle("weekly-quests", q.id, q.is_active)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center transition-colors hover:border-brand-500/40">
+                          {q.is_active ? <ToggleRight size={16} className="text-brand-400" /> : <ToggleLeft size={16} className="text-white/30" />}
+                        </button>
+                        <button onClick={() => setDeleteConfirm(isConfirming ? null : `wq_${q.id}`)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-red-400 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {weeklyQuests.length === 0 && <p className="text-white/30 text-sm text-center py-8">No weekly quests in database yet.</p>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── BADGES ───────────────────────────────────── */}
+      {tab === "badges" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display font-semibold text-white">Badges</h2>
+            <button onClick={startNewBadge} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
+              <Plus size={14} /> New Badge
+            </button>
+          </div>
+
+          {/* Badge form */}
+          {(newBadge || editingBadge) && (
+            <div className="card p-4 border-brand-500/30">
+              <h3 className="font-display font-semibold text-white text-sm mb-4">
+                {newBadge ? "Create Badge" : "Edit Badge"}
+              </h3>
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="col-span-1">
+                    <label className="block text-xs text-white/40 mb-1">Icon</label>
+                    <input className="input-field text-center" value={badgeForm.icon} onChange={e => setBadgeForm(f => ({ ...f, icon: e.target.value }))} />
+                  </div>
+                  <div className="col-span-3">
+                    <label className="block text-xs text-white/40 mb-1">Title</label>
+                    <input className="input-field" value={badgeForm.title} onChange={e => setBadgeForm(f => ({ ...f, title: e.target.value }))} placeholder="Badge title" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Description</label>
+                  <input className="input-field" value={badgeForm.description} onChange={e => setBadgeForm(f => ({ ...f, description: e.target.value }))} placeholder="Flavor text shown on the badge" />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Unlock Criteria</label>
+                  <input className="input-field" value={badgeForm.unlock_criteria} onChange={e => setBadgeForm(f => ({ ...f, unlock_criteria: e.target.value }))} placeholder="What the user must do to earn this" />
+                </div>
+                {newBadge && (
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">ID (unique, lowercase, underscores)</label>
+                    <input className="input-field font-mono text-xs" value={badgeForm.id} onChange={e => setBadgeForm(f => ({ ...f, id: e.target.value }))} placeholder="my_new_badge" />
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">XP Reward</label>
+                    <input type="number" className="input-field" value={badgeForm.xp_reward} onChange={e => setBadgeForm(f => ({ ...f, xp_reward: Number(e.target.value) }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Category</label>
+                    <select className="input-field" value={badgeForm.category} onChange={e => setBadgeForm(f => ({ ...f, category: e.target.value }))}>
+                      <option value="streak">Streak</option>
+                      <option value="savings">Savings</option>
+                      <option value="quest">Quest</option>
+                      <option value="social">Social</option>
+                      <option value="special">Special</option>
+                      <option value="hidden">Hidden</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Visibility</label>
+                  <select className="input-field" value={badgeForm.visibility} onChange={e => setBadgeForm(f => ({ ...f, visibility: e.target.value }))}>
+                    <option value="visible">Visible — shown to all users (locked or earned)</option>
+                    <option value="hidden">Hidden — only revealed once earned</option>
+                  </select>
+                </div>
+                <div className="flex items-center gap-4 text-sm">
+                  <label className="flex items-center gap-2 text-white/60 cursor-pointer">
+                    <input type="checkbox" checked={badgeForm.secret} onChange={e => setBadgeForm(f => ({ ...f, secret: e.target.checked }))} className="rounded" />
+                    Secret badge
+                  </label>
+                  <label className="flex items-center gap-2 text-white/60 cursor-pointer">
+                    <input type="checkbox" checked={badgeForm.is_active} onChange={e => setBadgeForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                    Active
+                  </label>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={saveBadge} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2.5">
+                    <Check size={14} /> {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button onClick={() => { setEditingBadge(null); setNewBadge(false); }} className="btn-ghost text-sm px-4 py-2.5">Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {badges.map(b => {
+              const usage = badgeUsage[b.id] ?? 0;
+              const isConfirming = deleteConfirm === `badge_${b.id}`;
+              return (
+                <div key={b.id} className={`card p-4 ${!b.is_active ? "opacity-50" : ""}`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{b.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                        <p className="font-medium text-white text-sm">{b.title}</p>
+                        <span className="text-[10px] text-white/30 border border-surface-border rounded-full px-1.5 py-0.5">{b.category}</span>
+                        {b.secret && <span className="text-[10px] text-purple-400 border border-purple-400/30 rounded-full px-1.5 py-0.5">secret</span>}
+                        {!b.is_active && <span className="text-[10px] text-orange-400 border border-orange-400/30 rounded-full px-1.5 py-0.5">disabled</span>}
+                      </div>
+                      <p className="text-xs text-white/40 mb-1">{b.description}</p>
+                      <div className="flex items-center gap-3 text-xs text-white/30">
+                        <span className="text-brand-400">⚡ {b.xp_reward} XP</span>
+                        <span className="font-mono">{b.id}</span>
+                        {usage > 0 && <span>🏅 {usage} earned</span>}
+                      </div>
+
+                      {isConfirming && (
+                        <div className="mt-2 p-2 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
+                          <AlertTriangle size={13} className="text-red-400" />
+                          <p className="text-xs text-red-400">Delete this badge? This cannot be undone.</p>
+                          <button onClick={() => deleteBadge(b)} className="ml-auto text-xs text-red-400 font-bold hover:text-red-300">Confirm</button>
+                          <button onClick={() => setDeleteConfirm(null)} className="text-xs text-white/30 hover:text-white/60">Cancel</button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button onClick={() => startEditBadge(b)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-white/70 transition-colors">
+                        <Edit2 size={13} />
+                      </button>
+                      <button onClick={() => apiToggle("badges", b.id, b.is_active)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center transition-colors hover:border-brand-500/40">
+                        {b.is_active ? <ToggleRight size={16} className="text-brand-400" /> : <ToggleLeft size={16} className="text-white/30" />}
+                      </button>
+                      <button
+                        onClick={() => usage > 0 ? showToast(`Cannot delete — ${usage} user(s) have earned this badge. Disable it instead.`, "error") : setDeleteConfirm(isConfirming ? null : `badge_${b.id}`)}
+                        className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {badges.length === 0 && <p className="text-white/30 text-sm text-center py-8">No badges in database yet.</p>}
+          </div>
+        </div>
+      )}
+
+      {/* ── QUEST CHAINS ─────────────────────────────── */}
+      {tab === "chains" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display font-semibold text-white">Quest Chains</h2>
+            <button onClick={startNewChain} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
+              <Plus size={14} /> New Chain
+            </button>
+          </div>
+
+          {/* Chain form */}
+          {(newChain || editingChain) && (
+            <div className="card p-4 border-brand-500/30">
+              <h3 className="font-display font-semibold text-white text-sm mb-4">
+                {newChain ? "Create Quest Chain" : "Edit Quest Chain"}
+              </h3>
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="col-span-1">
+                    <label className="block text-xs text-white/40 mb-1">Icon</label>
+                    <input className="input-field text-center" value={chainForm.icon} onChange={e => setChainForm(f => ({ ...f, icon: e.target.value }))} />
+                  </div>
+                  <div className="col-span-3">
+                    <label className="block text-xs text-white/40 mb-1">Title</label>
+                    <input className="input-field" value={chainForm.title} onChange={e => setChainForm(f => ({ ...f, title: e.target.value }))} placeholder="Chain title" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/40 mb-1">Description</label>
+                  <input className="input-field" value={chainForm.description} onChange={e => setChainForm(f => ({ ...f, description: e.target.value }))} placeholder="What this chain is about" />
+                </div>
+                {newChain && (
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">ID (unique, lowercase, underscores)</label>
+                    <input className="input-field font-mono text-xs" value={chainForm.id} onChange={e => setChainForm(f => ({ ...f, id: e.target.value }))} placeholder="chain_my_chain" />
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Completion Bonus XP</label>
+                    <input type="number" className="input-field" value={chainForm.completion_xp} onChange={e => setChainForm(f => ({ ...f, completion_xp: Number(e.target.value) }))} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 mb-1">Completion Badge (optional)</label>
+                    <select className="input-field" value={chainForm.completion_badge_id} onChange={e => setChainForm(f => ({ ...f, completion_badge_id: e.target.value }))}>
+                      <option value="">None</option>
+                      {badges.map(b => <option key={b.id} value={b.id}>{b.icon} {b.title}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-white/60 cursor-pointer text-sm">
+                  <input type="checkbox" checked={chainForm.is_active} onChange={e => setChainForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                  Active
+                </label>
+
+                {/* Steps editor */}
+                <div className="pt-2 border-t border-surface-border">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs text-white/40 uppercase tracking-wider">Steps ({chainForm.steps.length})</p>
+                    <button onClick={addStep} className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
+                      <Plus size={12} /> Add Step
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {chainForm.steps.map((step, i) => (
+                      <div key={i} className="p-3 rounded-xl bg-surface-elevated border border-surface-border space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-white/30 font-mono w-6">#{step.step_number}</span>
+                          <input className="input-field flex-1" value={step.title} onChange={e => updateStep(i, { title: e.target.value })} placeholder="Step title" />
+                          <div className="flex flex-col gap-0.5">
+                            <button onClick={() => moveStep(i, -1)} disabled={i === 0} className="text-white/30 hover:text-white disabled:opacity-20 px-1">▲</button>
+                            <button onClick={() => moveStep(i, 1)} disabled={i === chainForm.steps.length - 1} className="text-white/30 hover:text-white disabled:opacity-20 px-1">▼</button>
+                          </div>
+                          <button onClick={() => removeStep(i)} className="text-white/30 hover:text-red-400 px-1">
+                            <X size={14} />
+                          </button>
+                        </div>
+                        <input className="input-field" value={step.description} onChange={e => updateStep(i, { description: e.target.value })} placeholder="Step description" />
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[10px] text-white/30 mb-1">XP Reward</label>
+                            <input type="number" className="input-field text-xs" value={step.xp_reward} onChange={e => updateStep(i, { xp_reward: Number(e.target.value) })} />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-white/30 mb-1">Requires</label>
+                            <select className="input-field text-xs" value={step.requires_type} onChange={e => updateStep(i, { requires_type: e.target.value })}>
+                              <option value="save_amount">Save Amount</option>
+                              <option value="streak">Streak Days</option>
+                              <option value="complete_quest">Complete Quest</option>
+                              <option value="complete_daily">Complete Daily</option>
+                              <option value="open_app">Open App</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-white/30 mb-1">Value</label>
+                            <input type="number" className="input-field text-xs" value={step.requires_value} onChange={e => updateStep(i, { requires_value: Number(e.target.value) })} />
+                          </div>
+                        </div>
+                        {step.requires_type === "complete_quest" && (
+                          <div>
+                            <label className="block text-[10px] text-white/30 mb-1">Required Quest ID (optional)</label>
+                            <input className="input-field text-xs font-mono" value={step.requires_quest_id ?? ""} onChange={e => updateStep(i, { requires_quest_id: e.target.value })} placeholder="e.g. daily_skip_purchase" />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={saveChain} disabled={saving} className="btn-primary flex items-center gap-1.5 text-sm px-4 py-2.5">
+                    <Check size={14} /> {saving ? "Saving…" : "Save"}
+                  </button>
+                  <button onClick={() => { setEditingChain(null); setNewChain(false); }} className="btn-ghost text-sm px-4 py-2.5">Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {questChains.map(c => {
+              const usage = chainUsage[c.id] ?? 0;
+              const isConfirming = deleteConfirm === `chain_${c.id}`;
+              return (
+                <div key={c.id} className={`card p-4 ${!c.is_active ? "opacity-50" : ""}`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">{c.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                        <p className="font-medium text-white text-sm">{c.title}</p>
+                        <span className="text-[10px] text-white/30 border border-surface-border rounded-full px-1.5 py-0.5">{(c.steps ?? []).length} steps</span>
+                        {!c.is_active && <span className="text-[10px] text-orange-400 border border-orange-400/30 rounded-full px-1.5 py-0.5">disabled</span>}
+                      </div>
+                      <p className="text-xs text-white/40 mb-1">{c.description}</p>
+                      <div className="flex items-center gap-3 text-xs text-white/30">
+                        <span className="text-brand-400">⚡ +{c.completion_xp} XP on completion</span>
+                        <span className="font-mono">{c.id}</span>
+                        {usage > 0 && <span>🔄 {usage} in progress/completed</span>}
+                      </div>
+
+                      {isConfirming && (
+                        <div className="mt-2 p-2 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2">
+                          <AlertTriangle size={13} className="text-red-400" />
+                          <p className="text-xs text-red-400">Delete this chain and all its steps? This cannot be undone.</p>
+                          <button onClick={() => deleteChain(c)} className="ml-auto text-xs text-red-400 font-bold hover:text-red-300">Confirm</button>
+                          <button onClick={() => setDeleteConfirm(null)} className="text-xs text-white/30 hover:text-white/60">Cancel</button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button onClick={() => startEditChain(c)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-white/70 transition-colors">
+                        <Edit2 size={13} />
+                      </button>
+                      <button onClick={() => apiToggle("quest-chains", c.id, c.is_active)} className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center transition-colors hover:border-brand-500/40">
+                        {c.is_active ? <ToggleRight size={16} className="text-brand-400" /> : <ToggleLeft size={16} className="text-white/30" />}
+                      </button>
+                      <button
+                        onClick={() => usage > 0 ? showToast(`Cannot delete — ${usage} user(s) have progress on this chain. Disable it instead.`, "error") : setDeleteConfirm(isConfirming ? null : `chain_${c.id}`)}
+                        className="w-8 h-8 rounded-lg bg-surface-elevated border border-surface-border flex items-center justify-center text-white/40 hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {questChains.length === 0 && <p className="text-white/30 text-sm text-center py-8">No quest chains in database yet.</p>}
           </div>
         </div>
       )}

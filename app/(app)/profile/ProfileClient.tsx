@@ -9,6 +9,7 @@ import { LEVELS, TIER_COLORS, TIER_LABELS, type LevelTier } from "@/lib/xp";
 import { LogOut, ChevronDown, ChevronUp, Lock, ChevronRight } from "lucide-react";
 import { formatAmount } from "@/lib/currency";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
+import BadgeDetailPanel, { type BadgeDetailData } from "@/components/gamification/BadgeDetailPanel";
 import Link from "next/link";
 import type { TimelineEventGroup } from "@/lib/types";
 
@@ -16,6 +17,7 @@ interface Props {
   profile: any;
   levelInfo: any;
   earnedIds: string[];
+  earnedAchievements: { achievement_id: string; earned_at: string }[];
   totalSaved: number;
   totalTransactions: number;
   completedChains: number;
@@ -25,14 +27,16 @@ interface Props {
 const AVATAR_OPTIONS = ["🌱", "💰", "🚀", "⚡", "🏆", "🔥", "💎", "👑", "🦅", "🧠", "🎯", "✨", "🌟", "⚔️", "🛡️"];
 type ProfileTab = "badges" | "levels" | "stats" | "timeline";
 
-export default function ProfileClient({ profile, levelInfo, earnedIds, totalSaved, totalTransactions, completedChains, timelineGroups }: Props) {
+export default function ProfileClient({ profile, levelInfo, earnedIds, earnedAchievements, totalSaved, totalTransactions, completedChains, timelineGroups }: Props) {
   const router = useRouter();
   const [selectedAvatar, setSelectedAvatar] = useState(profile.avatar_emoji);
   const [activeTab, setActiveTab] = useState<ProfileTab>("badges");
   const [badgeFilter, setBadgeFilter] = useState<"all" | "streak" | "savings" | "quest" | "hidden">("all");
   const [showAllLevels, setShowAllLevels] = useState(false);
+  const [selectedBadge, setSelectedBadge] = useState<BadgeDetailData | null>(null);
 
   const earnedSet = new Set(earnedIds);
+  const earnedAtMap = new Map(earnedAchievements.map(a => [a.achievement_id, a.earned_at]));
   const tierColor = TIER_COLORS[levelInfo.tier as LevelTier];
   const tierLabel = TIER_LABELS[levelInfo.tier as LevelTier];
 
@@ -165,13 +169,19 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, totalSave
               </p>
               <div className="grid grid-cols-3 gap-3 mb-5">
                 {earnedFiltered.map(a => (
-                  <div key={a.id} className="card p-3 flex flex-col items-center gap-2 border-emerald-500/10">
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setSelectedBadge({ ...a, earned: true, earnedAt: earnedAtMap.get(a.id) ?? null })}
+                    className="card p-3 flex flex-col items-center gap-2 border-emerald-500/10 text-left active:scale-95 transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40"
+                    aria-label={`View details for ${a.title} badge, earned`}
+                  >
                     <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-2xl animate-badge-pop">
                       {a.icon}
                     </div>
                     <span className="text-[11px] text-white/70 text-center leading-tight font-medium">{a.title}</span>
                     <span className="text-[10px] text-emerald-400">+{a.xpReward} XP</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </>
@@ -182,13 +192,19 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, totalSave
               <p className="text-xs text-white/30 uppercase tracking-wider mb-3">Locked ({lockedFiltered.length})</p>
               <div className="grid grid-cols-3 gap-3">
                 {lockedFiltered.map(a => (
-                  <div key={a.id} className="card p-3 flex flex-col items-center gap-2 opacity-35">
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setSelectedBadge({ ...a, earned: false, earnedAt: null })}
+                    className="card p-3 flex flex-col items-center gap-2 opacity-35 text-left active:scale-95 transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20"
+                    aria-label={`View details for locked badge ${a.title}`}
+                  >
                     <div className="w-12 h-12 rounded-2xl bg-surface-elevated border border-surface-border flex items-center justify-center text-2xl grayscale">
                       {a.icon}
                     </div>
                     <span className="text-[11px] text-white/40 text-center leading-tight">{a.title}</span>
                     <span className="text-[10px] text-white/20 text-center leading-tight">{a.description}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </>
@@ -355,6 +371,11 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, totalSave
             🛡️ Admin Dashboard
           </a>
         </div>
+      )}
+
+      {/* Badge detail panel (Task 2) */}
+      {selectedBadge && (
+        <BadgeDetailPanel badge={selectedBadge} onClose={() => setSelectedBadge(null)} />
       )}
     </div>
   );

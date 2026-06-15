@@ -1,12 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
-import { getLevelFromXP } from "@/lib/xp";
+import { getLevelFromXP, getXPForAction } from "@/lib/xp";
 import { getAlmostMessages } from "@/lib/achievements";
 import { isStreakPaused } from "@/lib/streaks";
 import DashboardClient from "./DashboardClient";
 import { QUEST_CHAINS } from "@/lib/quests";
 import { getEventsForUser } from "@/lib/events";
 import { fetchTimelineEvents } from "@/lib/timeline";
+import { getUTCDateString } from "@/lib/dateUtils";
 
 // User experience stage — drives progressive dashboard disclosure
 // new: 0–6 days  |  building: 7–29 days  |  established: 30+ days
@@ -31,9 +32,9 @@ export default async function DashboardPage() {
     supabase.from("profiles").select("*").eq("id", user.id).single(),
     supabase.from("savings_goals").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
     supabase.from("user_challenges").select("*, challenges(*)").eq("user_id", user.id).eq("status", "active"),
-    supabase.from("user_achievements").select("achievement_id").eq("user_id", user.id).order("earned_at", { ascending: false }).limit(5),
-    supabase.from("activity_log").select("*").eq("user_id", user.id).gte("activity_date", new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0]),
-    supabase.from("daily_quest_logs").select("quest_id, quest_date").eq("user_id", user.id).eq("quest_date", new Date().toISOString().split("T")[0]).maybeSingle(),
+    supabase.from("user_achievements").select("achievement_id, earned_at").eq("user_id", user.id).order("earned_at", { ascending: false }).limit(5),
+    supabase.from("activity_log").select("*").eq("user_id", user.id).gte("activity_date", getUTCDateString(new Date(Date.now() - 30 * 86400000))),
+    supabase.from("daily_quest_logs").select("quest_id, quest_date").eq("user_id", user.id).eq("quest_date", getUTCDateString()).maybeSingle(),
     supabase.from("quest_chain_progress").select("chain_id, current_step, status").eq("user_id", user.id),
   ]);
 
@@ -44,7 +45,7 @@ export default async function DashboardPage() {
   supabase.rpc("record_app_open", { p_user_id: user.id }).then(() => {});
 
   // Evaluate streak — skip if paused
-  const today = new Date().toISOString().split("T")[0];
+  const today = getUTCDateString();
   const streakCurrentlyPaused = isStreakPaused(profile.streak_paused_until);
 
   if (profile.last_active_date !== today && !streakCurrentlyPaused) {
@@ -81,10 +82,32 @@ export default async function DashboardPage() {
     });
     profile.streak_days      = newStreak;
     profile.last_active_date = today;
+
+    // ── Day Momentum fix: record the daily check-in ──────────────
+    // This block runs at most once per UTC calendar day per user
+    // (gated by last_active_date !== today above). It both logs an
+    // activity_log entry for today (so the check-in counts toward
+    // momentum, even if the user does nothing else) and awards the
+    // DAILY_CHECKIN XP exactly once per day via the idempotent
+    // record_checkin() RPC.
+    const checkinXP = getXPForAction("DAILY_CHECKIN", newStreak);
+    const { data: checkinResult } = await supabase.rpc("record_checkin", {
+      p_user_id: user.id,
+      p_date:    today,
+      p_xp:      checkinXP,
+    });
+    const checkinXpAwarded = (checkinResult as { xp_awarded?: number } | null)?.xp_awarded ?? 0;
+    if (checkinXpAwarded > 0) {
+      profile.xp_total = (profile.xp_total ?? 0) + checkinXpAwarded;
+    }
   }
 
   const goals = goalsRes.data ?? [];
   const allAchievementIds = (achievementsRes.data ?? []).map((a: any) => a.achievement_id);
+  const recentAchievementsData = (achievementsRes.data ?? []).map((a: any) => ({
+    achievement_id: a.achievement_id,
+    earned_at:      a.earned_at,
+  }));
   const levelInfo = getLevelFromXP(profile.xp_total);
   const totalSaved = goals.reduce((sum: number, g: any) => sum + Number(g.current_amount), 0);
   const activeGoals = goals.filter((g: any) => !g.is_complete);
@@ -136,6 +159,7 @@ export default async function DashboardPage() {
       completedGoals={completedGoals}
       activeChallenges={activeChallengesRes.data ?? []}
       recentAchievements={allAchievementIds}
+      recentAchievementsData={recentAchievementsData}
       activityLog={activityRes.data ?? []}
       dailyQuestCompletedToday={!!dailyQuestRes.data}
       todayQuestId={dailyQuestRes.data?.quest_id}

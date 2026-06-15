@@ -118,22 +118,25 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
       return;
     }
 
-    // Withdrawals and purchases — direct insert (no achievement triggers)
-    const { data: tx, error: txErr } = await supabase
-      .from("transactions")
-      .insert({ user_id: user.id, goal_id: goal.id, amount: depositAmount, note: note || null, transaction_type: txType })
-      .select()
-      .single();
+    // Withdrawals and purchases — routed through /api/transactions/withdrawal
+    // so the server can record activity_log for Day Momentum (no XP for
+    // these actions, but the day still counts as "active"). Achievement
+    // checks are intentionally skipped for these transaction types, matching
+    // prior behaviour.
+    const wRes = await fetch("/api/transactions/withdrawal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal_id: goal.id, amount: depositAmount, note: note || null, transaction_type: txType }),
+    });
+    const wData = await wRes.json();
 
-    if (txErr) { setError(txErr.message); setLoading(false); return; }
+    if (!wRes.ok) { setError(wData.error ?? "Failed to log transaction"); setLoading(false); return; }
 
-    let newAmount = Number(goal.current_amount);
-    if (txType === "goal_purchase") {
-      newAmount = Math.max(0, newAmount - depositAmount);
-    } else {
-      newAmount = Math.max(0, newAmount - depositAmount);
-    }
-    const isNowComplete = txType === "goal_purchase" && newAmount <= 0;
+    const tx = wData.transaction;
+    const newAmount = wData.goal?.current_amount != null
+      ? Number(wData.goal.current_amount)
+      : Math.max(0, Number(goal.current_amount) - depositAmount);
+    const isNowComplete = txType === "goal_purchase" && (wData.goal?.is_complete ?? newAmount <= 0);
 
     if (txType === "goal_purchase" && isNowComplete) {
       // XP awarded server-side through awardGoalCompleteXP() — no direct browser write.

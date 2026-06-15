@@ -18,6 +18,7 @@ import { getXPForAction } from "@/lib/xp";
 import { checkAndAwardAchievements } from "@/lib/awardXP";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { recordDailyActivity } from "@/lib/recordDailyActivity";
+import { getUTCDateString } from "@/lib/dateUtils";
 
 export async function POST(req: NextRequest) {
   const supabase = createClient();
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   if (!profile) return NextResponse.json({ error: "Profile not found" }, { status: 404 });
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = getUTCDateString();
   const xp    = getXPForAction("DAILY_QUEST_COMPLETE", profile.streak_days);
 
   // ── Atomic DB function: logs quest + awards XP idempotently ──

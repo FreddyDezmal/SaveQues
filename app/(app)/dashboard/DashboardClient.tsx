@@ -12,6 +12,7 @@ import GoalCard from "@/components/goals/GoalCard";
 import XPProgressBar from "@/components/gamification/XPProgressBar";
 import StreakBadge from "@/components/gamification/StreakBadge";
 import MomentumHeatmap from "@/components/gamification/MomentumHeatmap";
+import BadgeDetailPanel, { type BadgeDetailData } from "@/components/gamification/BadgeDetailPanel";
 import DailyQuestCard from "@/components/gamification/DailyQuestCard";
 import { ChevronRight, Plus, PauseCircle, PlayCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -28,6 +29,7 @@ interface Props {
   completedGoals: any[];
   activeChallenges: any[];
   recentAchievements: string[];
+  recentAchievementsData: { achievement_id: string; earned_at: string }[];
   activityLog: any[];
   dailyQuestCompletedToday: boolean;
   todayQuestId?: string;
@@ -48,7 +50,7 @@ interface Props {
 
 export default function DashboardClient({
   profile, levelInfo, totalSaved, activeGoals, completedGoals,
-  activeChallenges, recentAchievements, activityLog,
+  activeChallenges, recentAchievements, recentAchievementsData, activityLog,
   dailyQuestCompletedToday, todayQuestId,
   almostMessages, activeChain, streakBroken,
   userStage, streakPaused, streakPausedUntil, dashboardEvents,
@@ -57,6 +59,7 @@ export default function DashboardClient({
   const router = useRouter();
   const [pauseLoading, setPauseLoading] = useState(false);
   const [pauseConfirm, setPauseConfirm] = useState(false);
+  const [selectedBadge, setSelectedBadge] = useState<BadgeDetailData | null>(null);
 
   const greeting = getGreeting();
   const streakMsg = getStreakMessage(profile.streak_days, streakPaused);
@@ -375,13 +378,20 @@ export default function DashboardClient({
             {recentAchievements.slice(0, 5).map(id => {
               const def = ACHIEVEMENTS.find(a => a.id === id);
               if (!def) return null;
+              const earnedAt = recentAchievementsData.find(r => r.achievement_id === id)?.earned_at ?? null;
               return (
-                <div key={id} className="flex flex-col items-center gap-1.5">
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setSelectedBadge({ ...def, earned: true, earnedAt })}
+                  className="flex flex-col items-center gap-1.5 active:scale-95 transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/40 rounded-2xl"
+                  aria-label={`View details for ${def.title} badge, earned`}
+                >
                   <div className="w-12 h-12 rounded-2xl bg-surface-elevated border border-surface-border flex items-center justify-center text-2xl">
                     {def.icon}
                   </div>
                   <span className="text-[10px] text-white/40 text-center leading-tight w-12">{def.title}</span>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -418,6 +428,11 @@ export default function DashboardClient({
             Complete your daily quest and log a saving to start building your streak. More features unlock as you progress.
           </p>
         </div>
+      )}
+
+      {/* Badge detail panel (Task 2) */}
+      {selectedBadge && (
+        <BadgeDetailPanel badge={selectedBadge} onClose={() => setSelectedBadge(null)} />
       )}
     </div>
   );

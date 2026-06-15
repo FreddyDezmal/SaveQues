@@ -10,6 +10,24 @@ export interface Achievement {
   icon: string;
   xpReward: number;
   secret?: boolean;
+  /**
+   * Optional explicit "how to unlock" text shown in the badge detail
+   * panel. Falls back to `description` via getUnlockCriteria() when not
+   * set — most existing descriptions already read as unlock criteria
+   * (e.g. "7-day streak", "Total saved: R500"). Use this field when a
+   * badge's flavor description differs from the precise requirement.
+   */
+  unlockCriteria?: string;
+}
+
+/**
+ * Returns the user-facing "how to unlock" text for an achievement.
+ * Used by the badge detail panel (Task 2). Prefers the explicit
+ * `unlockCriteria` field; falls back to `description` since most
+ * existing achievement descriptions already describe the requirement.
+ */
+export function getUnlockCriteria(achievement: Pick<Achievement, "unlockCriteria" | "description">): string {
+  return achievement.unlockCriteria ?? achievement.description;
 }
 
 export const ACHIEVEMENTS: Achievement[] = [

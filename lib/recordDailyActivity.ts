@@ -10,6 +10,18 @@
  * The underlying function is idempotent (INSERT ... ON CONFLICT DO UPDATE)
  * so calling it multiple times in the same day is safe — deltas are additive.
  *
+ * NOTE — relationship to activity_log / Day Momentum:
+ *   This writes to `analytics_daily_activity`, a separate table used purely
+ *   for retention analytics (D1/D7/D30, WAU/MAU) in the Admin dashboard.
+ *   It is NOT the source of truth for the Dashboard's Day Momentum heatmap —
+ *   that reads `activity_log`, which is written by award_xp() /
+ *   log_activity_event() (see lib/dateUtils.ts and migration 015).
+ *   Most callers of recordDailyActivity() already call awardXP() first
+ *   (which writes activity_log), so DO NOT also call log_activity_event()
+ *   here — that would double-count actions_count/xp_earned for the day.
+ *   Only call log_activity_event() directly for actions that do NOT go
+ *   through awardXP() (e.g. withdrawals, daily check-ins).
+ *
  * USAGE
  *   await recordDailyActivity(supabase, userId, {
  *     deposit_delta: 1,
@@ -18,6 +30,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getUTCDateString } from "@/lib/dateUtils";
 
 interface ActivityDeltas {
   /** Mark the user as having opened the app today */
@@ -40,7 +53,7 @@ export async function recordDailyActivity(
   deltas: ActivityDeltas = {}
 ): Promise<void> {
   try {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getUTCDateString();
 
     await supabase.rpc("upsert_daily_activity", {
       p_user_id:       userId,

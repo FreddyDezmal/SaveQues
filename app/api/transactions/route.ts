@@ -17,6 +17,7 @@ import { checkAchievements } from "@/lib/achievements";
 import { awardSavingXP, awardGoalCompleteXP } from "@/lib/awardXP";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { recordDailyActivity } from "@/lib/recordDailyActivity";
+import { getUTCDateString } from "@/lib/dateUtils";
 
 export async function POST(req: NextRequest) {
   const supabase = createClient();
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
   if (txError) return NextResponse.json({ error: txError.message }, { status: 500 });
 
   // ── 3. FETCH CONTEXT FOR XP + ACHIEVEMENT CHECKS ─────────────
-  const today = new Date().toISOString().split("T")[0];
+  const today = getUTCDateString();
   const [profileRes, goalRes, allTxRes, todayTxRes, achievementsRes, goalsRes, weeklyRes, chainRes] =
     await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),

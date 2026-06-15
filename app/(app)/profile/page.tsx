@@ -29,6 +29,7 @@ export default async function ProfilePage() {
       profile={profile}
       levelInfo={levelInfo}
       earnedIds={(achievementsRes.data ?? []).map(a => a.achievement_id)}
+      earnedAchievements={achievementsRes.data ?? []}
       totalSaved={totalSaved}
       totalTransactions={(txRes.data ?? []).length}
       completedChains={completedChains}
