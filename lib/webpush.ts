@@ -30,6 +30,16 @@ async function getVapidKeys() {
   if (!publicKey || !privateKey) {
     throw new Error("VAPID keys not configured.");
   }
+  // RFC 8292 requires the `sub` claim to be a "mailto:" or "https:" URI.
+  // A bare email/domain (no scheme) produces a JWT that some push
+  // services (notably FCM) silently reject, causing every push send to
+  // fail with no obvious client-side symptom.
+  if (!/^(mailto:|https:)/i.test(subject)) {
+    throw new Error(
+      `VAPID_SUBJECT must start with "mailto:" or "https:" (got "${subject}"). ` +
+      `Set it to e.g. "mailto:${subject}" in your environment.`
+    );
+  }
   return { publicKey, privateKey, subject };
 }
 

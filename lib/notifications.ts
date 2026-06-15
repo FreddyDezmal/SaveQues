@@ -10,11 +10,19 @@ import { getDaysRemainingInWeek } from "./weeklyQuests";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function todayInTZ(tz: string): string {
+/**
+ * Returns the calendar date (YYYY-MM-DD) in the given timezone, optionally
+ * offset by `dayOffset` days (e.g. -1 for "yesterday in this timezone").
+ */
+function todayInTZ(tz: string, dayOffset = 0): string {
   try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date());
+    const d = new Date();
+    if (dayOffset !== 0) d.setUTCDate(d.getUTCDate() + dayOffset);
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(d);
   } catch {
-    return new Date().toISOString().slice(0, 10);
+    const d = new Date();
+    if (dayOffset !== 0) d.setUTCDate(d.getUTCDate() + dayOffset);
+    return d.toISOString().slice(0, 10);
   }
 }
 
@@ -29,16 +37,26 @@ function currentHourInTZ(tz: string): number {
   }
 }
 
-async function logNotification(
+/**
+ * Create a notification_logs row BEFORE sending, so its id can be embedded
+ * in the push payload (sw.js reads payload.notificationId to POST
+ * /api/notifications/track on "push" and "notificationclick" events).
+ *
+ * BUGFIX: previously the log row was created AFTER sendWebPush() with no
+ * way to pass the resulting id back into the already-sent payload, so
+ * notificationId was always undefined in the service worker — meaning
+ * delivered_at/clicked_at could never be set and admin delivery/click
+ * rates always showed 0%.
+ */
+async function createPendingLog(
   userId: string,
   subscriptionId: string | null,
   type: NotificationType,
   title: string,
-  body: string,
-  result: SendResult
+  body: string
 ): Promise<string> {
   const supabase = createServiceClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("notification_logs")
     .insert({
       user_id:           userId,
@@ -46,12 +64,22 @@ async function logNotification(
       notification_type: type,
       title,
       body,
-      error: result.ok ? null : (result.error ?? `HTTP ${result.status}`),
     })
     .select("id")
     .single();
 
+  if (error) console.error("[notifications] Failed to create log row:", error);
   return data?.id ?? "";
+}
+
+/** Record the send result (error, if any) on an existing log row. */
+async function updateLogResult(logId: string, result: SendResult): Promise<void> {
+  if (!logId) return;
+  const supabase = createServiceClient();
+  await supabase
+    .from("notification_logs")
+    .update({ error: result.ok ? null : (result.error ?? `HTTP ${result.status}`) })
+    .eq("id", logId);
 }
 
 async function deactivateSubscription(endpoint: string) {
@@ -60,6 +88,15 @@ async function deactivateSubscription(endpoint: string) {
     .from("push_subscriptions")
     .update({ is_active: false })
     .eq("endpoint", endpoint);
+}
+
+/** Record that a user was sent a scheduled notification "today" (their local date). */
+async function markNotifiedToday(userId: string, localDate: string): Promise<void> {
+  const supabase = createServiceClient();
+  await supabase
+    .from("profiles")
+    .update({ last_notification_sent_date: localDate })
+    .eq("id", userId);
 }
 
 // ── Send to one user ─────────────────────────────────────────────────────────
@@ -84,6 +121,10 @@ async function sendToUser(
   let sent = 0, errors = 0;
 
   for (const sub of subs as PushSubscriptionRow[]) {
+    // Create the log row first so we can embed its id in the payload —
+    // the service worker reports delivered/clicked back using this id.
+    const logId = await createPendingLog(userId, sub.id, type, title, body);
+
     const payload: PushPayload = {
       title,
       body,
@@ -92,6 +133,7 @@ async function sendToUser(
       tag:   type,
       url,
       type,
+      notificationId: logId || undefined,
     };
 
     const result = await sendWebPush(
@@ -99,7 +141,7 @@ async function sendToUser(
       payload
     );
 
-    await logNotification(userId, sub.id, type, title, body, result);
+    await updateLogResult(logId, result);
 
     if (result.ok) {
       sent++;
@@ -185,7 +227,7 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
       user_id, timezone,
       profiles!inner(
         id, streak_days, last_active_date, last_notification_hour,
-        notifications_enabled
+        last_notification_sent_date, notifications_enabled
       )
     `)
     .eq("is_active", true)
@@ -202,28 +244,53 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
     notificationHour: number;
     streakDays: number;
     lastActiveDate: string | null;
+    lastNotificationSentDate: string | null;
   }>();
 
   for (const sub of subs as any[]) {
     const p = sub.profiles;
     if (!p) continue;
     usersToProcess.set(p.id, {
-      timezone:         sub.timezone ?? "UTC",
-      notificationHour: p.last_notification_hour ?? 20, // default 8 PM
-      streakDays:       p.streak_days ?? 0,
-      lastActiveDate:   p.last_active_date,
+      timezone:                  sub.timezone ?? "UTC",
+      notificationHour:          p.last_notification_hour ?? 20, // default 8 PM
+      streakDays:                p.streak_days ?? 0,
+      lastActiveDate:            p.last_active_date,
+      lastNotificationSentDate:  p.last_notification_sent_date,
     });
   }
 
   for (const [userId, userInfo] of Array.from(usersToProcess.entries())) {
-    const { timezone, notificationHour, streakDays, lastActiveDate } = userInfo;
+    const { timezone, notificationHour, streakDays, lastActiveDate, lastNotificationSentDate } = userInfo;
     const localHour = currentHourInTZ(timezone);
     const today     = todayInTZ(timezone);
 
-    // Only send during user's preferred notification hour (±0)
-    if (localHour !== notificationHour) continue;
+    // ── Daily-cron gating (Vercel Hobby: cron runs at most once/day) ──
+    // Previously this was `localHour !== notificationHour => skip`, which
+    // assumed an hourly cron. With a single daily invocation at a fixed
+    // UTC time, that condition could be permanently false for a user
+    // depending on their timezone, so they'd never be notified — on any
+    // day. Instead:
+    //   1. Skip if we've already sent a notification today (their local
+    //      date) — guards against double-sends if the cron is ever
+    //      triggered more than once in a day.
+    //   2. Skip if their local time hasn't reached their preferred hour
+    //      yet, UNLESS it's been a full day (or more) since their last
+    //      notification — guarantees at least one notification per day
+    //      for every user, even if the single daily cron always lands
+    //      before their preferred hour in their timezone (e.g. cron at
+    //      08:00 UTC = 03:00 in US Pacific, but their preferred hour is
+    //      20:00). Without this fallback such users would be skipped
+    //      forever, every day, with last_notification_sent_date never
+    //      progressing.
+    if (lastNotificationSentDate === today) continue;
+
+    const isOverdue = !lastNotificationSentDate || lastNotificationSentDate < todayInTZ(timezone, -1);
+    if (localHour < notificationHour && !isOverdue) continue;
 
     processed++;
+    // Mark immediately (covers the early `continue` below for inactive
+    // users too) so a second cron invocation the same day is a no-op.
+    await markNotifiedToday(userId, today);
 
     const daysSinceActive = lastActiveDate
       ? Math.floor((new Date(today).getTime() - new Date(lastActiveDate).getTime()) / 86400000)
