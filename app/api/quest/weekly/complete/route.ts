@@ -2,12 +2,15 @@
  * app/api/quest/weekly/complete/route.ts
  *
  * Security guarantees:
- *  • Status guard   — complete_weekly_quest() DB function only marks
- *                     complete when status = 'active'; already-completed
- *                     rows return alreadyAwarded: true
- *  • Idempotency    — award_xp() uses source_id = week_start date
- *  • Concurrent tab — DB UPDATE WHERE status = 'active' is atomic;
- *                     second concurrent request sees 0 rows updated
+ *  • Auth required   — session verified via createClient()
+ *  • XP integrity    — xp_reward loaded from `weekly_quests` DB table server-side;
+ *                      any client-supplied xpReward is ignored entirely (M3 fix)
+ *  • Status guard    — complete_weekly_quest() DB function only marks complete
+ *                      when status = 'active'; already-completed rows return
+ *                      alreadyAwarded: true
+ *  • Idempotency     — award_xp() uses source_id = week_start date
+ *  • Concurrent tab  — DB UPDATE WHERE status = 'active' is atomic;
+ *                      second concurrent request sees 0 rows updated
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -21,21 +24,32 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { questId, weekStart, xpReward } = await req.json();
-  if (!questId || !weekStart || !xpReward) {
-    return NextResponse.json({ error: "questId, weekStart, and xpReward required" }, { status: 400 });
+  // M3 fix: destructure questId and weekStart only — xpReward is intentionally
+  // ignored even if the client sends it.
+  const { questId, weekStart } = await req.json();
+  if (!questId || !weekStart) {
+    return NextResponse.json({ error: "questId and weekStart required" }, { status: 400 });
   }
 
-  // Validate xpReward is a positive integer — never trust client blindly,
-  // but weekly quest XP is defined in code not DB so we accept it here
-  // and cap it defensively.
-  const xp = Math.min(Math.max(Math.round(Number(xpReward)), 0), 10000);
+  // M3 fix: load XP reward from the database, never from the client
+  const { data: questRecord } = await supabase
+    .from("weekly_quests")
+    .select("xp_reward")
+    .eq("id", questId)
+    .eq("is_active", true)
+    .single();
+
+  if (!questRecord) {
+    return NextResponse.json({ error: "Quest not found" }, { status: 404 });
+  }
+
+  const xp = questRecord.xp_reward;
 
   const { data: result, error } = await supabase.rpc("complete_weekly_quest", {
-    p_user_id:   user.id,
-    p_quest_id:  questId,
+    p_user_id:    user.id,
+    p_quest_id:   questId,
     p_week_start: weekStart,
-    p_xp:        xp,
+    p_xp:         xp,
   });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -60,18 +74,17 @@ export async function POST(req: NextRequest) {
   ]);
 
   const newAchievements = await checkAndAwardAchievements(user.id, {
-    streakDays:           profile?.streak_days ?? 0,
-    totalSaved:           0,
-    goalsCompleted:       0,
-    activeGoals:          0,
-    challengesCompleted:  weeklyCountRes.data?.length ?? 0,
-    dailyQuestsCompleted: profile?.daily_quests_completed ?? 0,
+    streakDays:            profile?.streak_days ?? 0,
+    totalSaved:            0,
+    goalsCompleted:        0,
+    activeGoals:           0,
+    challengesCompleted:   weeklyCountRes.data?.length ?? 0,
+    dailyQuestsCompleted:  profile?.daily_quests_completed ?? 0,
     weeklyQuestsCompleted: (profile?.weekly_quests_completed ?? 0) + 1,
-    questChainsCompleted: chainRes.data?.length ?? 0,
-    earnedIds:            (earnedRes.data ?? []).map((a: any) => a.achievement_id),
+    questChainsCompleted:  chainRes.data?.length ?? 0,
+    earnedIds:             (earnedRes.data ?? []).map((a: any) => a.achievement_id),
   });
 
-  // ── Analytics ─────────────────────────────────────────────────
   await trackServerEvent(AnalyticsEvents.WEEKLY_QUEST_COMPLETED, user.id, {
     quest_id:  questId,
     xp_gained: rpcResult.xp_awarded,
@@ -82,7 +95,6 @@ export async function POST(req: NextRequest) {
     source_type: "weekly_quest",
   });
 
-  // First quest completed activation milestone
   const prevDailyCount  = profile?.daily_quests_completed ?? 0;
   const prevWeeklyCount = profile?.weekly_quests_completed ?? 0;
   if (prevDailyCount === 0 && prevWeeklyCount === 0) {
