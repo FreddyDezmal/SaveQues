@@ -4,16 +4,14 @@
  * components/events/EventCard.tsx — SECURITY HARDENED
  *
  * Changes from original:
- *  • handleComplete() now calls POST /api/events/complete — no direct
- *    Supabase profile writes from the browser.
- *  • handleJoin() still calls Supabase directly (join is XP-free and
- *    the user_event_participation table is RLS-scoped to the user).
+ *  • handleComplete() calls POST /api/events/complete — no direct DB writes.
+ *  • handleJoin() calls POST /api/events/join (Sprint 3) — direct browser SDK
+ *    insert removed because user_event_participation INSERT RLS was tightened.
  *  • XP reward displayed from server-resolved event prop only.
  */
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
 import EventCountdownBadge from "./EventCountdownBadge";
 import { Zap, Lock } from "lucide-react";
@@ -35,20 +33,18 @@ export default function EventCard({ event, userId, participationStatus }: Props)
   const canJoin     = event.window.canJoin && localStatus === "none";
   const isUpcoming  = event.window.status === "upcoming";
 
-  // Join is XP-free — direct Supabase insert is acceptable here.
-  // The user_event_participation table has RLS (auth.uid() = user_id)
-  // and a UNIQUE (user_id, event_slug) constraint.
+  // Sprint 3: join now goes through a server route instead of a direct
+  // browser SDK insert, because the INSERT RLS on user_event_participation
+  // was tightened in migration 019.
   async function handleJoin() {
     if (!canJoin) return;
     setLoading(true);
-    const supabase = createClient();
-    const { error } = await supabase.from("user_event_participation").insert({
-      user_id:    userId,
-      event_slug: event.id,
-      status:     "active",
-      joined_at:  new Date().toISOString(),
+    const res = await fetch("/api/events/join", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ eventSlug: event.id }),
     });
-    if (!error) {
+    if (res.ok) {
       setLocalStatus("active");
       trackEvent(AnalyticsEvents.EVENT_JOINED, {
         event_slug: event.id,

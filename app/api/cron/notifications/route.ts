@@ -4,17 +4,32 @@ import { runDailyNotificationScheduler } from "@/lib/notifications";
 /**
  * GET /api/cron/notifications
  *
- * Called every hour by your cron service (Supabase cron / GitHub Actions / etc.).
- * Protected by CRON_SECRET to prevent unauthorised triggering.
+ * Called every hour by the cron service.
+ * Protected by CRON_SECRET.
  *
- * Example cron (runs every hour):
- *   curl -H "Authorization: Bearer $CRON_SECRET" https://yourapp.com/api/cron/notifications
+ * M5 Security fix:
+ *   Previous logic: `if (secret && authHeader !== expected)`
+ *   This fails OPEN when CRON_SECRET is not set — any unauthenticated
+ *   request would bypass the check and execute the scheduler.
+ *
+ *   New logic: if CRON_SECRET is missing from env, the route returns 500
+ *   and logs a configuration error. It never executes cron logic without
+ *   a configured secret. Misconfigured environments fail closed.
  */
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  const secret     = process.env.CRON_SECRET;
+  const secret = process.env.CRON_SECRET;
 
-  if (secret && authHeader !== `Bearer ${secret}`) {
+  // M5 fix: fail closed — a missing secret is a misconfiguration, not a pass
+  if (!secret) {
+    console.error("[cron/notifications] CRITICAL: CRON_SECRET environment variable is not set. Refusing to run.");
+    return NextResponse.json(
+      { error: "Cron endpoint is misconfigured. CRON_SECRET is not set." },
+      { status: 500 }
+    );
+  }
+
+  const authHeader = req.headers.get("authorization");
+  if (authHeader !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -29,5 +44,4 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// Also allow POST for easier webhook integration
 export { GET as POST };
