@@ -44,7 +44,7 @@ export default async function DashboardPage() {
 
   const [
     profileRes, goalsRes, activeChallengesRes, achievementsRes,
-    activityRes, dailyQuestRes, chainProgressRes,
+    activityRes, dailyQuestRes, chainProgressRes, transactionCountRes,
   ] = await Promise.all([
     supabase.from("profiles").select("*").eq("id", user.id).single(),
     supabase.from("savings_goals").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
@@ -53,6 +53,7 @@ export default async function DashboardPage() {
     supabase.from("activity_log").select("*").eq("user_id", user.id).gte("activity_date", getUTCDateString(new Date(Date.now() - 30 * 86400000))),
     supabase.from("daily_quest_logs").select("quest_id, quest_date").eq("user_id", user.id).eq("quest_date", getUTCDateString()).maybeSingle(),
     supabase.from("quest_chain_progress").select("chain_id, current_step, status").eq("user_id", user.id),
+    supabase.from("transactions").select("id", { count: "exact", head: true }).eq("user_id", user.id),
   ]);
 
   const profile = profileRes.data;
@@ -138,6 +139,7 @@ export default async function DashboardPage() {
   }
 
   const goals           = goalsRes.data ?? [];
+  const hasDeposit      = (transactionCountRes.count ?? 0) > 0;
   const allAchievementIds = (achievementsRes.data ?? []).map((a: any) => a.achievement_id);
   const recentAchievementsData = (achievementsRes.data ?? []).map((a: any) => ({
     achievement_id: a.achievement_id,
@@ -199,6 +201,8 @@ export default async function DashboardPage() {
       streakPausedUntil={profile.streak_paused_until ?? null}
       dashboardEvents={dashboardEvents}
       timelinePreview={timelinePreview}
+      hasDeposit={hasDeposit}
+      notificationPromptDismissed={!!(profile as any).notification_prompt_dismissed}
     />
   );
 }

@@ -150,6 +150,13 @@ export const AnalyticsEvents = {
   FIRST_DEPOSIT:         "first_deposit",
   FIRST_ACHIEVEMENT:     "first_achievement",
   FIRST_QUEST_COMPLETED: "first_quest_completed",
+
+  // Onboarding — Sprint 6
+  // GOAL_CREATED already exists above; analytics payload adds source="onboarding"|"manual"
+  ONBOARDING_COMPLETED:          "onboarding_completed",
+  NOTIFICATION_PROMPT_SHOWN:     "notification_prompt_shown",
+  NOTIFICATION_PROMPT_ACCEPTED:  "notification_prompt_accepted",
+  NOTIFICATION_PROMPT_DISMISSED: "notification_prompt_dismissed",
 } as const;
 
 export type AnalyticsEventName = (typeof AnalyticsEvents)[keyof typeof AnalyticsEvents];

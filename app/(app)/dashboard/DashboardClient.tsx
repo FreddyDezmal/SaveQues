@@ -17,6 +17,8 @@ import DailyQuestCard from "@/components/gamification/DailyQuestCard";
 import { ChevronRight, Plus, PauseCircle, PlayCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import UpcomingEventsBanner from "@/components/events/UpcomingEventsBanner";
+import OnboardingChecklist from "@/components/onboarding/OnboardingChecklist";
+import NotificationPromptBanner from "@/components/onboarding/NotificationPromptBanner";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
 import type { TimelineEventGroup } from "@/lib/types";
@@ -42,6 +44,8 @@ interface Props {
   dashboardEvents: (SaveQuestEvent & { window: EventWindow })[];
   timelinePreview: TimelineEventGroup[];
   primaryGoal?: any;
+  hasDeposit: boolean;
+  notificationPromptDismissed: boolean;
   reflectionData?: {
     lastReflectionDate: string;
     reflectionQuestions: string[];
@@ -54,7 +58,8 @@ export default function DashboardClient({
   dailyQuestCompletedToday, todayQuestId,
   almostMessages, activeChain, streakBroken,
   userStage, streakPaused, streakPausedUntil, dashboardEvents,
-  timelinePreview, primaryGoal, reflectionData
+  timelinePreview, primaryGoal, reflectionData,
+  hasDeposit, notificationPromptDismissed
 }: Props) {
   const router = useRouter();
   const [pauseLoading, setPauseLoading] = useState(false);
@@ -188,12 +193,37 @@ export default function DashboardClient({
         />
       </div>
 
-      {/* ── Stats row ───────────────────────────── */}
-      <div className="grid grid-cols-3 gap-2.5 mb-4">
-        <StatCard label="Total Saved" value={formatCurrency(totalSaved)} icon="💰" />
-        <StatCard label="Goals" value={String(activeGoals.length)} icon="🎯" />
-        <StatCard label="Streak" value={streakPaused ? "⏸" : `${profile.streak_days}d`} icon="🔥" />
-      </div>
+      {/* ── Stats row (Task 5: replaced with progress for empty new users) ── */}
+      {userStage === "new" && totalSaved === 0 && activeGoals.length === 0 ? (
+        <div className="card p-4 mb-4 flex items-center gap-4">
+          <div className="text-3xl">🚀</div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-brand-400 font-bold uppercase tracking-wider mb-0.5">
+              Getting Started Progress
+            </p>
+            {(() => {
+              const done = [activeGoals.length > 0, hasDeposit, dailyQuestCompletedToday].filter(Boolean).length;
+              return (
+                <>
+                  <p className="text-sm text-white font-semibold">Step {done} of 3 Complete</p>
+                  <div className="mt-1.5 h-1 bg-surface-border rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-brand-500 rounded-full transition-all duration-500"
+                      style={{ width: `${(done / 3) * 100}%` }}
+                    />
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2.5 mb-4">
+          <StatCard label="Total Saved" value={formatCurrency(totalSaved)} icon="💰" />
+          <StatCard label="Goals" value={String(activeGoals.length)} icon="🎯" />
+          <StatCard label="Streak" value={streakPaused ? "⏸" : `${profile.streak_days}d`} icon="🔥" />
+        </div>
+      )}
 
       {/* ── Grace days + pause control (building/established only) ── */}
       {userStage !== "new" && (
@@ -420,14 +450,25 @@ export default function DashboardClient({
         </div>
       )}
 
-      {/* ── New user onboarding nudge ─────────────── */}
-      {userStage === "new" && (
-        <div className="mb-4 card p-4 border-brand-500/20">
-          <p className="text-xs text-brand-400 font-bold uppercase tracking-wider mb-1">Getting started</p>
-          <p className="text-sm text-white/60">
-            Complete your daily quest and log a saving to start building your streak. More features unlock as you progress.
-          </p>
-        </div>
+      {/* ── Onboarding checklist (Task 2) ──────────────────────── */}
+      {userStage === "new" && !(profile as any).onboarding_completed_at && (
+        <OnboardingChecklist
+          userId={profile.id}
+          hasGoal={activeGoals.length > 0}
+          hasDeposit={hasDeposit}
+          hasQuest={dailyQuestCompletedToday}
+          createdAt={profile.created_at}
+        />
+      )}
+
+      {/* ── Notification opt-in banner (Task 3) ─────────────────── */}
+      {userStage === "new" && (hasDeposit || dailyQuestCompletedToday) && (
+        <NotificationPromptBanner
+          userId={profile.id}
+          hasCompletedFirstDeposit={hasDeposit}
+          hasCompletedFirstQuest={dailyQuestCompletedToday}
+          alreadyDismissed={notificationPromptDismissed}
+        />
       )}
 
       {/* Badge detail panel (Task 2) */}

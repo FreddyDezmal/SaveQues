@@ -61,6 +61,7 @@ export default function NewGoalPage() {
       trackEvent(AnalyticsEvents.GOAL_CREATED, {
         goal_category:  category,
         target_amount:  Number(targetAmount),
+        source:         "manual",
       });
 
       if (isFirstGoal) {

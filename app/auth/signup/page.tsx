@@ -62,6 +62,13 @@ export default function SignupPage() {
         saving_for:   savingFor,
         created_at:   new Date().toISOString(),
       });
+
+      // Auto-create starter goal — fire-and-forget, never blocks navigation
+      fetch("/api/onboarding/starter-goal", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ saving_for: savingFor }),
+      }).catch(() => { /* goal creation failure must not affect signup */ });
     }
 
     // If Supabase email confirmation is ON:
