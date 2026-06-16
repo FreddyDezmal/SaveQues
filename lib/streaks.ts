@@ -22,7 +22,7 @@ export function isStreakPaused(streakPausedUntil: string | null | undefined): bo
   return streakPausedUntil >= today;
 }
 
-const STREAK_MILESTONES = [3, 7, 14, 21, 30, 45, 66, 90, 100, 180, 365];
+export const STREAK_MILESTONES = [3, 7, 14, 21, 30, 45, 66, 90, 100, 180, 365];
 
 export function evaluateStreak(
   lastActiveDateStr: string | null,

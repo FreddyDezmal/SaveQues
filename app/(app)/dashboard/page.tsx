@@ -1,13 +1,14 @@
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
+import { createClient }        from "@/lib/supabase/server";
+import { redirect }            from "next/navigation";
 import { getLevelFromXP, getXPForAction } from "@/lib/xp";
-import { getAlmostMessages } from "@/lib/achievements";
-import { isStreakPaused } from "@/lib/streaks";
-import DashboardClient from "./DashboardClient";
-import { QUEST_CHAINS } from "@/lib/quests";
-import { getEventsForUser } from "@/lib/events";
+import { getAlmostMessages }   from "@/lib/achievements";
+import { isStreakPaused, STREAK_MILESTONES } from "@/lib/streaks";
+import DashboardClient         from "./DashboardClient";
+import { QUEST_CHAINS }        from "@/lib/quests";
+import { getEventsForUser }    from "@/lib/events";
 import { fetchTimelineEvents } from "@/lib/timeline";
-import { getUTCDateString } from "@/lib/dateUtils";
+import { getUTCDateString }    from "@/lib/dateUtils";
+import { checkAndAwardAchievements } from "@/lib/awardXP";
 
 // User experience stage — drives progressive dashboard disclosure
 // new: 0–6 days  |  building: 7–29 days  |  established: 30+ days
@@ -18,6 +19,22 @@ function getUserStage(createdAt: string): "new" | "building" | "established" {
   if (daysSince < 7)  return "new";
   if (daysSince < 30) return "building";
   return "established";
+}
+
+/**
+ * M2: Result shape returned by the new server-side update_streak().
+ * The DB now owns all progression arithmetic — the dashboard only
+ * reads back what happened and reacts (UI messages, achievement checks).
+ */
+interface StreakUpdateResult {
+  updated:     boolean;
+  reason:      "already_updated_today" | "paused" | "continued" | "started" | "grace_day" | "broken";
+  streak_days: number;
+  longest:     number;
+  shields:     number;
+  grace_used:  boolean;
+  broken:      boolean;
+  paused:      boolean;
 }
 
 export default async function DashboardPage() {
@@ -41,114 +58,125 @@ export default async function DashboardPage() {
   const profile = profileRes.data;
   if (!profile) redirect("/auth/login");
 
-  // Record app open for notification timing (fire-and-forget, no await)
+  // Record app open for notification timing (fire-and-forget)
   supabase.rpc("record_app_open", { p_user_id: user.id }).then(() => {});
 
-  // Evaluate streak — skip if paused
-  const today = getUTCDateString();
   const streakCurrentlyPaused = isStreakPaused(profile.streak_paused_until);
 
-  if (profile.last_active_date !== today && !streakCurrentlyPaused) {
-    const lastDate = profile.last_active_date;
-    const diff = lastDate
-      ? Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000)
-      : 999;
-    let newStreak = profile.streak_days;
-
-    if (diff === 1) {
-      newStreak = profile.streak_days + 1;
-    } else if (diff === 2 && (profile.streak_shields ?? 0) > 0) {
-      // Grace day absorbs the missed day
-      newStreak = profile.streak_days + 1;
-    } else if (diff > 1) {
-      newStreak = 1;
-    }
-
-    const usedShield     = diff === 2 && (profile.streak_shields ?? 0) > 0;
-    const newShields     = usedShield ? (profile.streak_shields ?? 0) - 1 : (profile.streak_shields ?? 0);
-    const newShieldsUsed = usedShield ? (profile.total_shields_used ?? 0) + 1 : (profile.total_shields_used ?? 0);
-    const longestStreak  = Math.max(newStreak, profile.longest_streak ?? 0);
-
-    // update_streak() is SECURITY DEFINER — bypasses the hardened RLS on
-    // streak_days and related columns. Direct .update() is no longer allowed
-    // since those columns are now protected from browser writes.
-    await supabase.rpc("update_streak", {
-      p_user_id:      user.id,
-      p_today:        today,
-      p_new_streak:   newStreak,
-      p_longest:      longestStreak,
-      p_shields:      newShields,
-      p_shields_used: newShieldsUsed,
-    });
-    profile.streak_days      = newStreak;
-    profile.last_active_date = today;
-
-    // ── Day Momentum fix: record the daily check-in ──────────────
-    // This block runs at most once per UTC calendar day per user
-    // (gated by last_active_date !== today above). It both logs an
-    // activity_log entry for today (so the check-in counts toward
-    // momentum, even if the user does nothing else) and awards the
-    // DAILY_CHECKIN XP exactly once per day via the idempotent
-    // record_checkin() RPC.
-    const checkinXP = getXPForAction("DAILY_CHECKIN", newStreak);
-    const { data: checkinResult } = await supabase.rpc("record_checkin", {
+  // ── M2: Streak update — DB computes everything ─────────────
+  // update_streak() reads last_active_date, streak_days, shields, and
+  // paused state from the profile row and applies all transition logic.
+  // We supply only identity (p_user_id defaults to auth.uid()).
+  // No caller-computed values cross the RPC boundary.
+  if (profile.last_active_date !== getUTCDateString() && !streakCurrentlyPaused) {
+    const { data: streakRaw } = await supabase.rpc("update_streak", {
       p_user_id: user.id,
-      p_date:    today,
-      p_xp:      checkinXP,
     });
-    const checkinXpAwarded = (checkinResult as { xp_awarded?: number } | null)?.xp_awarded ?? 0;
-    if (checkinXpAwarded > 0) {
-      profile.xp_total = (profile.xp_total ?? 0) + checkinXpAwarded;
+    const streakResult = streakRaw as StreakUpdateResult | null;
+
+    if (streakResult?.updated) {
+      // Reflect DB-computed values into the profile object so the rest
+      // of the Server Component sees the correct state without a re-fetch.
+      profile.streak_days        = streakResult.streak_days;
+      profile.longest_streak     = streakResult.longest;
+      profile.streak_shields     = streakResult.shields;
+      profile.last_active_date   = getUTCDateString();
+
+      // ── Check-in XP ──────────────────────────────────────
+      // record_checkin() is idempotent (source_id = today's date).
+      // XP is still computed server-side from the DB-authoritative
+      // streak_days value returned by update_streak.
+      const checkinXP = getXPForAction("DAILY_CHECKIN", streakResult.streak_days);
+      const { data: checkinResult } = await supabase.rpc("record_checkin", {
+        p_user_id: user.id,
+        p_date:    getUTCDateString(),
+        p_xp:      checkinXP,
+      });
+      const checkinXpAwarded = (checkinResult as { xp_awarded?: number } | null)?.xp_awarded ?? 0;
+      if (checkinXpAwarded > 0) {
+        profile.xp_total = (profile.xp_total ?? 0) + checkinXpAwarded;
+      }
+
+      // ── Streak achievement check ──────────────────────────
+      // Only run if the streak actually changed (skip if already_updated_today).
+      const [earnedRes, chainRes, weeklyRes] = await Promise.all([
+        supabase.from("user_achievements").select("achievement_id").eq("user_id", user.id),
+        supabase.from("quest_chain_progress").select("id").eq("user_id", user.id).eq("status", "completed"),
+        supabase.from("user_weekly_quests").select("id").eq("user_id", user.id).eq("status", "completed"),
+      ]);
+
+      await checkAndAwardAchievements(user.id, {
+        streakDays:            streakResult.streak_days,
+        totalSaved:            0,   // not needed for streak achievements
+        goalsCompleted:        0,
+        activeGoals:           0,
+        challengesCompleted:   0,
+        dailyQuestsCompleted:  profile.daily_quests_completed ?? 0,
+        weeklyQuestsCompleted: weeklyRes.data?.length ?? 0,
+        questChainsCompleted:  chainRes.data?.length ?? 0,
+        earnedIds:             (earnedRes.data ?? []).map((a: any) => a.achievement_id),
+      });
+
+      // ── Shield use achievement ────────────────────────────
+      if (streakResult.grace_used) {
+        const { data: shieldEarned } = await supabase
+          .from("user_achievements")
+          .select("achievement_id")
+          .eq("user_id", user.id)
+          .eq("achievement_id", "streak_shield_use")
+          .maybeSingle();
+
+        if (!shieldEarned) {
+          await supabase.rpc("award_achievement", {
+            p_user_id:        user.id,
+            p_achievement_id: "streak_shield_use",
+            p_xp:             50,
+          });
+        }
+      }
     }
   }
 
-  const goals = goalsRes.data ?? [];
+  const goals           = goalsRes.data ?? [];
   const allAchievementIds = (achievementsRes.data ?? []).map((a: any) => a.achievement_id);
   const recentAchievementsData = (achievementsRes.data ?? []).map((a: any) => ({
     achievement_id: a.achievement_id,
     earned_at:      a.earned_at,
   }));
-  const levelInfo = getLevelFromXP(profile.xp_total);
-  const totalSaved = goals.reduce((sum: number, g: any) => sum + Number(g.current_amount), 0);
-  const activeGoals = goals.filter((g: any) => !g.is_complete);
-  const completedGoals = goals.filter((g: any) => g.is_complete);
+  const levelInfo       = getLevelFromXP(profile.xp_total);
+  const totalSaved      = goals.reduce((sum: number, g: any) => sum + Number(g.current_amount), 0);
+  const activeGoals     = goals.filter((g: any) => !g.is_complete);
+  const completedGoals  = goals.filter((g: any) => g.is_complete);
+  const userStage       = getUserStage(profile.created_at);
 
-  // User experience stage — drives progressive dashboard disclosure
-  const userStage = getUserStage(profile.created_at);
-
-  // "Almost" messages — only show for building/established users
   const almostMessages = userStage !== "new"
     ? getAlmostMessages({
-        streakDays: profile.streak_days,
+        streakDays:          profile.streak_days,
         totalSaved,
-        goalsCompleted: completedGoals.length,
+        goalsCompleted:      completedGoals.length,
         challengesCompleted: (activeChallengesRes.data ?? []).filter((uc: any) => uc.status === "completed").length,
         dailyQuestsCompleted: profile.daily_quests_completed ?? 0,
-        earnedIds: allAchievementIds,
+        earnedIds:           allAchievementIds,
       })
     : [];
 
-  // Active quest chain for dashboard nudge — only building/established
   const chainProgress = chainProgressRes.data ?? [];
-  const activeChain = userStage !== "new"
+  const activeChain   = userStage !== "new"
     ? (chainProgress.find((c: any) => c.status === "active") ?? null)
     : null;
 
-  // Events for this user's region — shown on dashboard for building/established users
   const dashboardEvents = userStage !== "new"
     ? getEventsForUser(profile.country_code ?? "ZA").slice(0, 3)
     : [];
 
-  // Timeline preview — shown for building/established users
   const timelinePreview = userStage !== "new"
     ? await fetchTimelineEvents(supabase, user.id, { limit: 5 })
     : [];
 
-  // Comeback detection — streak is 1 but they had a longer one before
   const streakBroken =
     profile.streak_days === 1 &&
     (profile.longest_streak ?? 0) > 3 &&
-    profile.last_active_date === today;
+    profile.last_active_date === getUTCDateString();
 
   return (
     <DashboardClient
