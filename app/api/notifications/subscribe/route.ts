@@ -1,12 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import type { WebPushSubscription } from "@/lib/types.notifications";
+import { createLogger } from "@/lib/logger";
+import { captureError, setSentryUser } from "@/lib/monitoring";
+
+const log = createLogger("push.subscribe");
 
 export async function POST(req: NextRequest) {
+  const end = log.time("push subscription registration");
+
   try {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!user) {
+      log.warn("Unauthenticated subscription attempt", { action: "auth_check" });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    setSentryUser(user.id);
 
     const body = await req.json() as {
       subscription: WebPushSubscription;
@@ -16,6 +27,12 @@ export async function POST(req: NextRequest) {
     const { subscription, timezone = "UTC" } = body;
 
     if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+      log.warn("Invalid subscription object received", {
+        user_id:      user.id,
+        has_endpoint: !!subscription?.endpoint,
+        has_p256dh:   !!subscription?.keys?.p256dh,
+        has_auth:     !!subscription?.keys?.auth,
+      });
       return NextResponse.json({ error: "Invalid subscription object" }, { status: 400 });
     }
 
@@ -35,7 +52,18 @@ export async function POST(req: NextRequest) {
         onConflict: "user_id,endpoint",
       });
 
-    if (error) throw error;
+    if (error) {
+      log.error("Push subscription upsert failed", {
+        user_id:    user.id,
+        error:      error.message,
+        error_code: error.code,
+      });
+      captureError(error, {
+        route:   "POST /api/notifications/subscribe",
+        user_id: user.id,
+      });
+      throw error;
+    }
 
     // Mark notifications enabled on profile
     await supabase
@@ -43,9 +71,14 @@ export async function POST(req: NextRequest) {
       .update({ notifications_enabled: true })
       .eq("id", user.id);
 
+    end({ user_id: user.id, timezone });
     return NextResponse.json({ ok: true });
+
   } catch (err: any) {
-    console.error("[push/subscribe]", err);
+    log.error("Unexpected error registering push subscription", {
+      error: err.message ?? String(err),
+    });
+    captureError(err, { route: "POST /api/notifications/subscribe" });
     return NextResponse.json({ error: err.message ?? "Failed" }, { status: 500 });
   }
 }

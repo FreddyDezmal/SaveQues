@@ -1,16 +1,40 @@
-import type { Metadata, Viewport } from "next";
+import type { Viewport } from "next";
 // @ts-ignore
 import "./globals.css";
 import { createClient } from "@/lib/supabase/server";
 import AnalyticsProvider from "@/components/AnalyticsProvider";
+import * as Sentry from "@sentry/nextjs";
+import type { Metadata } from "next";
 
-export const metadata: Metadata = {
-  title: "SaveQuest — Level Up Your Savings",
-  description: "The gamified savings platform that makes saving money addictive.",
-};
+export function generateMetadata(): Metadata {
+  return {
+    title: "SaveQuest — Level Up Your Savings",
+    description: "The gamified savings platform that makes saving money addictive.",
+    manifest: "/manifest.json",
+    appleWebApp: {
+      capable: true,
+      statusBarStyle: "black-translucent",
+      title: "SaveQuest",
+    },
+    icons: {
+      icon: [
+        { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+        { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+      ],
+      apple: [{ url: "/icons/icon-192.png", sizes: "192x192" }],
+    },
+    other: {
+      ...Sentry.getTraceData(),
+    },
+  };
+}
 
 export const viewport: Viewport = {
-  themeColor: "#0f0f14",
+  themeColor: "#635bff",
+  width: "device-width",
+  initialScale: 1,
+  minimumScale: 1,
+  viewportFit: "cover",
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {

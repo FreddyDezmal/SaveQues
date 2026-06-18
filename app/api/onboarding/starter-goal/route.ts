@@ -16,6 +16,10 @@ import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { trackServerEvent } from "@/lib/analytics-server";
 import { AnalyticsEvents } from "@/lib/analytics";
+import { createLogger } from "@/lib/logger";
+import { captureError, setSentryUser } from "@/lib/monitoring";
+
+const log = createLogger("onboarding.starter-goal");
 
 // ── Starter goal mappings ─────────────────────────────────────────────────────
 
@@ -59,25 +63,28 @@ const STARTER_GOALS: Record<string, StarterGoal> = {
   },
 };
 
-// Fallback for any unrecognised category key
 const DEFAULT_STARTER: StarterGoal = STARTER_GOALS.custom;
 
 export async function POST(req: NextRequest) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Auth guard
   if (!user) {
+    log.warn("Unauthenticated request", { action: "auth_check" });
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  setSentryUser(user.id);
 
   let savingFor = "custom";
   try {
     const body = await req.json();
     savingFor = body.saving_for ?? "custom";
   } catch {
-    // Body parse failure — fall through to default goal
+    log.debug("No body or parse failure — using default category", { user_id: user.id });
   }
+
+  const end = log.time("starter goal creation", { user_id: user.id, saving_for: savingFor });
 
   try {
     // ── Idempotency check ─────────────────────────────────────────
@@ -88,7 +95,7 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (profile?.onboarding_goal_created) {
-      // Already created; return success without duplicating
+      log.info("Starter goal already exists — skipping", { user_id: user.id });
       return NextResponse.json({ skipped: true });
     }
 
@@ -112,12 +119,21 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (goalError) {
-      // Log but do not surface — account creation must not fail
-      console.error("[onboarding/starter-goal] insert failed:", goalError.message);
+      log.error("Goal insert failed", {
+        user_id:      user.id,
+        saving_for:   savingFor,
+        error:        goalError.message,
+        error_code:   goalError.code,
+      });
+      captureError(goalError, {
+        route:      "POST /api/onboarding/starter-goal",
+        user_id:    user.id,
+        saving_for: savingFor,
+      });
       return NextResponse.json({ error: goalError.message }, { status: 500 });
     }
 
-    // ── Mark profile as having received the starter goal ──────────
+    // ── Mark profile ──────────────────────────────────────────────
     await supabase
       .from("profiles")
       .update({ onboarding_goal_created: true })
@@ -130,11 +146,24 @@ export async function POST(req: NextRequest) {
       source:         "onboarding",
     });
 
+    end({
+      user_id:       user.id,
+      goal_id:       goal.id,
+      goal_category: template.category,
+      target_amount: template.target_amount,
+    });
+
     return NextResponse.json({ created: true, goal_id: goal.id });
 
-  } catch (err) {
-    // Catch-all — never let this break the signup experience
-    console.error("[onboarding/starter-goal] unexpected error:", err);
+  } catch (err: any) {
+    log.error("Unexpected error during starter goal creation", {
+      user_id: user.id,
+      error:   err.message ?? String(err),
+    });
+    captureError(err, {
+      route:   "POST /api/onboarding/starter-goal",
+      user_id: user.id,
+    });
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
