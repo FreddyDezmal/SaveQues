@@ -43,7 +43,7 @@ export default function SignupPage() {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { display_name: displayName } },
+      options: { data: { display_name: displayName, saving_for: savingFor } },
     });
 
     if (error) {
@@ -63,12 +63,9 @@ export default function SignupPage() {
         created_at:   new Date().toISOString(),
       });
 
-      // Auto-create starter goal — fire-and-forget, never blocks navigation
-      fetch("/api/onboarding/starter-goal", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ saving_for: savingFor }),
-      }).catch(() => { /* goal creation failure must not affect signup */ });
+      // Starter goal is created in /auth/callback after the session is guaranteed.
+      // (When email confirm is OFF, session is live here; callback still handles it
+      //  idempotently via onboarding_goal_created flag.)
     }
 
     // If Supabase email confirmation is ON:

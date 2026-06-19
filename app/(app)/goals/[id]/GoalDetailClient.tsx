@@ -7,7 +7,8 @@ import { createClient } from "@/lib/supabase/client";
 import { formatAmount } from "@/lib/currency";
 import { formatPercent, getDaysRemaining, getCategoryById } from "@/lib/utils";
 import { getXPForAction } from "@/lib/xp";
-import { ArrowLeft, Plus, Minus, ShoppingBag, ChevronRight } from "lucide-react";
+import { ArrowLeft, Plus, Minus, ShoppingBag, ChevronRight, Pencil, Trash2, X, Check } from "lucide-react";
+import { GOAL_EMOJIS } from "@/lib/utils";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { TimelineEventGroup } from "@/lib/types";
@@ -36,6 +37,19 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
   const [loading, setLoading]          = useState(false);
   const [error, setError]              = useState("");
   const [showNextGoal, setShowNextGoal] = useState(false);
+
+  // ── Edit goal state ───────────────────────────────────────────
+  const [showEdit, setShowEdit]         = useState(false);
+  const [editTitle, setEditTitle]       = useState(goal.title);
+  const [editEmoji, setEditEmoji]       = useState(goal.goal_emoji || "⭐");
+  const [editTarget, setEditTarget]     = useState(String(goal.target_amount));
+  const [editLoading, setEditLoading]   = useState(false);
+  const [editError, setEditError]       = useState("");
+
+  // ── Delete goal state ─────────────────────────────────────────
+  const [showDelete, setShowDelete]     = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError]   = useState("");
   const [celebration, setCelebration]  = useState<{
     show: boolean; title: string; subtitle: string; xpGained: number; icon?: string; type?: any;
   }>({ show: false, title: "", subtitle: "", xpGained: 0 });
@@ -161,6 +175,49 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
 
   const newPercent = goal.target_amount > 0 ? (Number(goal.current_amount) / Number(goal.target_amount)) * 100 : 0;
 
+  // ── Edit handler ──────────────────────────────────────────────
+  async function handleEditSave() {
+    const newTarget = Number(editTarget);
+    if (!editTitle.trim()) { setEditError("Title cannot be empty."); return; }
+    if (!newTarget || newTarget <= 0) { setEditError("Target must be greater than 0."); return; }
+    if (newTarget < Number(goal.current_amount)) {
+      setEditError(`Target cannot be less than the amount already saved (${fc(Number(goal.current_amount))}).`);
+      return;
+    }
+    setEditLoading(true);
+    setEditError("");
+    const res  = await fetch("/api/goal/edit", {
+      method:  "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ goal_id: goal.id, title: editTitle.trim(), goal_emoji: editEmoji, target_amount: newTarget }),
+    });
+    const data = await res.json();
+    if (!res.ok) { setEditError(data.error ?? "Failed to save changes."); setEditLoading(false); return; }
+    setGoal((prev: any) => ({ ...prev, title: data.goal.title, goal_emoji: data.goal.goal_emoji, target_amount: data.goal.target_amount }));
+    setShowEdit(false);
+    setEditLoading(false);
+    router.refresh();
+  }
+
+  // ── Delete handler ────────────────────────────────────────────
+  async function handleDelete() {
+    setDeleteLoading(true);
+    setDeleteError("");
+    const res = await fetch("/api/goal/delete", {
+      method:  "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ goal_id: goal.id }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setDeleteError(data.error ?? "Failed to delete goal. Please try again.");
+      setDeleteLoading(false);
+      return;
+    }
+    router.push("/goals");
+    router.refresh();
+  }
+
   return (
     <>
       <div className="max-w-lg mx-auto px-4 pt-6">
@@ -183,6 +240,15 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
             <span className="text-xs bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 rounded-full px-3 py-1">
               Complete ✅
             </span>
+          )}
+          {!goal.is_complete && (
+            <button
+              onClick={() => { setEditTitle(goal.title); setEditEmoji(goal.goal_emoji || "⭐"); setEditTarget(String(goal.target_amount)); setEditError(""); setShowEdit(true); }}
+              className="p-2 rounded-xl text-white/30 hover:text-white/60 hover:bg-surface-elevated transition-colors"
+              aria-label="Edit goal"
+            >
+              <Pencil size={16} />
+            </button>
           )}
         </div>
 
@@ -289,6 +355,18 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
           </div>
         )}
 
+        {/* Danger zone — delete goal */}
+        {!goal.is_complete && (
+          <div className="mb-5 flex justify-end">
+            <button
+              onClick={() => setShowDelete(true)}
+              className="flex items-center gap-1.5 text-xs text-white/20 hover:text-red-400 transition-colors py-1"
+            >
+              <Trash2 size={13} /> Delete goal
+            </button>
+          </div>
+        )}
+
         {/* Goal activity timeline */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-3">
@@ -330,6 +408,151 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
           )}
         </div>
       </div>
+
+      {/* ── Edit goal modal ──────────────────────────────────────────── */}
+      {showEdit && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm" onClick={() => setShowEdit(false)}>
+          <div
+            className="w-full max-w-lg bg-surface-card rounded-t-3xl p-6 border-t border-surface-border"
+            style={{ animation: "badgePop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards" }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-display text-lg font-bold text-white">Edit Goal</h2>
+              <button onClick={() => setShowEdit(false)} className="text-white/30 hover:text-white/60 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Emoji picker */}
+              <div>
+                <label className="block text-xs text-white/50 uppercase tracking-wider mb-2">Icon</label>
+                <div className="flex flex-wrap gap-2">
+                  {GOAL_EMOJIS.map(emoji => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => setEditEmoji(emoji)}
+                      className={`w-9 h-9 rounded-xl text-lg transition-all ${editEmoji === emoji ? "bg-brand-500/20 border border-brand-500/50 scale-110" : "bg-surface-elevated border border-transparent hover:border-surface-border"}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Title */}
+              <div>
+                <label className="block text-xs text-white/50 uppercase tracking-wider mb-1.5">Goal name</label>
+                <input
+                  className="input-field"
+                  value={editTitle}
+                  onChange={e => setEditTitle(e.target.value)}
+                  placeholder="e.g. My Travel Fund"
+                  maxLength={60}
+                />
+              </div>
+
+              {/* Target amount */}
+              <div>
+                <label className="block text-xs text-white/50 uppercase tracking-wider mb-1.5">Target amount</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 font-display font-medium text-sm">
+                    {currencyCode === "ZAR" ? "R" : ""}
+                  </span>
+                  <input
+                    type="number"
+                    className="input-field pl-8"
+                    value={editTarget}
+                    onChange={e => setEditTarget(e.target.value)}
+                    min={Number(goal.current_amount) || 0.01}
+                    step="0.01"
+                    placeholder="0.00"
+                  />
+                </div>
+                {Number(goal.current_amount) > 0 && (
+                  <p className="text-xs text-white/30 mt-1.5">
+                    Minimum {fc(Number(goal.current_amount))} — cannot be less than what&apos;s already saved.
+                  </p>
+                )}
+              </div>
+
+              {editError && (
+                <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-red-400 text-sm">
+                  {editError}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={handleEditSave}
+                  disabled={editLoading}
+                  className="btn-primary flex-1 flex items-center justify-center gap-2"
+                >
+                  {editLoading ? "Saving…" : <><Check size={15} /> Save changes</>}
+                </button>
+                <button onClick={() => setShowEdit(false)} className="btn-ghost flex-1">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete goal modal ─────────────────────────────────────────── */}
+      {showDelete && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm" onClick={() => setShowDelete(false)}>
+          <div
+            className="w-full max-w-lg bg-surface-card rounded-t-3xl p-6 border-t border-surface-border"
+            style={{ animation: "badgePop 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards" }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display text-lg font-bold text-white">Delete Goal?</h2>
+              <button onClick={() => setShowDelete(false)} className="text-white/30 hover:text-white/60 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="bg-red-500/8 border border-red-500/20 rounded-xl p-4 mb-5 space-y-2">
+              <p className="font-medium text-white text-sm">{goal.goal_emoji} {goal.title}</p>
+              {transactions.length > 0 && (
+                <p className="text-xs text-red-300">
+                  {transactions.length} savings log{transactions.length !== 1 ? "s" : ""} · {fc(transactions.filter((t: any) => t.transaction_type === "deposit").reduce((s: number, t: any) => s + Number(t.amount), 0))} total deposited
+                </p>
+              )}
+            </div>
+
+            <p className="text-sm text-white/60 mb-5">
+              This permanently deletes the goal and all associated savings history. This action cannot be undone.
+            </p>
+
+            {deleteError && (
+              <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-red-400 text-sm mb-4">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleDelete}
+                disabled={deleteLoading}
+                className="flex-1 py-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 text-sm font-medium disabled:opacity-40 hover:bg-red-500/25 transition-colors"
+              >
+                {deleteLoading ? "Deleting…" : "Delete permanently"}
+              </button>
+              <button
+                onClick={() => { setShowDelete(false); setDeleteError(""); }}
+                className="flex-1 btn-ghost text-sm py-3"
+              >
+                Keep goal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <CelebrationOverlay
         show={celebration.show}

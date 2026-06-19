@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 
 export default function GlobalError({ error, reset }: { error: Error; reset: () => void }) {
   useEffect(() => {
-    console.error("Global error:", error);
+    // Report to Sentry so render failures appear in the Issues feed.
+    // console.error is preserved alongside for local dev visibility.
+    Sentry.captureException(error);
+    console.error("Route error boundary:", error);
   }, [error]);
 
   return (

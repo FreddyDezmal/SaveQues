@@ -37,11 +37,28 @@ export default function SettingsClient({ profile, email }: Props) {
     router.refresh();
   }
 
+  const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
+  const [deleteAccountError, setDeleteAccountError]   = useState("");
+
   async function handleDeleteAccount() {
     if (deleteInput !== "DELETE") return;
-    const supabase = createClient();
-    // Delete profile (cascades to all user data via FK)
-    await supabase.from("profiles").delete().eq("id", profile.id);
+    setDeleteAccountLoading(true);
+    setDeleteAccountError("");
+
+    // Call the server-side deletion route which uses admin.deleteUser().
+    // This is the only correct path — client-side profile deletion leaves
+    // an orphaned auth.users record that blocks re-registration.
+    const res = await fetch("/api/account", { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setDeleteAccountError(data.error ?? "Failed to delete account. Please try again.");
+      setDeleteAccountLoading(false);
+      return;
+    }
+
+    // Clear local session state then redirect
+    const { createClient: createSupabaseClient } = await import("@/lib/supabase/client");
+    const supabase = createSupabaseClient();
     await supabase.auth.signOut();
     router.push("/auth/login");
   }
@@ -146,18 +163,23 @@ export default function SettingsClient({ profile, email }: Props) {
             <div className="flex gap-2">
               <button
                 onClick={handleDeleteAccount}
-                disabled={deleteInput !== "DELETE"}
+                disabled={deleteInput !== "DELETE" || deleteAccountLoading}
                 className="flex-1 py-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 text-sm font-medium disabled:opacity-40"
               >
-                Yes, delete everything
+                {deleteAccountLoading ? "Deleting…" : "Yes, delete everything"}
               </button>
               <button
-                onClick={() => { setShowDeleteConfirm(false); setDeleteInput(""); }}
+                onClick={() => { setShowDeleteConfirm(false); setDeleteInput(""); setDeleteAccountError(""); }}
                 className="flex-1 btn-ghost text-sm py-2.5"
               >
                 Cancel
               </button>
             </div>
+            {deleteAccountError && (
+              <div className="mt-3 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-red-400 text-xs">
+                {deleteAccountError}
+              </div>
+            )}
           </div>
         )}
       </div>
