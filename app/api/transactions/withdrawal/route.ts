@@ -1,5 +1,5 @@
 /**
- * app/api/transactions/withdrawal/route.ts
+ * app/api/transactions/withdrawal/route.ts — FINANCIAL INTEGRITY HARDENED (Sprint 10)
  *
  * Handles withdrawal and goal_purchase (non-completing) transactions.
  *
@@ -19,12 +19,13 @@
  *    which (via award_xp) also records activity_log for that case.
  *
  * Hardening sprint additions:
- *  • Structured logging (start/success/failure + duration_ms), replacing
- *    the previous dev-only console.warn — activity log failures are now
- *    visible in production logs and Sentry, not silently dropped.
- *  • Server-side validation: amount upper bound, note length/trim.
- *  • DB-backed rate limiting: 60 withdrawals per user per rolling 60 minutes.
- *  • Request correlation ID threaded into every log line and Sentry event.
+ *  • Structured logging, server-side validation, rate limiting, request IDs.
+ *
+ * Sprint 10 — Financial Integrity & Write Consolidation additions:
+ *  • REQUIRED idempotency_key, same contract as POST /api/transactions —
+ *    a duplicate (user_id, idempotency_key) returns the original
+ *    transaction rather than creating a second withdrawal.
+ *  • Immutable audit log entry (WITHDRAWAL_CREATED) written after success.
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -33,11 +34,14 @@ import { getUTCDateString } from "@/lib/dateUtils";
 import { createLogger } from "@/lib/logger";
 import { captureError, captureWarning, setSentryUser } from "@/lib/monitoring";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { writeAuditLog } from "@/lib/auditLog";
+import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 
 const log = createLogger("transactions.withdrawal");
 
 const MAX_AMOUNT   = 10_000_000;
 const MAX_NOTE_LEN = 500;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
   const requestId = req.headers.get("x-request-id") ?? undefined;
@@ -48,7 +52,18 @@ export async function POST(req: NextRequest) {
   setSentryUser(user.id);
 
   const body = await req.json();
-  const { goal_id, amount, note: rawNote, transaction_type } = body;
+  const { goal_id, amount, note: rawNote, transaction_type, idempotency_key } = body;
+
+  // ── Idempotency key validation — REQUIRED, same contract as deposits ────
+  if (!idempotency_key || typeof idempotency_key !== "string" || !UUID_RE.test(idempotency_key)) {
+    log.warn("Withdrawal rejected — missing or invalid idempotency_key", {
+      user_id: user.id, request_id: requestId, goal_id,
+    });
+    return NextResponse.json(
+      { error: "idempotency_key is required and must be a valid UUID." },
+      { status: 400 }
+    );
+  }
 
   // ── Validation ──────────────────────────────────────────────────────────
   if (!goal_id || !amount || Number(amount) <= 0) {
@@ -78,6 +93,29 @@ export async function POST(req: NextRequest) {
   const end = log.time("withdrawal", {
     user_id: user.id, request_id: requestId, goal_id, amount, transaction_type,
   });
+
+  // ── Idempotency check: has this exact (user, key) pair been seen before? ─
+  const { data: existingTx } = await supabase
+    .from("transactions")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("idempotency_key", idempotency_key)
+    .maybeSingle();
+
+  if (existingTx) {
+    log.info("Withdrawal duplicate detected via idempotency_key — returning original", {
+      user_id: user.id, request_id: requestId, goal_id, transaction_id: existingTx.id,
+    });
+
+    const { data: goal } = await supabase
+      .from("savings_goals")
+      .select("current_amount, target_amount, is_complete")
+      .eq("id", goal_id)
+      .single();
+
+    end({ user_id: user.id, request_id: requestId, goal_id, transaction_id: existingTx.id, duplicate: true });
+    return NextResponse.json({ duplicate: true, transaction: { id: existingTx.id }, goal });
+  }
 
   // ── Rate limit: 60 withdrawals per user per rolling 60 minutes ────────────
   const rateLimit = await checkRateLimit(supabase, {
@@ -111,7 +149,6 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 2. INSERT TRANSACTION ─────────────────────────────────────
-  // The DB trigger enforce_goal_ownership provides a second layer of defence.
   const { data: tx, error: txError } = await supabase
     .from("transactions")
     .insert({
@@ -120,11 +157,33 @@ export async function POST(req: NextRequest) {
       amount,
       note,
       transaction_type,
+      idempotency_key,
     })
     .select()
     .single();
 
   if (txError) {
+    // Unique violation on (user_id, idempotency_key) — concurrent retry won the race.
+    if (txError.code === "23505") {
+      const { data: raceWinner } = await supabase
+        .from("transactions")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("idempotency_key", idempotency_key)
+        .maybeSingle();
+
+      const { data: goal } = await supabase
+        .from("savings_goals")
+        .select("current_amount, target_amount, is_complete")
+        .eq("id", goal_id)
+        .single();
+
+      log.info("Withdrawal idempotency race detected — returning concurrent winner", {
+        user_id: user.id, request_id: requestId, goal_id, transaction_id: raceWinner?.id,
+      });
+      return NextResponse.json({ duplicate: true, transaction: { id: raceWinner?.id ?? null }, goal });
+    }
+
     log.error("Withdrawal insert failed", {
       user_id: user.id, request_id: requestId, goal_id, error: txError.message, error_code: txError.code,
     });
@@ -133,7 +192,6 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 3. RECORD ACTIVITY FOR DAY MOMENTUM ───────────────────────
-  // No XP for withdrawals/purchases, but the day still counts as active.
   const { error: activityError } = await supabase.rpc("log_activity_event", {
     p_user_id: user.id,
     p_date:    getUTCDateString(),
@@ -142,11 +200,6 @@ export async function POST(req: NextRequest) {
   });
 
   if (activityError) {
-    // Previously this was console.warn() gated behind NODE_ENV === "development",
-    // which meant it was completely silent in production. It is now logged
-    // and reported to Sentry in all environments — the transaction itself
-    // still succeeds (this is a non-fatal secondary write), but we need
-    // visibility when it fails so Day Momentum data gaps are investigatable.
     log.warn("log_activity_event failed after successful withdrawal insert", {
       user_id: user.id, request_id: requestId, goal_id, transaction_id: tx.id,
       error: activityError.message, error_code: activityError.code,
@@ -164,9 +217,35 @@ export async function POST(req: NextRequest) {
     .eq("id", goal_id)
     .single();
 
+  // ── 5. IMMUTABLE AUDIT LOG ─────────────────────────────────────
+  await writeAuditLog({
+    userId:     user.id,
+    eventType:  "WITHDRAWAL_CREATED",
+    entityType: "transaction",
+    entityId:   tx.id,
+    metadata: {
+      amount,
+      goal_id,
+      transaction_type,
+      idempotency_key,
+    },
+    requestId,
+  });
+
+  // ── 6. ANALYTICS ─────────────────────────────────────────────
+  // Note: deposits' DEPOSIT_MADE event fires in /api/transactions for the
+  // deposit path; withdrawals fire their own WITHDRAWAL_MADE event here
+  // since this route handles them exclusively.
+  await trackServerEvent(AnalyticsEvents.WITHDRAWAL_MADE, user.id, {
+    amount,
+    goal_id,
+    transaction_type,
+  });
+
   end({ user_id: user.id, request_id: requestId, goal_id, transaction_id: tx.id });
 
   return NextResponse.json({
+    duplicate:   false,
     transaction: tx,
     goal,
   });

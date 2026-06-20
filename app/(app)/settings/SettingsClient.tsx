@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { SUPPORTED_CURRENCIES } from "@/lib/currency";
 import { ArrowLeft, ChevronRight, Trash2 } from "lucide-react";
 import Link from "next/link";
@@ -19,18 +18,34 @@ export default function SettingsClient({ profile, email }: Props) {
   const [displayName, setDisplayName] = useState(profile.display_name ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteInput, setDeleteInput] = useState("");
 
   async function handleSave() {
     setSaving(true);
-    const supabase = createClient();
-    const selected = SUPPORTED_CURRENCIES.find(c => c.code === currencyCode);
-    await supabase.from("profiles").update({
-      display_name: displayName,
-      currency_code: currencyCode,
-      locale: selected?.locale ?? "en-ZA",
-    }).eq("id", profile.id);
+    setSaveError("");
+
+    // Sprint 10 — Part 3: profile updates now go through PATCH /api/profile
+    // instead of writing directly to Supabase from the browser. The route
+    // validates display_name length and currency_code against the
+    // supported list, and resolves the matching locale server-side.
+    const res = await fetch("/api/profile", {
+      method:  "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        display_name:  displayName,
+        currency_code: currencyCode,
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setSaveError(data.error ?? "Failed to save changes.");
+      setSaving(false);
+      return;
+    }
+
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -134,6 +149,11 @@ export default function SettingsClient({ profile, email }: Props) {
       </div>
 
       {/* Save button */}
+      {saveError && (
+        <div className="mb-3 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-red-400 text-sm">
+          {saveError}
+        </div>
+      )}
       <button onClick={handleSave} disabled={saving} className="btn-primary w-full mb-8">
         {saving ? "Saving…" : saved ? "✓ Saved" : "Save changes"}
       </button>

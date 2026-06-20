@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -37,6 +37,32 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
   const [loading, setLoading]          = useState(false);
   const [error, setError]              = useState("");
   const [showNextGoal, setShowNextGoal] = useState(false);
+
+  // ── Idempotency key (Sprint 10 — Part 1) ────────────────────────
+  // Generated lazily via a ref, NOT useState — a ref persists across
+  // re-renders without itself causing one, and critically does NOT
+  // regenerate on every render the way a useState initializer with an
+  // unstable dependency might. The key is created the FIRST time a
+  // submission is attempted for the form's current "session" (i.e.
+  // since the last successful submit), and explicitly cleared only
+  // after a confirmed success — never on error, never on re-render.
+  // This means: double-click → same key both times → server-side
+  // dedup catches it. Network failure → user clicks "try again" →
+  // SAME key is reused → server-side dedup still catches it, even
+  // though this is technically a second HTTP request from the
+  // browser's point of view. Regenerating on every render or on every
+  // keystroke would defeat the entire purpose — the key must outlive
+  // the specific user action it represents, not the component render.
+  const depositKeyRef = useRef<string | null>(null);
+  function getOrCreateIdempotencyKey(): string {
+    if (!depositKeyRef.current) {
+      depositKeyRef.current = crypto.randomUUID();
+    }
+    return depositKeyRef.current;
+  }
+  function clearIdempotencyKey(): void {
+    depositKeyRef.current = null;
+  }
 
   // ── Edit goal state ───────────────────────────────────────────
   const [showEdit, setShowEdit]         = useState(false);
@@ -99,11 +125,21 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
       const res  = await fetch("/api/transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal_id: goal.id, amount: depositAmount, note: note || null }),
+        body: JSON.stringify({
+          goal_id: goal.id,
+          amount: depositAmount,
+          note: note || null,
+          idempotency_key: getOrCreateIdempotencyKey(),
+        }),
       });
       const data = await res.json();
 
       if (!res.ok) { setError(data.error ?? "Failed to log saving"); setLoading(false); return; }
+
+      // Success (including a server-detected duplicate, which is also a
+      // safe terminal state) — this logical action is done, so the next
+      // submission is a NEW action and gets a NEW key.
+      clearIdempotencyKey();
 
       const newAmount      = Number(goal.current_amount) + depositAmount;
       const isNowComplete  = newAmount >= Number(goal.target_amount);
@@ -140,11 +176,21 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
     const wRes = await fetch("/api/transactions/withdrawal", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal_id: goal.id, amount: depositAmount, note: note || null, transaction_type: txType }),
+      body: JSON.stringify({
+        goal_id: goal.id,
+        amount: depositAmount,
+        note: note || null,
+        transaction_type: txType,
+        idempotency_key: getOrCreateIdempotencyKey(),
+      }),
     });
     const wData = await wRes.json();
 
     if (!wRes.ok) { setError(wData.error ?? "Failed to log transaction"); setLoading(false); return; }
+
+    // Success (including a server-detected duplicate) — clear so the next
+    // submission gets a fresh key.
+    clearIdempotencyKey();
 
     const tx = wData.transaction;
     const newAmount = wData.goal?.current_amount != null

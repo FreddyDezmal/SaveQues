@@ -20,13 +20,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
 import { GOAL_EMOJIS } from "@/lib/utils";
+import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
+import { writeAuditLog } from "@/lib/auditLog";
 
 const log = createLogger("goals.edit");
 
 const MAX_TITLE_LEN = 80;
 
 export async function PATCH(req: NextRequest) {
-  const supabase = createClient();
+  const requestId = req.headers.get("x-request-id") ?? undefined;
+  const supabase  = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -66,7 +69,7 @@ export async function PATCH(req: NextRequest) {
   // ── Ownership + current state check ──────────────────────────────────────
   const { data: goal } = await supabase
     .from("savings_goals")
-    .select("id, current_amount, target_amount, is_complete")
+    .select("id, title, goal_emoji, current_amount, target_amount, is_complete")
     .eq("id", goal_id)
     .eq("user_id", user.id)
     .single();
@@ -110,6 +113,7 @@ export async function PATCH(req: NextRequest) {
   if (updateError) {
     log.error("Goal update failed", {
       user_id:    user.id,
+      request_id: requestId,
       goal_id,
       error:      updateError.message,
       error_code: updateError.code,
@@ -117,13 +121,41 @@ export async function PATCH(req: NextRequest) {
     captureError(updateError, {
       route:   "PATCH /api/goal/edit",
       user_id: user.id,
+      request_id: requestId,
       goal_id,
     });
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
+  // ── Analytics ────────────────────────────────────────────────────────────
+  await trackServerEvent(AnalyticsEvents.GOAL_EDITED, user.id, {
+    goal_id,
+    fields_changed: Object.keys(updates).join(","),
+  });
+
+  // ── Immutable audit log ──────────────────────────────────────────────────
+  // before/after snapshot of only the fields that actually changed, not a
+  // full row dump — keeps the metadata column focused on what's useful for
+  // a support investigation ("what did this user change about this goal").
+  await writeAuditLog({
+    userId:     user.id,
+    eventType:  "GOAL_EDITED",
+    entityType: "goal",
+    entityId:   goal_id,
+    metadata: {
+      before: {
+        title:         goal.title,
+        goal_emoji:    goal.goal_emoji,
+        target_amount: goal.target_amount,
+      },
+      after: updates,
+    },
+    requestId,
+  });
+
   log.info("Goal updated", {
     user_id: user.id,
+    request_id: requestId,
     goal_id,
     fields:  Object.keys(updates).join(", "),
   });

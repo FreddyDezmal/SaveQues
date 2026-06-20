@@ -50,9 +50,19 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, earnedAch
 
   async function updateAvatar(emoji: string) {
     setSelectedAvatar(emoji);
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) await supabase.from("profiles").update({ avatar_emoji: emoji }).eq("id", user.id);
+    // Sprint 10 — Part 3: avatar updates now go through the same
+    // PATCH /api/profile route as display_name/currency_code in Settings,
+    // rather than a separate client-direct Supabase write. Fire-and-forget
+    // from the UI's perspective — optimistic update already happened via
+    // setSelectedAvatar above; a failure here is logged server-side and
+    // surfaces on the next profile fetch (the emoji will simply not have
+    // changed), which is an acceptable failure mode for a low-stakes
+    // cosmetic preference.
+    await fetch("/api/profile", {
+      method:  "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ avatar_emoji: emoji }),
+    });
     router.refresh();
   }
 

@@ -123,6 +123,7 @@ export const AnalyticsEvents = {
 
   // Goals
   GOAL_CREATED:      "goal_created",
+  GOAL_EDITED:       "goal_edited",
   GOAL_COMPLETED:    "goal_completed",
   GOAL_DELETED:      "goal_deleted",
 
@@ -132,6 +133,7 @@ export const AnalyticsEvents = {
 
   // XP
   XP_AWARDED:        "xp_awarded",
+  LEVEL_UP:          "level_up",
 
   // Achievements
   ACHIEVEMENT_UNLOCKED: "achievement_unlocked",
@@ -157,6 +159,10 @@ export const AnalyticsEvents = {
   NOTIFICATION_PROMPT_SHOWN:     "notification_prompt_shown",
   NOTIFICATION_PROMPT_ACCEPTED:  "notification_prompt_accepted",
   NOTIFICATION_PROMPT_DISMISSED: "notification_prompt_dismissed",
+
+  // Sprint 10 — Financial Integrity & Write Consolidation
+  NOTIFICATIONS_ENABLED: "notifications_enabled",
+  ACCOUNT_DELETED:       "account_deleted",
 } as const;
 
 export type AnalyticsEventName = (typeof AnalyticsEvents)[keyof typeof AnalyticsEvents];

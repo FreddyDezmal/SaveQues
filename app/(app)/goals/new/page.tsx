@@ -2,11 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { GOAL_CATEGORIES, GOAL_EMOJIS } from "@/lib/utils";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
-import { trackEvent, AnalyticsEvents } from "@/lib/analytics";
 
 type Step = 1 | 2 | 3;
 
@@ -31,46 +29,31 @@ export default function NewGoalPage() {
   async function handleCreate() {
     setLoading(true);
     setError("");
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
 
-    const { error: err } = await supabase.from("savings_goals").insert({
-      user_id: user.id,
-      title,
-      category,
-      goal_emoji: goalEmoji,
-      target_amount: Number(targetAmount),
-      current_amount: 0,
-      target_date: targetDate || null,
-      is_complete: false,
+    // Sprint 10 — Part 2: goal creation now goes through POST /api/goals
+    // instead of writing directly to Supabase from the browser. The route
+    // handles validation, structured logging, the audit log entry, and
+    // both PostHog events (GOAL_CREATED + FIRST_GOAL_CREATED when
+    // applicable) server-side — so this client code is now much simpler
+    // and no longer needs its own Supabase client or the extra query to
+    // check whether this is the user's first goal.
+    const res = await fetch("/api/goals", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title,
+        category,
+        goal_emoji: goalEmoji,
+        target_amount: Number(targetAmount),
+        target_date: targetDate || null,
+      }),
     });
+    const data = await res.json();
 
-    if (err) {
-      setError(err.message);
+    if (!res.ok) {
+      setError(data.error ?? "Failed to create goal");
       setLoading(false);
     } else {
-      // Track goal creation and first-goal activation milestone
-      const { data: existingGoals } = await supabase
-        .from("savings_goals")
-        .select("id")
-        .eq("user_id", user.id);
-
-      const isFirstGoal = (existingGoals?.length ?? 0) <= 1;
-
-      trackEvent(AnalyticsEvents.GOAL_CREATED, {
-        goal_category:  category,
-        target_amount:  Number(targetAmount),
-        source:         "manual",
-      });
-
-      if (isFirstGoal) {
-        trackEvent(AnalyticsEvents.FIRST_GOAL_CREATED, {
-          goal_category: category,
-          target_amount: Number(targetAmount),
-        });
-      }
-
       router.push("/goals");
       router.refresh();
     }

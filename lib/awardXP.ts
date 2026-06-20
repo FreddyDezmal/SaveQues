@@ -18,6 +18,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { checkAchievements, ACHIEVEMENTS } from "@/lib/achievements";
+import { getLevelFromXP } from "@/lib/xp";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -167,4 +168,35 @@ export async function awardGoalCompleteXP(params: {
     : await checkAndAwardAchievements(params.userId, params.achievementParams);
 
   return { ...primary, newAchievements };
+}
+
+// ── Level-up detection ───────────────────────────────────────────────────────
+
+/**
+ * Determines whether an XP award crossed a level threshold.
+ *
+ * Pure function — no DB access, no side effects. Callers pass the XP total
+ * BEFORE this award and the newTotal returned by awardXP()/awardSavingXP()/
+ * awardGoalCompleteXP(). This is intentionally separate from the award
+ * functions themselves: every existing call site already has both values
+ * in scope (the profile fetch happens before the award, and newTotal comes
+ * back from the award), so no extra DB round-trip is needed to detect a
+ * level-up — it's purely arithmetic on values already in hand.
+ *
+ * Returns null if no level was crossed (most awards, especially small
+ * ones, won't cross a threshold) — callers should only fire LEVEL_UP
+ * analytics when this returns non-null.
+ */
+export function detectLevelUp(
+  xpBefore: number,
+  xpAfter: number
+): { newLevel: number; newTitle: string; previousLevel: number } | null {
+  if (xpAfter <= xpBefore) return null;
+
+  const before = getLevelFromXP(xpBefore);
+  const after  = getLevelFromXP(xpAfter);
+
+  if (after.level <= before.level) return null;
+
+  return { newLevel: after.level, newTitle: after.title, previousLevel: before.level };
 }

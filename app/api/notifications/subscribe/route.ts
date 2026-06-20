@@ -3,17 +3,19 @@ import { createClient } from "@/lib/supabase/server";
 import type { WebPushSubscription } from "@/lib/types.notifications";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
+import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 
 const log = createLogger("push.subscribe");
 
 export async function POST(req: NextRequest) {
-  const end = log.time("push subscription registration");
+  const requestId = req.headers.get("x-request-id") ?? undefined;
+  const end = log.time("push subscription registration", { request_id: requestId });
 
   try {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      log.warn("Unauthenticated subscription attempt", { action: "auth_check" });
+      log.warn("Unauthenticated subscription attempt", { action: "auth_check", request_id: requestId });
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -38,7 +40,7 @@ export async function POST(req: NextRequest) {
     // path (e.g. a future admin tool, or a different client version that
     // predates this check).
     if (typeof timezone !== "string" || !Intl.supportedValuesOf("timeZone").includes(timezone)) {
-      log.warn("Invalid timezone rejected", { user_id: user.id, timezone });
+      log.warn("Invalid timezone rejected", { user_id: user.id, request_id: requestId, timezone });
       return NextResponse.json(
         { error: `Invalid timezone: "${timezone}". Must be a valid IANA timezone identifier (e.g. "Africa/Johannesburg").` },
         { status: 400 }
@@ -48,12 +50,24 @@ export async function POST(req: NextRequest) {
     if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
       log.warn("Invalid subscription object received", {
         user_id:      user.id,
+        request_id:   requestId,
         has_endpoint: !!subscription?.endpoint,
         has_p256dh:   !!subscription?.keys?.p256dh,
         has_auth:     !!subscription?.keys?.auth,
       });
       return NextResponse.json({ error: "Invalid subscription object" }, { status: 400 });
     }
+
+    // Check whether this is the user's first-ever subscription (any endpoint)
+    // BEFORE the upsert, so we know whether to fire the NOTIFICATIONS_ENABLED
+    // milestone event. An upsert on an EXISTING endpoint (e.g. browser
+    // re-registering the same push subscription on reload) should not
+    // re-fire this event every time.
+    const { count: existingSubCount } = await supabase
+      .from("push_subscriptions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id);
+    const isFirstSubscription = (existingSubCount ?? 0) === 0;
 
     // Upsert (same user+endpoint combo)
     const { error } = await supabase
@@ -74,12 +88,14 @@ export async function POST(req: NextRequest) {
     if (error) {
       log.error("Push subscription upsert failed", {
         user_id:    user.id,
+        request_id: requestId,
         error:      error.message,
         error_code: error.code,
       });
       captureError(error, {
         route:   "POST /api/notifications/subscribe",
         user_id: user.id,
+        request_id: requestId,
       });
       throw error;
     }
@@ -90,14 +106,23 @@ export async function POST(req: NextRequest) {
       .update({ notifications_enabled: true })
       .eq("id", user.id);
 
-    end({ user_id: user.id, timezone });
+    // NOTIFICATIONS_ENABLED — product engagement signal, PostHog only (not
+    // an audit_logs event; see lib/auditLog.ts header for the split
+    // rationale). Fired once per user on their first subscription, not on
+    // every re-registration of the same browser endpoint.
+    if (isFirstSubscription) {
+      await trackServerEvent(AnalyticsEvents.NOTIFICATIONS_ENABLED, user.id, { timezone });
+    }
+
+    end({ user_id: user.id, request_id: requestId, timezone, is_first_subscription: isFirstSubscription });
     return NextResponse.json({ ok: true });
 
   } catch (err: any) {
     log.error("Unexpected error registering push subscription", {
+      request_id: requestId,
       error: err.message ?? String(err),
     });
-    captureError(err, { route: "POST /api/notifications/subscribe" });
+    captureError(err, { route: "POST /api/notifications/subscribe", request_id: requestId });
     return NextResponse.json({ error: err.message ?? "Failed" }, { status: 500 });
   }
 }

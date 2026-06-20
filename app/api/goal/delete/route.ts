@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
+import { writeAuditLog } from "@/lib/auditLog";
 
 const log = createLogger("goal.delete");
 
@@ -83,6 +84,25 @@ export async function DELETE(req: NextRequest) {
     captureError(error, { route: "DELETE /api/goal/delete", user_id: user.id, request_id: requestId, goal_id });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // Immutable audit log — written with the goal's last-known state, since
+  // the row itself is gone immediately after this point (same pattern as
+  // ACCOUNT_DELETED in app/api/account/route.ts: capture before, write
+  // after the delete succeeds, since entity_id here still resolves for
+  // historical lookup purposes even though the row is gone).
+  await writeAuditLog({
+    userId:     user.id,
+    eventType:  "GOAL_DELETED",
+    entityType: "goal",
+    entityId:   goal_id,
+    metadata: {
+      goal_category:  goal.category,
+      target_amount:  goal.target_amount,
+      amount_saved:   goal.current_amount,
+      was_complete:   goal.is_complete,
+    },
+    requestId,
+  });
 
   // Track goal_deleted event
   await trackServerEvent(AnalyticsEvents.GOAL_DELETED, user.id, {

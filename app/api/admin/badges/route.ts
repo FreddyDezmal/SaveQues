@@ -4,6 +4,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, auditLog }    from "@/lib/adminAudit";
+import { writeAuditLog } from "@/lib/auditLog";
 
 const CATEGORIES = ["streak", "savings", "quest", "social", "special", "hidden"];
 const VISIBILITY = ["visible", "hidden"];
@@ -52,6 +53,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     await auditLog(service, user.id, "CREATE", "badge", data.id, null, data);
+
+    // Lightweight cross-reference into the business-event audit_logs table
+    // (migration 027), in addition to the richer before/after record
+    // auditLog() just wrote to admin_audit_log above. See lib/auditLog.ts
+    // header for why these are two separate tables. metadata here is
+    // intentionally a summary, not a full row dump — the complete record
+    // already lives in admin_audit_log if a fuller reconstruction is needed.
+    await writeAuditLog({
+      userId:     user.id,
+      eventType:  "ADMIN_BADGE_CREATED",
+      entityType: "badge",
+      entityId:   data.id,
+      metadata:   { title: data.title, category: data.category, xp_reward: data.xp_reward },
+    });
+
     return NextResponse.json({ badge: data });
   } catch (res) { return res as Response; }
 }

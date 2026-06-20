@@ -1,5 +1,5 @@
 /**
- * app/api/transactions/route.ts  — SECURITY HARDENED
+ * app/api/transactions/route.ts — FINANCIAL INTEGRITY HARDENED (Sprint 10)
  *
  * Changes from original:
  *  1. Goal ownership verified BEFORE the transaction insert.
@@ -14,27 +14,42 @@
  *  7. Server-side validation: amount upper bound, note length/trim.
  *  8. DB-backed rate limiting: 60 deposits per user per rolling 60 minutes.
  *  9. Request correlation ID threaded into every log line and Sentry event.
+ *
+ * Sprint 10 — Financial Integrity & Write Consolidation additions:
+ * 10. REQUIRED idempotency_key — rejects requests with no key (400). A
+ *     duplicate (user_id, idempotency_key) pair returns the ORIGINAL
+ *     transaction's response unchanged rather than creating a second row
+ *     or erroring — this is what makes a retry/double-click SAFE rather
+ *     than merely logged.
+ * 11. Immutable audit log entry (DEPOSIT_CREATED) written after success,
+ *     independent of the PostHog analytics event below.
+ * 12. LEVEL_UP analytics event fires when this deposit's XP award crosses
+ *     a level threshold (see lib/awardXP.ts detectLevelUp()).
  */
 
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getXPForAction } from "@/lib/xp";
 import { checkAchievements } from "@/lib/achievements";
-import { awardSavingXP, awardGoalCompleteXP } from "@/lib/awardXP";
+import { awardSavingXP, awardGoalCompleteXP, detectLevelUp } from "@/lib/awardXP";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { recordDailyActivity } from "@/lib/recordDailyActivity";
 import { getUTCDateString } from "@/lib/dateUtils";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { writeAuditLog } from "@/lib/auditLog";
 
 const log = createLogger("transactions.deposit");
 
-// Server-side mirror of the DB CHECK constraint added in
-// 025_validation_constraints.sql — fail fast with a clear 400 before
-// even touching the database, rather than surfacing a raw Postgres error.
 const MAX_AMOUNT  = 10_000_000;
 const MAX_NOTE_LEN = 500;
+
+// Loose UUID v4-ish check — we don't need to be pedantic about the exact
+// RFC4122 version byte, just confident the client sent something
+// crypto.randomUUID()-shaped rather than e.g. an empty string or a
+// human-typed value that would silently never collide with itself on retry.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
   const requestId = req.headers.get("x-request-id") ?? undefined;
@@ -45,7 +60,23 @@ export async function POST(req: NextRequest) {
   setSentryUser(user.id);
 
   const body = await req.json();
-  const { goal_id, amount, note: rawNote } = body;
+  const { goal_id, amount, note: rawNote, idempotency_key } = body;
+
+  // ── Idempotency key validation ─────────────────────────────────────────
+  // REQUIRED — not optional. A missing key means the client wasn't built
+  // to participate in the idempotency contract, which is exactly the
+  // condition that lets double-clicks and retries create duplicate
+  // financial records. We reject rather than silently proceeding without
+  // protection.
+  if (!idempotency_key || typeof idempotency_key !== "string" || !UUID_RE.test(idempotency_key)) {
+    log.warn("Deposit rejected — missing or invalid idempotency_key", {
+      user_id: user.id, request_id: requestId, goal_id,
+    });
+    return NextResponse.json(
+      { error: "idempotency_key is required and must be a valid UUID." },
+      { status: 400 }
+    );
+  }
 
   // ── Validation ──────────────────────────────────────────────────────────
   if (!goal_id || !amount || amount <= 0) {
@@ -63,11 +94,38 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Trim and cap note length server-side — belt-and-suspenders ahead of the
-  // DB CHECK constraint (025_validation_constraints.sql).
   const note = typeof rawNote === "string" ? rawNote.trim().slice(0, MAX_NOTE_LEN) || null : null;
 
   const end = log.time("deposit", { user_id: user.id, request_id: requestId, goal_id, amount });
+
+  // ── Idempotency check: has this exact (user, key) pair been seen before? ─
+  // Checked BEFORE the rate limit so a retried request never burns a second
+  // rate-limit slot for what is, semantically, the same logical deposit.
+  const { data: existingTx } = await supabase
+    .from("transactions")
+    .select("id, amount, goal_id, created_at")
+    .eq("user_id", user.id)
+    .eq("idempotency_key", idempotency_key)
+    .maybeSingle();
+
+  if (existingTx) {
+    // This is a duplicate submission (double-click, retry, reconnect).
+    // Return success with the ORIGINAL transaction's outcome rather than
+    // creating a second row. We do not re-run XP/achievement logic —
+    // award_xp() is itself idempotent on transaction.id, so even if we
+    // did, it would correctly award 0 XP — but skipping it here avoids
+    // unnecessary work and an unnecessary set of duplicate analytics events.
+    log.info("Deposit duplicate detected via idempotency_key — returning original", {
+      user_id: user.id, request_id: requestId, goal_id, transaction_id: existingTx.id,
+    });
+    end({ user_id: user.id, request_id: requestId, goal_id, transaction_id: existingTx.id, duplicate: true });
+    return NextResponse.json({
+      duplicate:       true,
+      transactionId:   existingTx.id,
+      xpGained:        0,
+      newAchievements: [],
+    });
+  }
 
   // ── Rate limit: 60 deposits per user per rolling 60 minutes ───────────────
   const rateLimit = await checkRateLimit(supabase, {
@@ -100,8 +158,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Goal not found" }, { status: 404 });
   }
 
+  // ── 1b. CAPTURE XP-BEFORE for level-up detection ─────────────
+  const { data: profileBefore } = await supabase
+    .from("profiles")
+    .select("xp_total")
+    .eq("id", user.id)
+    .single();
+  const xpBefore = profileBefore?.xp_total ?? 0;
+
   // ── 2. INSERT TRANSACTION ─────────────────────────────────────
   // The DB trigger enforce_goal_ownership provides a second layer of defence.
+  // idempotency_key + UNIQUE(user_id, idempotency_key) (migration 028) is
+  // the final backstop against a race: if two near-simultaneous requests
+  // with the same key both pass the maybeSingle() check above before
+  // either has inserted, the DB unique index rejects the second insert
+  // (handled below as error.code === "23505").
   const { data: tx, error: txError } = await supabase
     .from("transactions")
     .insert({
@@ -110,11 +181,34 @@ export async function POST(req: NextRequest) {
       amount,
       note,
       transaction_type: "deposit",
+      idempotency_key,
     })
     .select()
     .single();
 
   if (txError) {
+    // Unique violation on (user_id, idempotency_key) — a concurrent request
+    // with the same key won the race. Fetch and return THAT transaction
+    // rather than erroring, preserving the same duplicate-safe contract.
+    if (txError.code === "23505") {
+      const { data: raceWinner } = await supabase
+        .from("transactions")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("idempotency_key", idempotency_key)
+        .maybeSingle();
+
+      log.info("Deposit idempotency race detected — returning concurrent winner", {
+        user_id: user.id, request_id: requestId, goal_id, transaction_id: raceWinner?.id,
+      });
+      return NextResponse.json({
+        duplicate:       true,
+        transactionId:   raceWinner?.id ?? null,
+        xpGained:        0,
+        newAchievements: [],
+      });
+    }
+
     log.error("Deposit insert failed", {
       user_id: user.id, request_id: requestId, goal_id, error: txError.message, error_code: txError.code,
     });
@@ -250,6 +344,21 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Track level-up — compares XP total before this request to the
+  // authoritative newTotal returned by the award. Detects a crossed
+  // threshold purely arithmetically; no extra DB call needed.
+  if (!xpResult.alreadyAwarded) {
+    const levelUp = detectLevelUp(xpBefore, xpResult.newTotal);
+    if (levelUp) {
+      await trackServerEvent(AnalyticsEvents.LEVEL_UP, user.id, {
+        new_level:      levelUp.newLevel,
+        previous_level: levelUp.previousLevel,
+        new_title:      levelUp.newTitle,
+        source:         isGoalComplete ? "goal_complete" : "log_saving",
+      });
+    }
+  }
+
   // Track goal completed
   if (isGoalComplete && !xpResult.alreadyAwarded) {
     await trackServerEvent(AnalyticsEvents.GOAL_COMPLETED, user.id, {
@@ -274,7 +383,25 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── 6. RETENTION RECORDING ────────────────────────────────────
+  // ── 6. IMMUTABLE AUDIT LOG ─────────────────────────────────────
+  // Fire-and-forget — never blocks or fails the response. Independent of
+  // the PostHog event above: this is the permanent financial record, not
+  // a product-analytics signal (see lib/auditLog.ts header for the split).
+  await writeAuditLog({
+    userId:     user.id,
+    eventType:  "DEPOSIT_CREATED",
+    entityType: "transaction",
+    entityId:   tx.id,
+    metadata: {
+      amount,
+      goal_id,
+      idempotency_key,
+      is_goal_complete: isGoalComplete,
+    },
+    requestId,
+  });
+
+  // ── 7. RETENTION RECORDING ────────────────────────────────────
   await recordDailyActivity(supabase, user.id, {
     app_opened:    true,
     deposit_delta: isDeposit ? 1 : 0,
@@ -287,6 +414,8 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({
+    duplicate:       false,
+    transactionId:   tx.id,
     xpGained:        xpResult.xpAwarded,
     newXP:           xpResult.newTotal,
     newAchievements: xpResult.newAchievements,

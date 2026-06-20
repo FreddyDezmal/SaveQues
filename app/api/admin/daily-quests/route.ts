@@ -3,6 +3,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { requireAdmin, auditLog }    from "@/lib/adminAudit";
+import { writeAuditLog } from "@/lib/auditLog";
 
 const CATEGORIES = ["savings", "behavioral", "streak", "challenge"];
 
@@ -49,6 +50,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     await auditLog(service, user.id, "CREATE", "daily_quest", data.id, null, data);
+
+    // Lightweight cross-reference into the business-event audit_logs table —
+    // see app/api/admin/badges/route.ts POST handler for the full rationale.
+    await writeAuditLog({
+      userId:     user.id,
+      eventType:  "ADMIN_QUEST_CREATED",
+      entityType: "quest",
+      entityId:   data.id,
+      metadata:   { title: data.title, category: data.category, xp_reward: data.xp_reward },
+    });
+
     return NextResponse.json({ quest: data });
   } catch (res) { return res as Response; }
 }

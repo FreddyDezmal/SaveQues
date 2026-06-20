@@ -27,7 +27,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getXPForAction } from "@/lib/xp";
-import { checkAndAwardAchievements } from "@/lib/awardXP";
+import { checkAndAwardAchievements, detectLevelUp } from "@/lib/awardXP";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { recordDailyActivity } from "@/lib/recordDailyActivity";
 import { getUTCDateString } from "@/lib/dateUtils";
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
   // Compute XP server-side — never trust client-supplied amount
   const { data: profile } = await supabase
     .from("profiles")
-    .select("streak_days, daily_quests_completed, weekly_quests_completed")
+    .select("streak_days, daily_quests_completed, weekly_quests_completed, xp_total")
     .eq("id", user.id)
     .single();
 
@@ -144,6 +144,19 @@ export async function POST(req: NextRequest) {
     amount:      rpcResult.xp_awarded,
     source_type: "daily_quest",
   });
+
+  // Track level-up — complete_daily_quest() doesn't go through
+  // awardXP()/awardSavingXP(), so unlike the deposit route this compares
+  // the xp_total fetched before the RPC call to the new_total it returns.
+  const levelUp = detectLevelUp(profile.xp_total ?? 0, rpcResult.new_total);
+  if (levelUp) {
+    await trackServerEvent(AnalyticsEvents.LEVEL_UP, user.id, {
+      new_level:      levelUp.newLevel,
+      previous_level: levelUp.previousLevel,
+      new_title:      levelUp.newTitle,
+      source:         "daily_quest",
+    });
+  }
 
   // First quest completed activation milestone
   const prevDailyCount = profile.daily_quests_completed ?? 0;

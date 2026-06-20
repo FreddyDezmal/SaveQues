@@ -1,0 +1,26 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 027_down.sql
+-- Rollback for 027_audit_logs.sql
+-- ─────────────────────────────────────────────────────────────────────────────
+--
+-- DATA LOSS: TOTAL AND PERMANENT for this table's entire contents.
+--
+--   audit_logs is the immutable business/financial event record described
+--   in 027_audit_logs.sql. Unlike every other rollback script in this
+--   project, dropping this table destroys exactly the kind of record this
+--   table exists to make undestroyable — every GOAL_DELETED, DEPOSIT_CREATED,
+--   ACCOUNT_DELETED row, etc.
+--
+--   DO NOT RUN THIS IN PRODUCTION once any audit_logs rows exist, except
+--   as a last resort during an active incident where the table itself is
+--   confirmed to be the cause (e.g. a runaway write loop). If that
+--   happens, EXPORT THE TABLE FIRST:
+--
+--     COPY (SELECT * FROM public.audit_logs) TO STDOUT WITH CSV HEADER;
+--
+--   or via Supabase's table export feature, before running this script.
+--
+-- SAFE TO RUN: Only on a fresh/empty database, or after a confirmed export.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+DROP TABLE IF EXISTS public.audit_logs;
