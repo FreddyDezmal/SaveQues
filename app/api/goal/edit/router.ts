@@ -19,8 +19,11 @@ import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
+import { GOAL_EMOJIS } from "@/lib/utils";
 
 const log = createLogger("goals.edit");
+
+const MAX_TITLE_LEN = 80;
 
 export async function PATCH(req: NextRequest) {
   const supabase = createClient();
@@ -46,6 +49,12 @@ export async function PATCH(req: NextRequest) {
   const validationErrors: string[] = [];
   if (title !== undefined && (!title || title.trim().length === 0)) {
     validationErrors.push("title cannot be empty");
+  }
+  if (title !== undefined && title.trim().length > MAX_TITLE_LEN) {
+    validationErrors.push(`title cannot exceed ${MAX_TITLE_LEN} characters`);
+  }
+  if (goal_emoji !== undefined && !GOAL_EMOJIS.includes(goal_emoji as typeof GOAL_EMOJIS[number])) {
+    validationErrors.push("goal_emoji must be one of the supported emoji options");
   }
   if (target_amount !== undefined && (typeof target_amount !== "number" || target_amount <= 0)) {
     validationErrors.push("target_amount must be greater than 0");

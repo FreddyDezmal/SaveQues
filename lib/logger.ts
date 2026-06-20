@@ -40,6 +40,7 @@ interface LogEntry extends LogFields {
   level:    Level;
   service:  string;
   message:  string;
+  request_id?: string;
   duration_ms?: number;
 }
 

@@ -11,30 +11,50 @@
  *
  * Cascades: all transactions for this goal are cascade-deleted by the
  * FK constraint in the initial schema migration.
+ *
+ * Hardening sprint additions:
+ *  • Structured logging (start/success/failure + duration_ms).
+ *  • Request correlation ID threaded into every log line and Sentry event.
+ *
+ * No rate limiting added — deletion is destructive only to the acting
+ * user's own data (ownership-scoped), and the realistic abuse case
+ * (someone deleting their own goals repeatedly) has no meaningful blast
+ * radius beyond their own account.
  */
 
 import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
+import { createLogger } from "@/lib/logger";
+import { captureError, setSentryUser } from "@/lib/monitoring";
+
+const log = createLogger("goal.delete");
 
 export async function DELETE(req: NextRequest) {
-  const supabase = createClient();
+  const requestId = req.headers.get("x-request-id") ?? undefined;
+  const supabase  = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  setSentryUser(user.id);
 
   let goal_id: string;
   try {
     const body = await req.json();
     goal_id = body.goal_id;
   } catch {
+    log.warn("Goal delete rejected — invalid request body", { user_id: user.id, request_id: requestId });
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
   if (!goal_id) {
+    log.warn("Goal delete rejected — missing goal_id", { user_id: user.id, request_id: requestId });
     return NextResponse.json({ error: "goal_id is required" }, { status: 400 });
   }
+
+  const end = log.time("goal delete", { user_id: user.id, request_id: requestId, goal_id });
 
   // Fetch goal metadata before deletion (for analytics properties)
   const { data: goal } = await supabase
@@ -45,6 +65,7 @@ export async function DELETE(req: NextRequest) {
     .single();
 
   if (!goal) {
+    log.warn("Goal delete rejected — goal not found or not owned", { user_id: user.id, request_id: requestId, goal_id });
     return NextResponse.json({ error: "Goal not found" }, { status: 404 });
   }
 
@@ -56,6 +77,10 @@ export async function DELETE(req: NextRequest) {
     .eq("user_id", user.id);
 
   if (error) {
+    log.error("Goal delete failed", {
+      user_id: user.id, request_id: requestId, goal_id, error: error.message, error_code: error.code,
+    });
+    captureError(error, { route: "DELETE /api/goal/delete", user_id: user.id, request_id: requestId, goal_id });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
@@ -69,6 +94,8 @@ export async function DELETE(req: NextRequest) {
       : 0,
     was_complete:     goal.is_complete,
   });
+
+  end({ user_id: user.id, request_id: requestId, goal_id });
 
   return NextResponse.json({ ok: true });
 }

@@ -45,6 +45,10 @@ export function setSentryUser(userId: string | null): void {
 /**
  * Capture an exception with optional extra context tags.
  * Safe to call anywhere — errors in capture itself are swallowed.
+ *
+ * Pass `request_id` in context (from req.headers.get("x-request-id")) to
+ * link this Sentry event with the corresponding structured log lines for
+ * the same request — searchable in both systems by the same value.
  */
 export function captureError(
   err: unknown,

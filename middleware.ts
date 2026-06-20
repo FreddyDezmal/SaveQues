@@ -1,8 +1,35 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+/**
+ * Request correlation ID.
+ *
+ * Reuses an incoming x-request-id (e.g. from a load balancer or future
+ * client instrumentation) if present, otherwise generates a short random
+ * ID. Set on both the outgoing request headers (so route handlers can
+ * read it via req.headers.get("x-request-id")) and the response headers
+ * (so it's visible in browser devtools / can be echoed back in a bug report).
+ *
+ * No external dependency — uses crypto.randomUUID() truncated to 10 chars,
+ * which is already available in the Next.js Edge Runtime.
+ */
+function getOrCreateRequestId(request: NextRequest): string {
+  return request.headers.get("x-request-id") ?? crypto.randomUUID().slice(0, 10);
+}
+
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+  const requestId = getOrCreateRequestId(request);
+
+  // Clone headers so the request ID is available to route handlers via
+  // req.headers.get("x-request-id"), even when the incoming request
+  // didn't supply one.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-request-id", requestId);
+
+  let supabaseResponse = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+  supabaseResponse.headers.set("x-request-id", requestId);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,7 +44,12 @@ export async function middleware(request: NextRequest) {
             request.cookies.set(name, value)
           );
 
+          // Rebuild the response (required so Supabase's refreshed cookies
+          // attach correctly) — re-apply the request ID header here too,
+          // since NextResponse.next({ request }) does not carry over headers
+          // set on a previous response instance.
           supabaseResponse = NextResponse.next({ request });
+          supabaseResponse.headers.set("x-request-id", requestId);
 
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
@@ -44,11 +76,15 @@ export async function middleware(request: NextRequest) {
   // unreachable. Redirecting any unauthenticated /api/* request to an HTML
   // login page is also wrong for browser fetch() callers expecting JSON.
   if (!user && !isPublicPage) {
-    return NextResponse.redirect(new URL("/auth/login", request.url));
+    const redirect = NextResponse.redirect(new URL("/auth/login", request.url));
+    redirect.headers.set("x-request-id", requestId);
+    return redirect;
   }
 
   if (user && isAuthPage) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    const redirect = NextResponse.redirect(new URL("/dashboard", request.url));
+    redirect.headers.set("x-request-id", requestId);
+    return redirect;
   }
 
   return supabaseResponse;

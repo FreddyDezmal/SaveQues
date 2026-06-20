@@ -8,6 +8,12 @@
  *  3. Achievement XP awarded via award_achievement() RPC — atomic + deduped.
  *  4. Non-atomic three-write race condition eliminated.
  *  5. No direct profiles.xp_total update anywhere in this file.
+ *
+ * Hardening sprint additions:
+ *  6. Structured logging (start/success/failure + duration_ms).
+ *  7. Server-side validation: amount upper bound, note length/trim.
+ *  8. DB-backed rate limiting: 60 deposits per user per rolling 60 minutes.
+ *  9. Request correlation ID threaded into every log line and Sentry event.
  */
 
 import { createClient } from "@/lib/supabase/server";
@@ -18,17 +24,65 @@ import { awardSavingXP, awardGoalCompleteXP } from "@/lib/awardXP";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { recordDailyActivity } from "@/lib/recordDailyActivity";
 import { getUTCDateString } from "@/lib/dateUtils";
+import { createLogger } from "@/lib/logger";
+import { captureError, setSentryUser } from "@/lib/monitoring";
+import { checkRateLimit } from "@/lib/rateLimit";
+
+const log = createLogger("transactions.deposit");
+
+// Server-side mirror of the DB CHECK constraint added in
+// 025_validation_constraints.sql — fail fast with a clear 400 before
+// even touching the database, rather than surfacing a raw Postgres error.
+const MAX_AMOUNT  = 10_000_000;
+const MAX_NOTE_LEN = 500;
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient();
+  const requestId = req.headers.get("x-request-id") ?? undefined;
+  const supabase  = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json();
-  const { goal_id, amount, note } = body;
+  setSentryUser(user.id);
 
+  const body = await req.json();
+  const { goal_id, amount, note: rawNote } = body;
+
+  // ── Validation ──────────────────────────────────────────────────────────
   if (!goal_id || !amount || amount <= 0) {
+    log.warn("Deposit rejected — invalid input", { user_id: user.id, request_id: requestId, goal_id });
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+  }
+
+  if (Number(amount) > MAX_AMOUNT) {
+    log.warn("Deposit rejected — amount exceeds maximum", {
+      user_id: user.id, request_id: requestId, goal_id, amount,
+    });
+    return NextResponse.json(
+      { error: `Amount cannot exceed ${MAX_AMOUNT.toLocaleString()}.` },
+      { status: 400 }
+    );
+  }
+
+  // Trim and cap note length server-side — belt-and-suspenders ahead of the
+  // DB CHECK constraint (025_validation_constraints.sql).
+  const note = typeof rawNote === "string" ? rawNote.trim().slice(0, MAX_NOTE_LEN) || null : null;
+
+  const end = log.time("deposit", { user_id: user.id, request_id: requestId, goal_id, amount });
+
+  // ── Rate limit: 60 deposits per user per rolling 60 minutes ───────────────
+  const rateLimit = await checkRateLimit(supabase, {
+    table:         "transactions",
+    userId:        user.id,
+    windowMinutes: 60,
+    maxRequests:   60,
+    actionLabel:   "deposits",
+  });
+
+  if (!rateLimit.allowed) {
+    log.warn("Deposit rate limited", {
+      user_id: user.id, request_id: requestId, count: rateLimit.count, limit: rateLimit.limit,
+    });
+    return NextResponse.json({ error: rateLimit.message }, { status: 429 });
   }
 
   // ── 1. VERIFY GOAL OWNERSHIP before touching any data ────────
@@ -40,6 +94,9 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (!goalOwnerCheck) {
+    log.warn("Deposit rejected — goal not found or not owned", {
+      user_id: user.id, request_id: requestId, goal_id,
+    });
     return NextResponse.json({ error: "Goal not found" }, { status: 404 });
   }
 
@@ -51,13 +108,19 @@ export async function POST(req: NextRequest) {
       user_id:          user.id,
       goal_id,
       amount,
-      note:             note ?? null,
+      note,
       transaction_type: "deposit",
     })
     .select()
     .single();
 
-  if (txError) return NextResponse.json({ error: txError.message }, { status: 500 });
+  if (txError) {
+    log.error("Deposit insert failed", {
+      user_id: user.id, request_id: requestId, goal_id, error: txError.message, error_code: txError.code,
+    });
+    captureError(txError, { route: "POST /api/transactions", user_id: user.id, request_id: requestId, goal_id });
+    return NextResponse.json({ error: txError.message }, { status: 500 });
+  }
 
   // ── 3. FETCH CONTEXT FOR XP + ACHIEVEMENT CHECKS ─────────────
   const today = getUTCDateString();
@@ -75,7 +138,12 @@ export async function POST(req: NextRequest) {
 
   const profile = profileRes.data;
   const goal    = goalRes.data;
-  if (!profile || !goal) return NextResponse.json({ error: "Data error" }, { status: 500 });
+  if (!profile || !goal) {
+    log.error("Deposit failed — profile or goal fetch returned null after insert", {
+      user_id: user.id, request_id: requestId, goal_id, transaction_id: tx.id,
+    });
+    return NextResponse.json({ error: "Data error" }, { status: 500 });
+  }
 
   const isGoalComplete = goal.is_complete;
   const earnedIds      = (achievementsRes.data ?? []).map((a: any) => a.achievement_id);
@@ -148,6 +216,12 @@ export async function POST(req: NextRequest) {
   }
 
   if (!xpResult.success) {
+    log.error("XP award failed", {
+      user_id: user.id, request_id: requestId, goal_id, transaction_id: tx.id, error: xpResult.error,
+    });
+    captureError(new Error(xpResult.error ?? "XP award failed"), {
+      route: "POST /api/transactions", user_id: user.id, request_id: requestId, goal_id, transaction_id: tx.id,
+    });
     return NextResponse.json({ error: xpResult.error ?? "XP award failed" }, { status: 500 });
   }
 
@@ -205,6 +279,11 @@ export async function POST(req: NextRequest) {
     app_opened:    true,
     deposit_delta: isDeposit ? 1 : 0,
     xp_delta:      xpResult.xpAwarded,
+  });
+
+  end({
+    user_id: user.id, request_id: requestId, goal_id, transaction_id: tx.id,
+    xp_awarded: xpResult.xpAwarded, is_goal_complete: isGoalComplete,
   });
 
   return NextResponse.json({

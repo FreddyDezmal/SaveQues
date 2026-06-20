@@ -83,6 +83,7 @@ export default function SettingsClient({ profile, email }: Props) {
               value={displayName}
               onChange={e => setDisplayName(e.target.value)}
               placeholder="Your name"
+              maxLength={60}
             />
           </div>
           <div>

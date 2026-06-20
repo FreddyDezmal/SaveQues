@@ -26,6 +26,25 @@ export async function POST(req: NextRequest) {
 
     const { subscription, timezone = "UTC" } = body;
 
+    // ── Timezone validation ─────────────────────────────────────────────────
+    // Intl.supportedValuesOf("timeZone") returns the full IANA timezone
+    // database supported by the runtime. Reject anything not in that list
+    // with a clear 400 rather than silently storing a malformed value.
+    //
+    // This is a FIRST layer of defence, not a replacement for the existing
+    // try/catch fallback to UTC in lib/notifications.ts (todayInTZ /
+    // currentHourInTZ) — that fallback stays in place unchanged as a second
+    // safeguard in case a value somehow gets into the table through another
+    // path (e.g. a future admin tool, or a different client version that
+    // predates this check).
+    if (typeof timezone !== "string" || !Intl.supportedValuesOf("timeZone").includes(timezone)) {
+      log.warn("Invalid timezone rejected", { user_id: user.id, timezone });
+      return NextResponse.json(
+        { error: `Invalid timezone: "${timezone}". Must be a valid IANA timezone identifier (e.g. "Africa/Johannesburg").` },
+        { status: 400 }
+      );
+    }
+
     if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
       log.warn("Invalid subscription object received", {
         user_id:      user.id,

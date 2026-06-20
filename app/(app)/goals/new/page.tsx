@@ -131,6 +131,7 @@ export default function NewGoalPage() {
               placeholder={`e.g. ${selectedCategory.examples}`}
               value={title}
               onChange={e => setTitle(e.target.value)}
+              maxLength={80}
             />
           </div>
 
