@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runDailyNotificationScheduler } from "@/lib/notifications";
+import { checkNotificationDeliveryRate } from "@/lib/businessMetrics";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
 
@@ -8,7 +9,18 @@ const log = createLogger("cron.notifications");
 /**
  * GET /api/cron/notifications
  *
- * Called every hour by the cron service.
+ * Called ONCE DAILY by Vercel Cron (see vercel.json: "0 8 * * *", 08:00 UTC).
+ *
+ * IMPORTANT — this docstring previously said "called every hour," which was
+ * stale and incorrect (confirmed during Sprint 11 Phase 1 investigation).
+ * The cron has always been once-daily; runDailyNotificationScheduler() in
+ * lib/notifications.ts was rewritten in migration 017 specifically to work
+ * correctly under a single daily invocation — it tracks
+ * last_notification_sent_date per user and guarantees at least one
+ * notification per user per day via an "overdue" fallback, rather than
+ * requiring an exact hourly match against the user's preferred hour. See
+ * lib/notifications.ts for the full mechanism.
+ *
  * Protected by CRON_SECRET.
  *
  * M5 Security fix:
@@ -19,6 +31,14 @@ const log = createLogger("cron.notifications");
  *   New logic: if CRON_SECRET is missing from env, the route returns 500
  *   and logs a configuration error. It never executes cron logic without
  *   a configured secret. Misconfigured environments fail closed.
+ *
+ * Sprint 11 — Phase 4 addition: business-outcome metrics. A successful
+ * HTTP 200 from this route does NOT mean notifications were actually
+ * delivered to a healthy fraction of eligible users — it only means the
+ * scheduler ran without throwing. See lib/businessMetrics.ts for the
+ * notification delivery rate check that catches the case this route's
+ * own error handling structurally cannot: a process that completes
+ * successfully but produces a bad business outcome.
  */
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
@@ -51,6 +71,22 @@ export async function GET(req: NextRequest) {
       notifications_skipped: (result as any).skipped ?? 0,
       errors:                (result as any).errors  ?? 0,
     });
+
+    // Sprint 11 — Phase 4: evaluate whether today's run actually reached a
+    // healthy fraction of eligible users. This is the check that would
+    // have caught both the original audit's (incorrect) concern and the
+    // real record_app_open() timezone bug found during Phase 1 — neither
+    // produces an exception, so neither would ever surface without a
+    // business-outcome check like this one. Failure to run this check
+    // must never fail the cron itself — it's wrapped separately.
+    try {
+      await checkNotificationDeliveryRate();
+    } catch (metricErr: any) {
+      log.warn("Notification delivery rate check failed (non-fatal)", {
+        run_id: runId, error: metricErr.message ?? String(metricErr),
+      });
+    }
+
     return NextResponse.json({ ok: true, run_id: runId, ...result });
   } catch (err: any) {
     const duration_ms = 0; // end() won't be called — log manually

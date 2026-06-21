@@ -34,11 +34,13 @@ import { getUTCDateString } from "@/lib/dateUtils";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
 import { checkAttemptRateLimit, recordAttempt } from "@/lib/rateLimit";
+import { withOutcomeTracking } from "@/lib/recordOutcome";
+import { deferAnalytics } from "@/lib/deferredAnalytics";
 
 const log = createLogger("quest.daily.complete");
 const RATE_LIMIT_ENDPOINT = "quest.daily.complete";
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const requestId = req.headers.get("x-request-id") ?? undefined;
   const supabase  = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -134,46 +136,49 @@ export async function POST(req: NextRequest) {
     earnedIds:            (earnedRes.data ?? []).map((a: any) => a.achievement_id),
   });
 
-  // ── Analytics ─────────────────────────────────────────────────
-  await trackServerEvent(AnalyticsEvents.DAILY_QUEST_COMPLETED, user.id, {
-    quest_id:  questId,
-    xp_gained: rpcResult.xp_awarded,
-  });
-
-  await trackServerEvent(AnalyticsEvents.XP_AWARDED, user.id, {
-    amount:      rpcResult.xp_awarded,
-    source_type: "daily_quest",
-  });
-
-  // Track level-up — complete_daily_quest() doesn't go through
-  // awardXP()/awardSavingXP(), so unlike the deposit route this compares
-  // the xp_total fetched before the RPC call to the new_total it returns.
-  const levelUp = detectLevelUp(profile.xp_total ?? 0, rpcResult.new_total);
-  if (levelUp) {
-    await trackServerEvent(AnalyticsEvents.LEVEL_UP, user.id, {
-      new_level:      levelUp.newLevel,
-      previous_level: levelUp.previousLevel,
-      new_title:      levelUp.newTitle,
-      source:         "daily_quest",
-    });
-  }
-
-  // First quest completed activation milestone
+  // ── Analytics (DEFERRED — Sprint 11 Phase 3) ────────────────────
+  // Same treatment as the deposit/withdrawal routes — all PostHog calls
+  // queued via waitUntil() so they cannot add latency to the quest
+  // completion response. recordDailyActivity below stays synchronous
+  // (Supabase RPC, not an external call — see lib/deferredAnalytics.ts).
+  const levelUpResult = detectLevelUp(profile.xp_total ?? 0, rpcResult.new_total);
   const prevDailyCount = profile.daily_quests_completed ?? 0;
   const prevWeeklyCount = profile.weekly_quests_completed ?? 0;
-  if (prevDailyCount === 0 && prevWeeklyCount === 0) {
-    await trackServerEvent(AnalyticsEvents.FIRST_QUEST_COMPLETED, user.id, {
-      quest_type: "daily",
-    });
-  }
+  const isFirstQuest = prevDailyCount === 0 && prevWeeklyCount === 0;
 
-  // Newly unlocked achievements
-  for (const achievement of newAchievements) {
-    await trackServerEvent(AnalyticsEvents.ACHIEVEMENT_UNLOCKED, user.id, {
-      achievement_id: achievement.id,
-      xp_reward:      achievement.xpReward,
+  deferAnalytics(async () => {
+    await trackServerEvent(AnalyticsEvents.DAILY_QUEST_COMPLETED, user.id, {
+      quest_id:  questId,
+      xp_gained: rpcResult.xp_awarded,
     });
-  }
+
+    await trackServerEvent(AnalyticsEvents.XP_AWARDED, user.id, {
+      amount:      rpcResult.xp_awarded,
+      source_type: "daily_quest",
+    });
+
+    if (levelUpResult) {
+      await trackServerEvent(AnalyticsEvents.LEVEL_UP, user.id, {
+        new_level:      levelUpResult.newLevel,
+        previous_level: levelUpResult.previousLevel,
+        new_title:      levelUpResult.newTitle,
+        source:         "daily_quest",
+      });
+    }
+
+    if (isFirstQuest) {
+      await trackServerEvent(AnalyticsEvents.FIRST_QUEST_COMPLETED, user.id, {
+        quest_type: "daily",
+      });
+    }
+
+    for (const achievement of newAchievements) {
+      await trackServerEvent(AnalyticsEvents.ACHIEVEMENT_UNLOCKED, user.id, {
+        achievement_id: achievement.id,
+        xp_reward:      achievement.xpReward,
+      });
+    }
+  }, "quest.daily.complete", { user_id: user.id, request_id: requestId, quest_id: questId });
 
   await recordDailyActivity(supabase, user.id, {
     app_opened:   true,
@@ -193,3 +198,5 @@ export async function POST(req: NextRequest) {
     alreadyAwarded:  false,
   });
 }
+
+export const POST = withOutcomeTracking("quest.daily.complete", handlePOST);

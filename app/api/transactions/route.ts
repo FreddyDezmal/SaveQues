@@ -39,6 +39,8 @@ import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { writeAuditLog } from "@/lib/auditLog";
+import { withOutcomeTracking } from "@/lib/recordOutcome";
+import { deferAnalytics } from "@/lib/deferredAnalytics";
 
 const log = createLogger("transactions.deposit");
 
@@ -51,7 +53,7 @@ const MAX_NOTE_LEN = 500;
 // human-typed value that would silently never collide with itself on retry.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const requestId = req.headers.get("x-request-id") ?? undefined;
   const supabase  = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -319,74 +321,83 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: xpResult.error ?? "XP award failed" }, { status: 500 });
   }
 
-  // ── 5. ANALYTICS ─────────────────────────────────────────────
+  // ── 5. ANALYTICS (DEFERRED — Sprint 11 Phase 3) ─────────────────
+  // All PostHog calls below are queued via waitUntil() (lib/deferredAnalytics.ts)
+  // to run AFTER the response is sent. Confirmed in Phase 1: each
+  // trackServerEvent call is a real external HTTP round-trip (PostHog
+  // client construct → flush → teardown, not a buffered local write), so
+  // up to 7 of these sequentially in the critical path was directly
+  // adding to the user-facing latency of a deposit, and coupling deposit
+  // reliability to PostHog's own uptime. None of this affects financial
+  // correctness — moved AFTER the financial write (transaction insert)
+  // and AFTER the XP award (atomic DB RPC) have both already succeeded.
+  //
+  // The audit log write (section 6) and recordDailyActivity (section 7)
+  // below remain SYNCHRONOUS and UNCHANGED — both are Supabase/PostgREST
+  // calls, not external HTTP calls, and audit_logs is the application's
+  // financial source of truth (see lib/deferredAnalytics.ts header for
+  // the full reasoning on why these are not the same category of cost).
   const isDeposit = Number(amount) > 0;
   const eventName = isDeposit ? AnalyticsEvents.DEPOSIT_MADE : AnalyticsEvents.WITHDRAWAL_MADE;
+  const isFirstDeposit = isDeposit && allTxs.filter((t: any) => Number(t.amount) > 0).length === 1;
+  const levelUpResult = !xpResult.alreadyAwarded ? detectLevelUp(xpBefore, xpResult.newTotal) : null;
+  const prevAchievementCount = earnedIds.length;
 
-  await trackServerEvent(eventName, user.id, {
-    amount:        Math.abs(Number(amount)),
-    goal_id:       goal_id,
-    goal_category: goal?.category ?? "unknown",
-  });
-
-  // Track first deposit activation milestone
-  if (isDeposit && allTxs.filter((t: any) => Number(t.amount) > 0).length === 1) {
-    await trackServerEvent(AnalyticsEvents.FIRST_DEPOSIT, user.id, {
+  deferAnalytics(async () => {
+    await trackServerEvent(eventName, user.id, {
+      amount:        Math.abs(Number(amount)),
+      goal_id:       goal_id,
       goal_category: goal?.category ?? "unknown",
     });
-  }
 
-  // Track XP awarded
-  if (!xpResult.alreadyAwarded && xpResult.xpAwarded > 0) {
-    await trackServerEvent(AnalyticsEvents.XP_AWARDED, user.id, {
-      amount:      xpResult.xpAwarded,
-      source_type: isGoalComplete ? "goal_complete" : "log_saving",
-    });
-  }
+    if (isFirstDeposit) {
+      await trackServerEvent(AnalyticsEvents.FIRST_DEPOSIT, user.id, {
+        goal_category: goal?.category ?? "unknown",
+      });
+    }
 
-  // Track level-up — compares XP total before this request to the
-  // authoritative newTotal returned by the award. Detects a crossed
-  // threshold purely arithmetically; no extra DB call needed.
-  if (!xpResult.alreadyAwarded) {
-    const levelUp = detectLevelUp(xpBefore, xpResult.newTotal);
-    if (levelUp) {
+    if (!xpResult.alreadyAwarded && xpResult.xpAwarded > 0) {
+      await trackServerEvent(AnalyticsEvents.XP_AWARDED, user.id, {
+        amount:      xpResult.xpAwarded,
+        source_type: isGoalComplete ? "goal_complete" : "log_saving",
+      });
+    }
+
+    if (levelUpResult) {
       await trackServerEvent(AnalyticsEvents.LEVEL_UP, user.id, {
-        new_level:      levelUp.newLevel,
-        previous_level: levelUp.previousLevel,
-        new_title:      levelUp.newTitle,
+        new_level:      levelUpResult.newLevel,
+        previous_level: levelUpResult.previousLevel,
+        new_title:      levelUpResult.newTitle,
         source:         isGoalComplete ? "goal_complete" : "log_saving",
       });
     }
-  }
 
-  // Track goal completed
-  if (isGoalComplete && !xpResult.alreadyAwarded) {
-    await trackServerEvent(AnalyticsEvents.GOAL_COMPLETED, user.id, {
-      goal_category:  goal?.category ?? "unknown",
-      target_amount:  goal?.target_amount ?? 0,
-    });
-  }
+    if (isGoalComplete && !xpResult.alreadyAwarded) {
+      await trackServerEvent(AnalyticsEvents.GOAL_COMPLETED, user.id, {
+        goal_category:  goal?.category ?? "unknown",
+        target_amount:  goal?.target_amount ?? 0,
+      });
+    }
 
-  // Track newly unlocked achievements
-  for (const achievement of xpResult.newAchievements) {
-    await trackServerEvent(AnalyticsEvents.ACHIEVEMENT_UNLOCKED, user.id, {
-      achievement_id: achievement.id,
-      xp_reward:      achievement.xpReward,
-    });
-  }
+    for (const achievement of xpResult.newAchievements) {
+      await trackServerEvent(AnalyticsEvents.ACHIEVEMENT_UNLOCKED, user.id, {
+        achievement_id: achievement.id,
+        xp_reward:      achievement.xpReward,
+      });
+    }
 
-  // Track first achievement activation milestone
-  const prevAchievementCount = earnedIds.length;
-  if (xpResult.newAchievements.length > 0 && prevAchievementCount === 0) {
-    await trackServerEvent(AnalyticsEvents.FIRST_ACHIEVEMENT, user.id, {
-      achievement_id: xpResult.newAchievements[0].id,
-    });
-  }
+    if (xpResult.newAchievements.length > 0 && prevAchievementCount === 0) {
+      await trackServerEvent(AnalyticsEvents.FIRST_ACHIEVEMENT, user.id, {
+        achievement_id: xpResult.newAchievements[0].id,
+      });
+    }
+  }, "transactions.deposit", { user_id: user.id, request_id: requestId, transaction_id: tx.id });
 
-  // ── 6. IMMUTABLE AUDIT LOG ─────────────────────────────────────
-  // Fire-and-forget — never blocks or fails the response. Independent of
-  // the PostHog event above: this is the permanent financial record, not
-  // a product-analytics signal (see lib/auditLog.ts header for the split).
+  // ── 6. IMMUTABLE AUDIT LOG (SYNCHRONOUS — unchanged from prior sprint) ──
+  // Stays in the critical path. This is the permanent financial record,
+  // not a product-analytics signal (see lib/auditLog.ts header) and is
+  // explicitly NOT deferred — see lib/deferredAnalytics.ts header for why
+  // this is the correct, deliberate distinction Phase 1 made.
   await writeAuditLog({
     userId:     user.id,
     eventType:  "DEPOSIT_CREATED",
@@ -401,7 +412,7 @@ export async function POST(req: NextRequest) {
     requestId,
   });
 
-  // ── 7. RETENTION RECORDING ────────────────────────────────────
+  // ── 7. RETENTION RECORDING (SYNCHRONOUS — unchanged) ─────────────
   await recordDailyActivity(supabase, user.id, {
     app_opened:    true,
     deposit_delta: isDeposit ? 1 : 0,
@@ -422,3 +433,9 @@ export async function POST(req: NextRequest) {
     isGoalComplete,
   });
 }
+
+// Sprint 11 — Phase 4: wraps the handler above so every outcome (success
+// or failure, across all 12 return points in this file) is recorded to
+// request_outcomes exactly once, without touching the handler's existing
+// control flow or adding latency to the response. See lib/recordOutcome.ts.
+export const POST = withOutcomeTracking("transactions.deposit", handlePOST);

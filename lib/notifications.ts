@@ -13,8 +13,12 @@ import { getDaysRemainingInWeek } from "./weeklyQuests";
 /**
  * Returns the calendar date (YYYY-MM-DD) in the given timezone, optionally
  * offset by `dayOffset` days (e.g. -1 for "yesterday in this timezone").
+ *
+ * Exported (Sprint 11 Phase 5) so it can be unit tested directly and
+ * reused by shouldNotifyUserNow() below, without duplicating the
+ * Intl.DateTimeFormat fallback logic.
  */
-function todayInTZ(tz: string, dayOffset = 0): string {
+export function todayInTZ(tz: string, dayOffset = 0): string {
   try {
     const d = new Date();
     if (dayOffset !== 0) d.setUTCDate(d.getUTCDate() + dayOffset);
@@ -26,7 +30,8 @@ function todayInTZ(tz: string, dayOffset = 0): string {
   }
 }
 
-function currentHourInTZ(tz: string): number {
+/** Exported (Sprint 11 Phase 5) for the same reason as todayInTZ() above. */
+export function currentHourInTZ(tz: string): number {
   try {
     return parseInt(
       new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false }).format(new Date()),
@@ -35,6 +40,51 @@ function currentHourInTZ(tz: string): number {
   } catch {
     return new Date().getUTCHours();
   }
+}
+
+/**
+ * shouldNotifyUserNow() — Sprint 11 Phase 5: extracted from inline logic
+ * inside runDailyNotificationScheduler() so it can be unit tested directly.
+ * This is the EXACT gating decision migration 017 introduced to make
+ * once-daily cron invocation correct (see that migration's comments, and
+ * Sprint 11 Phase 1's investigation, which verified this logic against
+ * the original Scaling Audit's claim that it was broken — it is not; this
+ * extraction changes nothing about its behavior, only its testability).
+ *
+ * Pure function: no DB access, no side effects, deterministic given its
+ * inputs. The scheduler computes localHour/today from the live clock via
+ * currentHourInTZ()/todayInTZ() and passes them in; tests can pass fixed
+ * values to exercise specific scenarios without mocking the system clock.
+ *
+ * @param today                      Today's date in the user's local timezone (YYYY-MM-DD).
+ * @param localHour                  Current hour (0-23) in the user's local timezone.
+ * @param notificationHour           User's preferred notification hour (0-23).
+ * @param lastNotificationSentDate   Date this user was last notified (their local date), or null/undefined if never.
+ * @param yesterdayInTZ              Yesterday's date in the user's local timezone (YYYY-MM-DD) — passed in rather than recomputed so callers control exactly which "yesterday" definition is used (matches todayInTZ(timezone, -1) in the scheduler).
+ * @returns true if this user should be notified on this run.
+ */
+export function shouldNotifyUserNow(params: {
+  today: string;
+  localHour: number;
+  notificationHour: number;
+  lastNotificationSentDate: string | null | undefined;
+  yesterdayInTZ: string;
+}): boolean {
+  const { today, localHour, notificationHour, lastNotificationSentDate, yesterdayInTZ } = params;
+
+  // Already notified today (their local date) — never double-send within
+  // the same local day, even if the cron is somehow triggered twice.
+  if (lastNotificationSentDate === today) return false;
+
+  // Overdue: never notified, or last notified before yesterday (their
+  // local date) — guarantees at least one notification per day even if
+  // the single daily cron always lands before this user's preferred hour.
+  const isOverdue = !lastNotificationSentDate || lastNotificationSentDate < yesterdayInTZ;
+
+  // Not yet at their preferred hour, and not overdue — wait for a later run.
+  if (localHour < notificationHour && !isOverdue) return false;
+
+  return true;
 }
 
 /**
@@ -265,27 +315,20 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
     const today     = todayInTZ(timezone);
 
     // ── Daily-cron gating (Vercel Hobby: cron runs at most once/day) ──
-    // Previously this was `localHour !== notificationHour => skip`, which
-    // assumed an hourly cron. With a single daily invocation at a fixed
-    // UTC time, that condition could be permanently false for a user
-    // depending on their timezone, so they'd never be notified — on any
-    // day. Instead:
-    //   1. Skip if we've already sent a notification today (their local
-    //      date) — guards against double-sends if the cron is ever
-    //      triggered more than once in a day.
-    //   2. Skip if their local time hasn't reached their preferred hour
-    //      yet, UNLESS it's been a full day (or more) since their last
-    //      notification — guarantees at least one notification per day
-    //      for every user, even if the single daily cron always lands
-    //      before their preferred hour in their timezone (e.g. cron at
-    //      08:00 UTC = 03:00 in US Pacific, but their preferred hour is
-    //      20:00). Without this fallback such users would be skipped
-    //      forever, every day, with last_notification_sent_date never
-    //      progressing.
-    if (lastNotificationSentDate === today) continue;
-
-    const isOverdue = !lastNotificationSentDate || lastNotificationSentDate < todayInTZ(timezone, -1);
-    if (localHour < notificationHour && !isOverdue) continue;
+    // Sprint 11 Phase 5: this is now a call to the extracted pure function
+    // shouldNotifyUserNow() (see above), unit tested directly. Behavior
+    // is unchanged from the inline version migration 017 introduced —
+    // see that function's docstring for the full "why" (Vercel Hobby
+    // once-daily cron + per-user timezone + overdue fallback).
+    if (!shouldNotifyUserNow({
+      today,
+      localHour,
+      notificationHour,
+      lastNotificationSentDate,
+      yesterdayInTZ: todayInTZ(timezone, -1),
+    })) {
+      continue;
+    }
 
     processed++;
     // Mark immediately (covers the early `continue` below for inactive

@@ -277,6 +277,7 @@ export default function DashboardClient({
           )}
         </div>
       )}
+      
 
       {/* ── "Almost" messages (building/established) ── */}
       {showAlmost && (
@@ -330,6 +331,7 @@ export default function DashboardClient({
       {showEvents && (
         <UpcomingEventsBanner events={dashboardEvents} />
       )}
+
 
       {/* ── Quest chain nudge (building/established) ── */}
       {showChainNudge && (

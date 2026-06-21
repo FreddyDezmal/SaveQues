@@ -36,6 +36,8 @@ import { captureError, captureWarning, setSentryUser } from "@/lib/monitoring";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { writeAuditLog } from "@/lib/auditLog";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
+import { withOutcomeTracking } from "@/lib/recordOutcome";
+import { deferAnalytics } from "@/lib/deferredAnalytics";
 
 const log = createLogger("transactions.withdrawal");
 
@@ -43,7 +45,7 @@ const MAX_AMOUNT   = 10_000_000;
 const MAX_NOTE_LEN = 500;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
   const requestId = req.headers.get("x-request-id") ?? undefined;
   const supabase  = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -232,15 +234,19 @@ export async function POST(req: NextRequest) {
     requestId,
   });
 
-  // ── 6. ANALYTICS ─────────────────────────────────────────────
+  // ── 6. ANALYTICS (DEFERRED — Sprint 11 Phase 3) ─────────────────
   // Note: deposits' DEPOSIT_MADE event fires in /api/transactions for the
   // deposit path; withdrawals fire their own WITHDRAWAL_MADE event here
-  // since this route handles them exclusively.
-  await trackServerEvent(AnalyticsEvents.WITHDRAWAL_MADE, user.id, {
-    amount,
-    goal_id,
-    transaction_type,
-  });
+  // since this route handles them exclusively. Queued via waitUntil() so
+  // this PostHog call cannot add latency to the withdrawal response —
+  // same treatment as the deposit route, see lib/deferredAnalytics.ts.
+  deferAnalytics(async () => {
+    await trackServerEvent(AnalyticsEvents.WITHDRAWAL_MADE, user.id, {
+      amount,
+      goal_id,
+      transaction_type,
+    });
+  }, "transactions.withdrawal", { user_id: user.id, request_id: requestId, transaction_id: tx.id });
 
   end({ user_id: user.id, request_id: requestId, goal_id, transaction_id: tx.id });
 
@@ -250,3 +256,5 @@ export async function POST(req: NextRequest) {
     goal,
   });
 }
+
+export const POST = withOutcomeTracking("transactions.withdrawal", handlePOST);
