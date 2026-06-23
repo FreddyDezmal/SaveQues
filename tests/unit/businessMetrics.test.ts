@@ -106,12 +106,15 @@ describe("checkNotificationDeliveryRate", () => {
   });
 
   it("treats a delivery rate exactly AT the threshold as healthy (not below it)", async () => {
+    // Sprint 12 audit raised threshold from 50% to 70%.
+    // This test verifies the boundary: exactly 70% should NOT alert
+    // (strictly LESS than threshold alerts, not <=).
     mockPushSubscriptionsCount = 10;
-    mockNotificationLogs = Array(5).fill({ error: null }); // exactly 50%
+    mockNotificationLogs = Array(7).fill({ error: null }); // exactly 70%
 
     const result = await checkNotificationDeliveryRate();
 
-    expect(result.deliveryRate).toBeCloseTo(0.5);
+    expect(result.deliveryRate).toBeCloseTo(0.7);
     expect(result.alerted).toBe(false); // strictly LESS than threshold alerts, not <=
   });
 

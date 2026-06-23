@@ -9,6 +9,13 @@ import { getEventsForUser }    from "@/lib/events";
 import { fetchTimelineEvents } from "@/lib/timeline";
 import { getUTCDateString }    from "@/lib/dateUtils";
 import { checkAndAwardAchievements } from "@/lib/awardXP";
+import { createLogger }        from "@/lib/logger";
+
+// Sprint 12 audit fix: measure server-side render time so the dashboard
+// P95 SLO (#5 in SLO_DEFINITIONS.md) is measurable from structured logs.
+// Filter Vercel logs by service=dashboard and field duration_ms to track
+// P95 over time. Searchable by user_id for per-user debugging.
+const log = createLogger("dashboard");
 
 // User experience stage — drives progressive dashboard disclosure
 // new: 0–6 days  |  building: 7–29 days  |  established: 30+ days
@@ -38,6 +45,7 @@ interface StreakUpdateResult {
 }
 
 export default async function DashboardPage() {
+  const pageStart = Date.now();
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/auth/login");
@@ -179,6 +187,15 @@ export default async function DashboardPage() {
     profile.streak_days === 1 &&
     (profile.longest_streak ?? 0) > 3 &&
     profile.last_active_date === getUTCDateString();
+
+  // Sprint 12 audit: structured timing log for P95 SLO measurement.
+  // Query Vercel logs: service=dashboard, field=duration_ms.
+  log.info("dashboard rendered", {
+    user_id:     user.id,
+    duration_ms: Date.now() - pageStart,
+    is_new_day:  profile.last_active_date !== getUTCDateString(),
+    goal_count:  activeGoals.length,
+  });
 
   return (
     <DashboardClient

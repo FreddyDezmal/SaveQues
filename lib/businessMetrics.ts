@@ -70,8 +70,19 @@ const log = createLogger("business-metrics");
 const THRESHOLDS = {
   /** Below this fraction of eligible users notified, something is wrong
    *  with the scheduler itself (not just normal day-to-day variance in
-   *  who happens to be "due" for a notification). */
-  NOTIFICATION_DELIVERY_RATE_MIN: 0.5,
+   *  who happens to be "due" for a notification).
+   *
+   *  Sprint 12 independent audit: raised from 0.5 to 0.7.
+   *  Rationale: the stated SLO target is 80% delivery, but the original
+   *  alert threshold was 50% — a 30-point gap meaning a run delivering
+   *  to only 60% of users would breach the SLO while producing no alert.
+   *  The production cron run confirmed in Sprint 11 showed delivery rate
+   *  well above 80% (6/6 sent, 100% of eligible users), so raising the
+   *  threshold to 70% immediately is safe and brings the alert closer
+   *  to the SLO target without risk of false positives on the current
+   *  baseline. Tighten further to 80% once 30 days of baseline data
+   *  accumulates to confirm what "normal stale-subscription rate" is. */
+  NOTIFICATION_DELIVERY_RATE_MIN: 0.7,
   /** Below this success rate on financial writes, investigate immediately —
    *  this is deliberately much stricter than the notification threshold,
    *  because a failed deposit has direct user/financial impact while a

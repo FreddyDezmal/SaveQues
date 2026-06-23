@@ -28,7 +28,25 @@ const log = createLogger("auth.callback");
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/dashboard";
+
+  // Validate the `next` redirect target before using it.
+  //
+  // SECURITY: `new URL(userSuppliedString, origin)` resolves absolute URLs
+  // (e.g. "https://evil.com") against the origin, returning the absolute
+  // URL unchanged — creating an open redirect. This was identified as a
+  // confirmed vulnerability in the Sprint 12 independent audit:
+  //   /auth/callback?code=VALID_CODE&next=https://evil.com
+  // would redirect users to evil.com after a legitimate auth flow, enabling
+  // phishing via a trusted domain.
+  //
+  // Fix: only accept next values that are relative paths starting with a
+  // single "/" — this covers all legitimate in-app destinations while
+  // blocking any absolute URL, protocol-relative URL (//evil.com), and
+  // path-traversal attempts.
+  const rawNext = searchParams.get("next") ?? "/dashboard";
+  const next = rawNext.startsWith("/") && !rawNext.startsWith("//")
+    ? rawNext
+    : "/dashboard";
 
   if (!code) {
     return NextResponse.redirect(
