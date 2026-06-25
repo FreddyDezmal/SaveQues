@@ -33,22 +33,7 @@ const nextConfig = {
     {
       source: "/(.*)",
       headers: [
-        {
-          key: "Content-Security-Policy",
-          value: [
-            "default-src 'self'",
-            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://app.posthog.com https://us.i.posthog.com https://us-assets.i.posthog.com https://sentry.io https://*.sentry.io",
-            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-            "font-src 'self' https://fonts.gstatic.com",
-            "img-src 'self' data: blob:",
-            "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://app.posthog.com https://sentry.io https://*.sentry.io",
-            "frame-src 'none'",
-            "object-src 'none'",
-            "base-uri 'self'",
-            "form-action 'self'",
-            "worker-src 'self' blob:",
-          ].join("; "),
-        },
+        
         { key: "X-Frame-Options",       value: "DENY" },
         { key: "X-Content-Type-Options", value: "nosniff" },
         { key: "Referrer-Policy",        value: "strict-origin-when-cross-origin" },
