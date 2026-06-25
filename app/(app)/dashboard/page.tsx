@@ -70,7 +70,7 @@ export default async function DashboardPage() {
     });
     // Fall back to login if profile is missing; otherwise let Next.js
     // surface the error through its normal error boundary.
-    redirect("/auth/login");
+    throw new Error(dashError?.message ?? "Failed to load dashboard data");
   }
 
   const dash = dashRaw as {
