@@ -47,6 +47,8 @@ function getEventConfig(event: TimelineEvent, fc: (n: number) => string): EventC
       const icons: Record<25 | 50 | 75, string> = { 25: "🌱", 50: "⚡", 75: "🔥" };
       return { icon: icons[meta.milestone], label: meta.goalTitle, iconBg: "bg-emerald-500/10", iconBorder: "border-emerald-500/20", accent: `${meta.milestone}%` };
     }
+    default:
+      return { icon: "📋", label: "Activity", iconBg: "bg-white/5", iconBorder: "border-white/10" };
   }
 }
 

@@ -168,11 +168,14 @@ BEGIN
       'note',             t.note,
       'created_at',       t.created_at,
       'goal_id',          t.goal_id,
-      'transaction_type', t.transaction_type
+      'transaction_type', t.transaction_type,
+      'title',            g.title,
+      'category',         g.category
     )
     ORDER BY t.created_at DESC
   ) INTO v_all_transactions
   FROM public.transactions t
+  LEFT JOIN public.savings_goals g ON g.id = t.goal_id
   WHERE t.user_id = p_user_id;
 
   -- ── 11. Completed challenges for timeline ─────────────────────────────────
@@ -211,9 +214,16 @@ BEGIN
                      END,
         'timestamp', t->>'created_at',
         'meta',      jsonb_build_object(
-                       'amount', (t->>'amount')::NUMERIC,
-                       'goalId', t->>'goal_id',
-                       'note',   t->>'note'
+                       'type',         CASE
+                                         WHEN t->>'transaction_type' = 'withdrawal' THEN 'withdrawal'
+                                         WHEN t->>'transaction_type' = 'goal_purchase' THEN 'goal_purchase'
+                                         ELSE 'deposit'
+                                       END,
+                       'amount',       (t->>'amount')::NUMERIC,
+                       'goalId',       t->>'goal_id',
+                       'goalTitle',    t->>'title',
+                       'goalCategory', t->>'category',
+                       'note',         t->>'note'
                      )
       ) AS evt
       FROM jsonb_array_elements(COALESCE(v_all_transactions, '[]'::JSONB)) AS t
