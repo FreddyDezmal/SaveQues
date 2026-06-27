@@ -30,14 +30,14 @@ DECLARE
   v_completed_challenges JSONB;
   v_timeline_events      JSONB;
   v_streak_update        JSONB;
-  v_today                TEXT;
+  v_today                DATE;
 BEGIN
   -- C1 ownership guard
   IF p_user_id <> auth.uid() THEN
     RAISE EXCEPTION 'forbidden' USING ERRCODE = 'insufficient_privilege';
   END IF;
 
-  v_today := CURRENT_DATE::TEXT;
+  v_today := CURRENT_DATE;
 
   -- ── 1. Profile (with row lock for streak update) ──────────────────────────
   SELECT * INTO v_profile
@@ -54,7 +54,7 @@ BEGIN
   -- RPC to preserve its shield/milestone logic rather than duplicating it.
   IF v_profile.last_active_date IS DISTINCT FROM v_today
     AND (v_profile.streak_paused_until IS NULL
-         OR v_profile.streak_paused_until::TEXT <= v_today)
+         OR v_profile.streak_paused_until::DATE <= v_today)
   THEN
     SELECT public.update_streak(p_user_id) INTO v_streak_update;
     -- Re-read profile to get post-streak values
@@ -72,8 +72,7 @@ BEGIN
       'current_amount', g.current_amount,
       'is_complete',    g.is_complete,
       'target_date',    g.target_date,
-      'created_at',     g.created_at,
-      'saving_for',     g.saving_for
+      'created_at',     g.created_at
     )
     ORDER BY g.created_at DESC
   ) INTO v_goals

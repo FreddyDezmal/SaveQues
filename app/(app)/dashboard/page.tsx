@@ -68,8 +68,8 @@ export default async function DashboardPage() {
       error:      dashError?.message ?? "null response",
       error_code: dashError?.code,
     });
-    // Fall back to login if profile is missing; otherwise let Next.js
-    // surface the error through its normal error boundary.
+    // Throw rather than redirect — redirecting authenticated users to /auth/login
+    // creates a redirect loop (middleware sends them straight back to /dashboard).
     throw new Error(dashError?.message ?? "Failed to load dashboard data");
   }
 
