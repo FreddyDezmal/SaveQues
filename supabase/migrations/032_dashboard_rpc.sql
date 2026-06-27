@@ -113,7 +113,7 @@ BEGIN
   -- ── 6. Activity log (30-day heatmap) ──────────────────────────────────────
   SELECT jsonb_agg(
     jsonb_build_object(
-      'activity_date', al.activity_date,
+      'date',          al.activity_date,
       'xp_earned',     al.xp_earned,
       'actions_count', al.actions_count
     )

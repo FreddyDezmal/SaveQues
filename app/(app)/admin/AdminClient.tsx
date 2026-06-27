@@ -1537,8 +1537,15 @@ export default function AdminClient({
 
         // Activation funnel
         const usersWithGoals    = new Set(goals.map(g => g.user_id)).size;
-        const usersWithDeposits = new Set(deposits.map(t => t.user_id)).size;
-        const usersWithAchieves = new Set(userAchievements.map(a => a.user_id)).size;
+        const depositUserIds    = new Set(deposits.map(t => t.user_id));
+        const usersWithDeposits = depositUserIds.size;
+        // "Deposit → First Achievement" must be users who have BOTH a deposit
+        // AND an achievement — not all users with achievements. Without this
+        // intersection, users who earned achievements via quests alone (no deposit)
+        // inflate the numerator against the smaller deposit denominator.
+        const usersWithAchieves = new Set(
+          userAchievements.filter(a => depositUserIds.has(a.user_id)).map(a => a.user_id)
+        ).size;
         const signupToGoalPct   = totalUsers > 0 ? ((usersWithGoals    / totalUsers)    * 100).toFixed(1) : "0";
         const goalToDepositPct  = usersWithGoals > 0 ? ((usersWithDeposits / usersWithGoals) * 100).toFixed(1) : "0";
         const depositToAchPct   = usersWithDeposits > 0 ? ((usersWithAchieves / usersWithDeposits) * 100).toFixed(1) : "0";
