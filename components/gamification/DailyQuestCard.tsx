@@ -41,7 +41,7 @@ export default function DailyQuestCard({ userId, streakDays, completedToday: ini
   if (!quest) return null; // renders nothing server-side, populated after mount
 
   async function completeQuest() {
-    if (completed || loading) return;
+    if (completed || loading || !quest) return;
     setLoading(true);
 
     const res  = await fetch("/api/quest/daily/complete", {
