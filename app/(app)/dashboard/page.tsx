@@ -121,9 +121,22 @@ export default async function DashboardPage() {
     ? getEventsForUser(profile.country_code ?? "ZA").slice(0, 3)
     : [];
 
-  // Timeline preview is now returned directly by the RPC (no extra round-trip)
+  // Timeline preview is now returned directly by the RPC (no extra round-trip).
+  // The RPC returns a flat TimelineEvent[], but DashboardClient expects
+  // TimelineEventGroup[] (events grouped by date). Group them here.
   const timelinePreview = userStage !== "new"
-    ? (dash.timeline_preview ?? [])
+    ? (() => {
+        const flatEvents: any[] = dash.timeline_preview ?? [];
+        const grouped: Record<string, any[]> = {};
+        for (const event of flatEvents) {
+          const date = (event.timestamp as string).slice(0, 10); // "YYYY-MM-DD"
+          if (!grouped[date]) grouped[date] = [];
+          grouped[date].push(event);
+        }
+        return Object.entries(grouped)
+          .sort(([a], [b]) => b.localeCompare(a)) // newest date first
+          .map(([date, events]) => ({ date, events }));
+      })()
     : [];
 
   const streakBroken =
