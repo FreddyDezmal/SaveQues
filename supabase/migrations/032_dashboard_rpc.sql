@@ -85,7 +85,6 @@ BEGIN
       'id',           uc.id,
       'challenge_id', uc.challenge_id,
       'status',       uc.status,
-      'progress',     uc.progress,
       'completed_at', uc.completed_at,
       'challenge',    jsonb_build_object(
         'id',          c.id,

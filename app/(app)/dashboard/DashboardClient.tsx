@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatCurrency } from "@/lib/utils";
@@ -65,8 +65,10 @@ export default function DashboardClient({
   const [pauseLoading, setPauseLoading] = useState(false);
   const [pauseConfirm, setPauseConfirm] = useState(false);
   const [selectedBadge, setSelectedBadge] = useState<BadgeDetailData | null>(null);
-
-  const greeting = getGreeting();
+  // getGreeting() reads the local clock — must be client-only to avoid
+  // server/client hydration mismatch (server runs UTC, client runs local tz).
+  const [greeting, setGreeting] = useState<string>("");
+  useEffect(() => { setGreeting(getGreeting()); }, []);
   const streakMsg = getStreakMessage(profile.streak_days, streakPaused);
   const multiplierLabel = getStreakMultiplierLabel(profile.streak_days);
   const tierColor = TIER_COLORS[levelInfo.tier as keyof typeof TIER_COLORS];
@@ -120,7 +122,7 @@ export default function DashboardClient({
       {/* ── Header ─────────────────────────────── */}
       <div className="flex items-center justify-between mb-5">
         <div>
-          <p className="text-white/40 text-sm">{greeting}</p>
+          <p className="text-white/40 text-sm" suppressHydrationWarning>{greeting}</p>
           <h1 className="font-display text-2xl font-bold text-white mt-0.5">
             {profile.display_name} <span>{profile.avatar_emoji}</span>
           </h1>
