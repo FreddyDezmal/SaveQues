@@ -98,7 +98,7 @@ export default function TimelineEventRow({ event, currencyCode = "ZAR", locale =
         {config.accent && (
           <p className={`text-sm font-semibold font-display ${accentClass(event.type)}`}>{config.accent}</p>
         )}
-        <p className="text-[10px] text-white/25 mt-0.5">{time}</p>
+        <p className="text-[10px] text-white/25 mt-0.5" suppressHydrationWarning>{time}</p>
       </div>
     </div>
   );

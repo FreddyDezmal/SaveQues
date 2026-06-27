@@ -1,7 +1,9 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
+import { getEventWindow } from "@/lib/events";
 import EventCountdownBadge from "./EventCountdownBadge";
 import { ChevronRight } from "lucide-react";
 
@@ -10,10 +12,22 @@ interface Props {
 }
 
 export default function UpcomingEventsBanner({ events }: Props) {
-  if (events.length === 0) return null;
+  // Recompute event windows client-side to avoid SSR/client hydration mismatch.
+  // The server passes pre-computed windows (based on server UTC time), but
+  // countdownLabel and urgency are time-sensitive and must reflect the
+  // client's local clock to avoid React hydration errors (#418/#425).
+  const [clientEvents, setClientEvents] = useState(events);
 
-  // Show max 3, active first then upcoming
-  const visible = events.slice(0, 3);
+  useEffect(() => {
+    const now = new Date();
+    setClientEvents(
+      events.map(e => ({ ...e, window: getEventWindow(e, now) }))
+    );
+  }, [events]);
+
+  if (clientEvents.length === 0) return null;
+
+  const visible     = clientEvents.slice(0, 3);
   const hasActive   = visible.some(e => e.window.status === "active");
   const hasUpcoming = visible.some(e => e.window.status === "upcoming");
 

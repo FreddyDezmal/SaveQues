@@ -8,7 +8,7 @@
  * to QuestsClient. No direct Supabase profile writes.
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getTodaysDailyQuest } from "@/lib/quests";
 import { getXPForAction } from "@/lib/xp";
@@ -28,8 +28,17 @@ export default function DailyQuestCard({ userId, streakDays, completedToday: ini
   const [loading, setLoading]         = useState(false);
   const [celebration, setCelebration] = useState({ show: false, xp: 0 });
 
-  const quest     = getTodaysDailyQuest();
-  const xpReward  = getXPForAction("DAILY_QUEST_COMPLETE", streakDays);
+  // getTodaysDailyQuest uses Date.now() — must be client-only to avoid
+  // hydration mismatch when server and client are in different UTC days.
+  const [quest, setQuest]       = useState<ReturnType<typeof getTodaysDailyQuest> | null>(null);
+  const [xpReward, setXpReward] = useState(0);
+  useEffect(() => {
+    const q = getTodaysDailyQuest();
+    setQuest(q);
+    setXpReward(getXPForAction("DAILY_QUEST_COMPLETE", streakDays));
+  }, [streakDays]);
+
+  if (!quest) return null; // renders nothing server-side, populated after mount
 
   async function completeQuest() {
     if (completed || loading) return;
