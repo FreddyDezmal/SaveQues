@@ -3,21 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-/**
- * /auth/setting-up
- *
- * Shown when the dashboard RPC returns "profile not found" — which happens
- * for brand-new users when the auth callback redirect and the dashboard page
- * load race against the handle_new_user trigger completing.
- *
- * Retries /dashboard every 1.5 seconds (up to 8 attempts = 12 seconds).
- * In practice the profile is always ready within 1–2 retries.
- */
-const MAX_ATTEMPTS = 8;
-const RETRY_MS     = 1500;
+const MAX_ATTEMPTS = 10;
+const RETRY_MS     = 1200;
 
 export default function SettingUpPage() {
-  const router   = useRouter();
+  const router = useRouter();
   const [attempt, setAttempt] = useState(0);
   const [failed,  setFailed]  = useState(false);
 
@@ -28,11 +18,10 @@ export default function SettingUpPage() {
     }
 
     const timer = setTimeout(async () => {
-      // Ping the dashboard — if it returns 200 the profile is ready
       try {
-        const res = await fetch("/dashboard", { method: "HEAD", redirect: "manual" });
-        // A redirect (3xx) or 200 means Next.js rendered it without throwing
-        if (res.ok || res.type === "opaqueredirect" || res.status < 400) {
+        const res  = await fetch("/api/auth/profile-ready");
+        const json = await res.json();
+        if (json.ready) {
           router.replace("/dashboard");
           return;
         }
@@ -55,7 +44,7 @@ export default function SettingUpPage() {
             Your account was created but we're having trouble loading your dashboard.
           </p>
           <button
-            onClick={() => router.replace("/dashboard")}
+            onClick={() => { setFailed(false); setAttempt(0); }}
             className="btn-primary w-full"
           >
             Try again
@@ -75,7 +64,6 @@ export default function SettingUpPage() {
         <p className="text-white/50 text-sm">
           Just a moment while we prepare your dashboard.
         </p>
-        {/* Progress dots */}
         <div className="flex justify-center gap-1.5 mt-6">
           {Array.from({ length: MAX_ATTEMPTS }).map((_, i) => (
             <div
