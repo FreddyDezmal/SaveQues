@@ -40,6 +40,8 @@ export default function SignupPage() {
     setError("");
     const supabase = createClient();
 
+    console.log("[signup] attempting signUp for:", email);
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -49,11 +51,23 @@ export default function SignupPage() {
       },
     });
 
+    console.log("[signup] result:", { data, error });
+
     if (error) {
+      console.error("[signup] error:", error.message, error);
       setError(error.message);
       setLoading(false);
       return;
     }
+
+    if (!data.user) {
+      console.error("[signup] no user returned, data:", data);
+      setError("Signup failed — please try again.");
+      setLoading(false);
+      return;
+    }
+
+    console.log("[signup] success, user:", data.user.id, "session:", !!data.session);
 
     // Track successful signup and identify the new user
     if (data.user) {
