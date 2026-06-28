@@ -81,6 +81,17 @@ export async function middleware(request: NextRequest) {
     return redirect;
   }
 
+  // If the user has a session but hasn't confirmed their email yet, send them
+  // to the verify-email page rather than letting them reach protected routes.
+  // Without this, unconfirmed users can reach /dashboard, the RPC fails
+  // (profile may be incomplete), and Next.js throws a Server Component error.
+  const isVerifyPage = pathname === "/auth/verify-email";
+  if (user && !user.email_confirmed_at && !isPublicPage && !isVerifyPage) {
+    const redirect = NextResponse.redirect(new URL("/auth/verify-email", request.url));
+    redirect.headers.set("x-request-id", requestId);
+    return redirect;
+  }
+
   if (user && isAuthPage) {
     const redirect = NextResponse.redirect(new URL("/dashboard", request.url));
     redirect.headers.set("x-request-id", requestId);

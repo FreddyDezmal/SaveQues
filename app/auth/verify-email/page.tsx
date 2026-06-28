@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
@@ -31,7 +31,8 @@ function saveResendLog(log: number[]) {
 
 export default function VerifyEmailPage() {
   const router = useRouter();
-  const [email, setEmail]             = useState("");
+  const searchParams = useSearchParams();
+  const [email, setEmail]             = useState(searchParams.get("email") ?? "");
   const [resending, setResending]     = useState(false);
   const [resendError, setResendError] = useState("");
   const [lastSentAt, setLastSentAt]   = useState<number | null>(null);
@@ -46,6 +47,8 @@ export default function VerifyEmailPage() {
 
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user?.email_confirmed_at) { router.push("/dashboard"); return; }
+      // Prefer the live session email; fall back to ?email= query param (set
+      // by the signup page when redirecting after signUp() returns no session)
       if (user?.email) setEmail(user.email);
     });
 

@@ -76,7 +76,7 @@ export default function SignupPage() {
       router.push("/dashboard");
       router.refresh();
     } else {
-      router.push("/auth/verify-email");
+      router.push(`/auth/verify-email?email=${encodeURIComponent(email)}`);
     }
   }
 
