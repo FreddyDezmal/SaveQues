@@ -68,9 +68,15 @@ export default async function DashboardPage() {
       error:      dashError?.message ?? "null response",
       error_code: dashError?.code,
     });
-    // Throw rather than redirect — redirecting authenticated users to /auth/login
-    // creates a redirect loop (middleware sends them straight back to /dashboard).
-    throw new Error(dashError?.message ?? "Failed to load dashboard data");
+    // For new users the profile row may not be ready yet (the handle_new_user
+    // trigger and the dashboard load can race). Redirect to a loading page
+    // that retries rather than throwing a Server Component error.
+    if (dashError?.message?.includes("profile not found") || dashError?.code === "no_data_found") {
+      redirect("/auth/setting-up");
+    }
+    // For all other RPC failures redirect to an error page — throwing here
+    // produces an unrecoverable Server Component crash in production.
+    redirect("/error?reason=dashboard_load_failed");
   }
 
   const dash = dashRaw as {

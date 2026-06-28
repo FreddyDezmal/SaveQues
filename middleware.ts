@@ -85,8 +85,9 @@ export async function middleware(request: NextRequest) {
   // to the verify-email page rather than letting them reach protected routes.
   // Without this, unconfirmed users can reach /dashboard, the RPC fails
   // (profile may be incomplete), and Next.js throws a Server Component error.
-  const isVerifyPage = pathname === "/auth/verify-email";
-  if (user && !user.email_confirmed_at && !isPublicPage && !isVerifyPage) {
+  const isVerifyPage  = pathname === "/auth/verify-email";
+  const isSettingUp   = pathname === "/auth/setting-up";
+  if (user && !user.email_confirmed_at && !isPublicPage && !isVerifyPage && !isSettingUp) {
     const redirect = NextResponse.redirect(new URL("/auth/verify-email", request.url));
     redirect.headers.set("x-request-id", requestId);
     return redirect;

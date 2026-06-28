@@ -39,11 +39,15 @@ BEGIN
 
   v_today := CURRENT_DATE;
 
-  -- ── 1. Profile (with row lock for streak update) ──────────────────────────
+  -- ── 1. Profile ────────────────────────────────────────────────────────────
+  -- Note: removed FOR UPDATE lock. The streak update below issues its own
+  -- UPDATE which implicitly acquires a row lock at that point. Holding a
+  -- SELECT FOR UPDATE here caused deadlocks for new users where the auth
+  -- callback's starter-goal fetch and the dashboard page load hit the same
+  -- profile row simultaneously (both within milliseconds of email confirmation).
   SELECT * INTO v_profile
   FROM public.profiles
-  WHERE id = p_user_id
-  FOR UPDATE;
+  WHERE id = p_user_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'profile not found' USING ERRCODE = 'no_data_found';
