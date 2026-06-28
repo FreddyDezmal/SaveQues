@@ -24,6 +24,7 @@ export function generateMetadata(): Metadata {
       apple: [{ url: "/icons/icon-192.png", sizes: "192x192" }],
     },
     other: {
+      "mobile-web-app-capable": "yes",
       ...Sentry.getTraceData(),
     },
   };
