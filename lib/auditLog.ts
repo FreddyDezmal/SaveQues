@@ -43,7 +43,8 @@ export type AuditEventType =
   | "WITHDRAWAL_CREATED"
   | "ACCOUNT_DELETED"
   | "ADMIN_BADGE_CREATED"
-  | "ADMIN_QUEST_CREATED";
+  | "ADMIN_QUEST_CREATED"
+  | "ADMIN_DATA_ACCESS";
 
 export type AuditEntityType = "goal" | "transaction" | "account" | "badge" | "quest";
 

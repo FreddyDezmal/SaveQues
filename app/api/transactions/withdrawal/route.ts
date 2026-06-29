@@ -19,7 +19,7 @@ import { createLogger }        from "@/lib/logger";
 import { captureError }        from "@/lib/monitoring";
 import { checkRateLimit }      from "@/lib/rateLimit";
 import { writeAuditLog }       from "@/lib/auditLog";
-import { recordOutcome }       from "@/lib/recordOutcome";
+import { withOutcomeTracking } from "@/lib/recordOutcome";
 import { awardXP }             from "@/lib/awardXP";
 import { getXPForAction }      from "@/lib/xp";
 
@@ -29,7 +29,7 @@ const MAX_AMOUNT        = 1_000_000;
 const RATE_LIMIT_MAX    = 20;
 const RATE_LIMIT_WINDOW = 60; // minutes
 
-export async function POST(req: NextRequest) {
+async function withdrawalHandler(req: NextRequest) {
   const requestId = req.headers.get("x-request-id") ?? undefined;
   const supabase  = createClient();
 
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (!limit.allowed) {
-    await recordOutcome(supabase, "withdrawal", "failure", "rate_limited", user.id, requestId);
+  
     return NextResponse.json({ error: limit.message }, { status: 429 });
   }
 
@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
       log.warn("Withdrawal rejected by DB balance trigger (route check should have caught this)", {
         user_id: user.id, request_id: requestId, goal_id, amount,
       });
-      await recordOutcome(supabase, "withdrawal", "failure", "insufficient_balance", user.id, requestId);
+    
       return NextResponse.json({
         error:     `Insufficient balance. Available: ${goal.current_amount}, requested: ${amount}.`,
         available: goal.current_amount,
@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
       user_id: user.id, request_id: requestId, error: txError.message, code: txError.code,
     });
     captureError(txError, { route: "POST /api/transactions/withdrawal", user_id: user.id });
-    await recordOutcome(supabase, "withdrawal", "failure", "db_error", user.id, requestId);
+  
     return NextResponse.json({ error: "Failed to process withdrawal" }, { status: 500 });
   }
 
@@ -191,7 +191,7 @@ export async function POST(req: NextRequest) {
     requestId,
   });
 
-  await recordOutcome(supabase, "withdrawal", "success", undefined, user.id, requestId);
+
 
   log.info("Withdrawal completed", {
     user_id:        user.id,
@@ -203,3 +203,5 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ transaction: tx });
 }
+
+export const POST = withOutcomeTracking("withdrawal", withdrawalHandler);

@@ -192,3 +192,43 @@ export async function runAllChecks(): Promise<void> {
 
   end();
 }
+
+// ── Legacy exports preserved for existing callers ─────────────────────────────
+// app/api/cron/business-metrics/route.ts imports runAllBusinessMetricChecks
+// app/api/cron/notifications/route.ts imports checkNotificationDeliveryRate
+
+export { runAllChecks as runAllBusinessMetricChecks };
+
+export async function checkNotificationDeliveryRate(): Promise<void> {
+  const serviceClient = createServiceClient();
+  const windowStart   = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await serviceClient
+    .from("request_outcomes")
+    .select("outcome")
+    .eq("route", "notifications")
+    .gte("created_at", windowStart);
+
+  if (error || !data) {
+    log.warn("Failed to fetch notification outcomes", { error: error?.message });
+    return;
+  }
+
+  if (data.length < THRESHOLDS.MIN_SAMPLE_SIZE) return;
+
+  const deliveryRate = data.filter(r => r.outcome === "success").length / data.length;
+
+  log.info("Notification delivery rate", {
+    rate:    deliveryRate,
+    samples: data.length,
+    threshold: THRESHOLDS.NOTIFICATION_DELIVERY_RATE_MIN,
+  });
+
+  if (deliveryRate < THRESHOLDS.NOTIFICATION_DELIVERY_RATE_MIN) {
+    captureWarning("Notification delivery rate below threshold", {
+      rate:      String(deliveryRate.toFixed(4)),
+      samples:   String(data.length),
+      threshold: String(THRESHOLDS.NOTIFICATION_DELIVERY_RATE_MIN),
+    });
+  }
+}
