@@ -20,8 +20,6 @@ import { captureError }        from "@/lib/monitoring";
 import { checkRateLimit }      from "@/lib/rateLimit";
 import { writeAuditLog }       from "@/lib/auditLog";
 import { withOutcomeTracking } from "@/lib/recordOutcome";
-import { awardXP }             from "@/lib/awardXP";
-import { getXPForAction }      from "@/lib/xp";
 
 const log = createLogger("api.transactions.withdrawal");
 
@@ -175,11 +173,10 @@ async function withdrawalHandler(req: NextRequest) {
     return NextResponse.json({ error: "Failed to process withdrawal" }, { status: 500 });
   }
 
-  // ── Award XP ──────────────────────────────────────────────────────────────
-  const xp = getXPForAction("WITHDRAWAL");
-  if (xp > 0) {
-    await awardXP(user.id, "withdrawal", tx.id, xp);
-  }
+  // ── Log activity (zero XP — withdrawals don't award XP) ─────────────────
+  // Records the day toward momentum without granting XP.
+  // Goal-purchase XP is handled separately by /api/goal/purchase-complete.
+  supabase.rpc("log_activity_event", { p_user_id: user.id, p_xp: 0 }).then(() => {});
 
   // ── Audit log ─────────────────────────────────────────────────────────────
   await writeAuditLog({
