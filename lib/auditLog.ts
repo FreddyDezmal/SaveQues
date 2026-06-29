@@ -46,7 +46,7 @@ export type AuditEventType =
   | "ADMIN_QUEST_CREATED"
   | "ADMIN_DATA_ACCESS";
 
-export type AuditEntityType = "goal" | "transaction" | "account" | "badge" | "quest";
+export type AuditEntityType = "goal" | "transaction" | "account" | "badge" | "quest" | "admin_query";
 
 export interface AuditLogParams {
   userId: string;
