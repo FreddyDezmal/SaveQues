@@ -13,6 +13,9 @@ import BadgeDetailPanel, { type BadgeDetailData } from "@/components/gamificatio
 import Link from "next/link";
 import type { TimelineEventGroup } from "@/lib/types";
 
+const SHIELD_XP_COST = 10_000;
+const MAX_SHIELDS    = 5;
+
 interface Props {
   profile: any;
   levelInfo: any;
@@ -34,6 +37,46 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, earnedAch
   const [badgeFilter, setBadgeFilter] = useState<"all" | "streak" | "savings" | "quest" | "hidden">("all");
   const [showAllLevels, setShowAllLevels] = useState(false);
   const [selectedBadge, setSelectedBadge] = useState<BadgeDetailData | null>(null);
+
+  // Shield purchase state
+  const [shieldPurchasing, setShieldPurchasing] = useState(false);
+  const [shieldFeedback, setShieldFeedback]     = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [localXP, setLocalXP]                   = useState(profile.xp_total);
+  const [localShields, setLocalShields]         = useState(profile.streak_shields ?? 0);
+
+  const canPurchaseShield = localXP >= SHIELD_XP_COST && localShields < MAX_SHIELDS;
+
+  async function purchaseShield() {
+    if (!canPurchaseShield || shieldPurchasing) return;
+    setShieldPurchasing(true);
+    setShieldFeedback(null);
+
+    try {
+      const res  = await fetch("/api/profile/purchase-shield", { method: "POST" });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setShieldFeedback({
+          type:    "error",
+          message: data.error ?? "Purchase failed. Please try again.",
+        });
+        return;
+      }
+
+      // Optimistic update
+      setLocalXP(data.xpRemaining);
+      setLocalShields(data.shieldsAfter);
+      setShieldFeedback({
+        type:    "success",
+        message: `Shield purchased! ${data.shieldsAfter} shield${data.shieldsAfter !== 1 ? "s" : ""} remaining.`,
+      });
+      router.refresh();
+    } catch {
+      setShieldFeedback({ type: "error", message: "Network error — please try again." });
+    } finally {
+      setShieldPurchasing(false);
+    }
+  }
 
   const earnedSet = new Set(earnedIds);
   const earnedAtMap = new Map(earnedAchievements.map(a => [a.achievement_id, a.earned_at]));
@@ -107,19 +150,43 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, earnedAch
         </div>
         <div className="flex justify-between text-xs text-white/30">
           <span>Lv {levelInfo.level}</span>
-          <span className="text-brand-400 font-bold">{profile.xp_total.toLocaleString()} XP</span>
+          <span className="text-brand-400 font-bold">{localXP.toLocaleString()} XP</span>
           {levelInfo.level < 50 && <span>Lv {levelInfo.level + 1}</span>}
         </div>
 
-        {/* Streak shields */}
-        {(profile.streak_shields ?? 2) > 0 && (
-          <div className="mt-3 flex items-center justify-center gap-1.5">
-            {Array.from({ length: profile.streak_shields ?? 2 }).map((_, i) => (
-              <span key={i} className="text-base">🛡️</span>
-            ))}
-            <span className="text-xs text-white/40">{profile.streak_shields} shield{profile.streak_shields !== 1 ? "s" : ""}</span>
+        {/* Streak shields + purchase */}
+        <div className="mt-4 card p-3 border-surface-border">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5">
+              {Array.from({ length: MAX_SHIELDS }).map((_, i) => (
+                <span key={i} className={`text-base transition-opacity ${i < localShields ? "opacity-100" : "opacity-20"}`}>🛡️</span>
+              ))}
+            </div>
+            <span className="text-xs text-white/40">
+              {localShields}/{MAX_SHIELDS} shields
+            </span>
           </div>
-        )}
+
+          {shieldFeedback && (
+            <p className={`text-xs mb-2 text-center ${shieldFeedback.type === "success" ? "text-emerald-400" : "text-red-400"}`}>
+              {shieldFeedback.message}
+            </p>
+          )}
+
+          <button
+            onClick={purchaseShield}
+            disabled={!canPurchaseShield || shieldPurchasing}
+            className="w-full py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed enabled:bg-brand-500/15 enabled:border enabled:border-brand-500/30 enabled:text-brand-300 enabled:hover:bg-brand-500/25 enabled:active:scale-95"
+          >
+            {shieldPurchasing
+              ? "Purchasing…"
+              : localShields >= MAX_SHIELDS
+              ? "Shield limit reached (5/5)"
+              : localXP < SHIELD_XP_COST
+              ? `Need ${(SHIELD_XP_COST - localXP).toLocaleString()} more XP`
+              : `🛡️ Buy Grace Day — ${SHIELD_XP_COST.toLocaleString()} XP`}
+          </button>
+        </div>
 
         {/* Avatar picker */}
         <div className="mt-4 flex flex-wrap justify-center gap-2">

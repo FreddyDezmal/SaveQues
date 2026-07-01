@@ -44,9 +44,10 @@ export type AuditEventType =
   | "ACCOUNT_DELETED"
   | "ADMIN_BADGE_CREATED"
   | "ADMIN_QUEST_CREATED"
-  | "ADMIN_DATA_ACCESS";
+  | "ADMIN_DATA_ACCESS"
+  | "SHIELD_PURCHASED";
 
-export type AuditEntityType = "goal" | "transaction" | "account" | "badge" | "quest" | "admin_query";
+export type AuditEntityType = "goal" | "transaction" | "account" | "badge" | "quest" | "admin_query" | "profile";
 
 export interface AuditLogParams {
   userId: string;
