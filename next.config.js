@@ -68,7 +68,7 @@ const nextConfig = {
         { key: "Permissions-Policy",     value: "camera=(), microphone=(), geolocation=()" },
         // Start as Report-Only. Switch the key below to
         // "Content-Security-Policy" once verified safe in production.
-        { key: "Content-Security-Policy-Report-Only", value: csp },
+        { key: "Content-Security-Policy", value: csp },
       ],
     },
     {
