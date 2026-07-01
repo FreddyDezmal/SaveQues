@@ -51,6 +51,15 @@ export default function QuestsClient({
   const [achievementQueue, setAchievementQueue] = useState<{ title: string; icon: string; xpReward: number }[]>([]);
   const [currentAchievement, setCurrentAchievement] = useState<{ title: string; icon: string; xpReward: number } | null>(null);
 
+  // Optimistic set of user_challenge IDs completed this session — prevents
+  // "Mark Complete" button persisting after completion before router.refresh()
+  const [localCompleted, setLocalCompleted] = useState<Set<string>>(new Set());
+
+  // Monthly limit tracking — max 2 seasonal quests per calendar month
+  const monthStart       = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const monthlyAccepted  = userChallenges.filter(uc => new Date(uc.started_at) >= monthStart).length;
+  const monthlyRemaining = Math.max(0, 2 - monthlyAccepted);
+
   function dismissAchievement() {
     setCurrentAchievement(null);
     setTimeout(() => {
@@ -71,8 +80,11 @@ export default function QuestsClient({
   }
 
   // Derived state
-  const activeUCs        = userChallenges.filter(uc => uc.status === "active");
-  const completedUCs     = userChallenges.filter(uc => uc.status === "completed");
+  const activeUCs        = userChallenges.filter(uc => uc.status === "active" && !localCompleted.has(uc.id));
+  const completedUCs     = [
+    ...userChallenges.filter(uc => uc.status === "completed"),
+    ...userChallenges.filter(uc => uc.status === "active" && localCompleted.has(uc.id)),
+  ];
   const activeIds        = new Set(activeUCs.map(uc => uc.challenge_id));
   const completedIds     = new Set(completedUCs.map(uc => uc.challenge_id));
   const availableChallenges = allChallenges.filter(c => !activeIds.has(c.id) && !completedIds.has(c.id));
@@ -173,18 +185,26 @@ export default function QuestsClient({
   }
 
   // ── SEASONAL: Accept ───────────────────────────────────────────────────────
-  // Accept is XP-free — direct Supabase insert is fine here.
   async function acceptChallenge(challengeId: string, title: string) {
     if (loading) return;
     setLoading(challengeId);
 
-    const res = await fetch("/api/quest/challenge/accept", {
+    const res  = await fetch("/api/quest/challenge/accept", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ challengeId }),
     });
+    const data = await res.json();
 
-    if (!res.ok) console.error("[acceptChallenge]", await res.text());
+    if (!res.ok) {
+      if (data.limitReached) {
+        setCelebration({ show: true, title: `Monthly limit reached — come back next month!`, xp: 0, icon: "⚠️" });
+      } else {
+        console.error("[acceptChallenge]", data.error);
+      }
+      setLoading(null);
+      return;
+    }
 
     setLoading(null);
     setCelebration({ show: true, title: `Quest Accepted: ${title}!`, xp: 0, icon: "⚔️" });
@@ -208,6 +228,10 @@ export default function QuestsClient({
       setLoading(null);
       return;
     }
+
+    // Optimistic update — move to completed immediately without waiting for
+    // router.refresh() to re-render the server component
+    setLocalCompleted(prev => new Set(prev).add(ucId));
 
     if (!data.alreadyAwarded && data.newAchievements?.length > 0) {
       queueAchievements(data.newAchievements);
@@ -393,6 +417,31 @@ export default function QuestsClient({
         {/* ── SEASONAL TAB ───────────────────────────────────── */}
         {activeTab === "seasonal" && (
           <div className="space-y-4">
+
+            {/* Monthly limit indicator */}
+            <div className={`card p-3 flex items-center justify-between ${monthlyRemaining === 0 ? "border-amber-500/20" : "border-surface-border"}`}>
+              <div className="flex items-center gap-2">
+                <Calendar size={14} className={monthlyRemaining === 0 ? "text-amber-400" : "text-white/40"} />
+                <span className="text-xs text-white/50">Monthly quest slots</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {[0, 1].map(i => (
+                  <div
+                    key={i}
+                    className={`w-3 h-3 rounded-full border ${
+                      i < (2 - monthlyRemaining)
+                        ? "bg-brand-500 border-brand-400"
+                        : "bg-surface-elevated border-surface-border"
+                    }`}
+                  />
+                ))}
+                <span className={`text-xs ml-1 ${monthlyRemaining === 0 ? "text-amber-400" : "text-white/40"}`}>
+                  {monthlyRemaining === 0 ? "Full this month" : `${monthlyRemaining} left`}
+                </span>
+              </div>
+            </div>
+
+            {/* In Progress */}
             {activeUCs.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -401,34 +450,47 @@ export default function QuestsClient({
                 </div>
                 <div className="space-y-2">
                   {activeUCs.map(uc => {
-                    const ch = uc.challenges;
+                    const ch         = uc.challenges;
+                    const isOptimistic = localCompleted.has(uc.id);
                     if (!ch) return null;
                     return (
-                      <div key={uc.id} className="card p-4 border-brand-500/20">
+                      <div key={uc.id} className={`card p-4 ${isOptimistic ? "border-emerald-500/20 opacity-75" : "border-brand-500/20"}`}>
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex-1">
                             <h3 className="font-display font-semibold text-white text-sm">{ch.title}</h3>
                             <p className="text-xs text-white/40 mt-0.5">{ch.description}</p>
+                            {ch.end_date && (
+                              <p className="text-xs text-white/30 mt-1">
+                                🍂 Ends {new Date(ch.end_date).toLocaleDateString("en", { day: "numeric", month: "short" })}
+                              </p>
+                            )}
                           </div>
                           <div className="flex items-center gap-1 bg-brand-500/10 border border-brand-500/20 rounded-full px-2.5 py-1 ml-3">
                             <Zap size={11} className="text-brand-400" />
                             <span className="text-brand-400 text-xs font-bold">{ch.xp_reward}</span>
                           </div>
                         </div>
-                        <button
-                          onClick={() => completeChallenge(uc.id, ch.title)}
-                          disabled={loading === uc.id}
-                          className="btn-primary w-full text-sm py-2.5"
-                        >
-                          {loading === uc.id ? "Claiming…" : "Mark Complete ✅"}
-                        </button>
+                        {isOptimistic ? (
+                          <div className="w-full py-2.5 text-sm text-center text-emerald-400 font-semibold flex items-center justify-center gap-2">
+                            <CheckCircle size={15} />
+                            Completed
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => completeChallenge(uc.id, ch.title)}
+                            disabled={loading === uc.id}
+                            className="btn-primary w-full text-sm py-2.5"
+                          >
+                            {loading === uc.id ? "Claiming…" : "Mark Complete ✅"}
+                          </button>
+                        )}
                       </div>
                     );
-                  })}
-                </div>
+                  })}\n                </div>
               </div>
             )}
 
+            {/* Available */}
             {availableChallenges.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -437,7 +499,7 @@ export default function QuestsClient({
                 </div>
                 <div className="space-y-2">
                   {availableChallenges.map(ch => (
-                    <div key={ch.id} className="card p-4">
+                    <div key={ch.id} className={`card p-4 ${monthlyRemaining === 0 ? "opacity-50" : ""}`}>
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-0.5">
@@ -447,9 +509,9 @@ export default function QuestsClient({
                             )}
                           </div>
                           <p className="text-xs text-white/40">{ch.description}</p>
-                          {ch.season_end && (
+                          {ch.end_date && (
                             <p className="text-xs text-white/30 mt-1">
-                              🍂 Season ends {new Date(ch.season_end).toLocaleDateString("en", { day: "numeric", month: "short" })}
+                              🍂 Ends {new Date(ch.end_date).toLocaleDateString("en", { day: "numeric", month: "short" })}
                             </p>
                           )}
                         </div>
@@ -460,10 +522,14 @@ export default function QuestsClient({
                       </div>
                       <button
                         onClick={() => acceptChallenge(ch.id, ch.title)}
-                        disabled={loading === ch.id}
-                        className="btn-ghost w-full text-sm py-2.5"
+                        disabled={loading === ch.id || monthlyRemaining === 0}
+                        className="btn-ghost w-full text-sm py-2.5 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        {loading === ch.id ? "Accepting…" : "⚔️ Accept Quest"}
+                        {loading === ch.id
+                          ? "Accepting…"
+                          : monthlyRemaining === 0
+                          ? "Monthly limit reached"
+                          : "⚔️ Accept Quest"}
                       </button>
                     </div>
                   ))}
@@ -471,6 +537,7 @@ export default function QuestsClient({
               </div>
             )}
 
+            {/* Completed */}
             {completedUCs.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -497,7 +564,7 @@ export default function QuestsClient({
               </div>
             )}
 
-            {availableChallenges.length === 0 && activeUCs.length === 0 && (
+            {availableChallenges.length === 0 && activeUCs.length === 0 && completedUCs.length === 0 && (
               <div className="card p-10 text-center">
                 <div className="text-4xl mb-3">🌸</div>
                 <p className="text-white/40 text-sm">No seasonal quests available right now.</p>
