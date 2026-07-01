@@ -1,75 +1,104 @@
 /**
  * app/api/quest/challenge/complete/route.ts
  *
+ * Marks a seasonal challenge as complete for the authenticated user.
+ *
+ * Fix: The original route expected { questId, weekStart } and called
+ * complete_weekly_quest() — the wrong RPC for seasonal challenges which
+ * use the user_challenges table, not user_weekly_quests. The client
+ * correctly sends { userChallengeId } (the user_challenges.id).
+ *
  * Security guarantees:
- *  • Auth required   — session verified via createClient()
- *  • XP integrity    — xp_reward loaded from `challenges` DB table server-side;
- *                      any client-supplied xpReward is ignored entirely (M3 fix)
- *  • Status guard    — complete_weekly_quest() DB function only marks complete
- *                      when status = 'active'; already-completed rows return
- *                      alreadyAwarded: true
- *  • Idempotency     — award_xp() uses source_id = week_start date
- *  • Concurrent tab  — DB UPDATE WHERE status = 'active' is atomic;
- *                      second concurrent request sees 0 rows updated
+ *  • Auth required     — session verified via createClient()
+ *  • Ownership guard   — user_challenges row fetched with .eq("user_id", user.id)
+ *  • XP integrity      — xp_reward loaded server-side from challenges table
+ *  • Status guard      — only 'active' rows are completed; already-completed
+ *                        rows return alreadyAwarded: true
+ *  • Idempotency       — award_xp() UNIQUE(user_id, source_type, source_id)
+ *                        prevents double XP on retry
  */
 
-import { createClient } from "@/lib/supabase/server";
+import { createClient }              from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { checkAndAwardAchievements } from "@/lib/awardXP";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
-import { recordDailyActivity } from "@/lib/recordDailyActivity";
+import { recordDailyActivity }       from "@/lib/recordDailyActivity";
 
 export async function POST(req: NextRequest) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // M3 fix: destructure questId and weekStart only — xpReward is intentionally
-  // ignored even if the client sends it.
-  const { questId, weekStart } = await req.json();
-  if (!questId || !weekStart) {
-    return NextResponse.json({ error: "questId and weekStart required" }, { status: 400 });
+  const { userChallengeId } = await req.json();
+  if (!userChallengeId) {
+    return NextResponse.json({ error: "userChallengeId is required" }, { status: 400 });
   }
 
-  // M3 fix: load XP reward from the challenges table server-side, never from client.
-  // challenges uses UUID primary keys, but the client sends the challenge id.
-  const { data: challengeRecord } = await supabase
-    .from("challenges")
-    .select("xp_reward")
-    .eq("id", questId)
-    .eq("is_active", true)
+  // ── 1. Fetch the user_challenge row (ownership enforced by RLS + .eq) ────
+  const { data: uc, error: ucError } = await supabase
+    .from("user_challenges")
+    .select("id, status, challenge_id, challenges(id, xp_reward, title)")
+    .eq("id", userChallengeId)
+    .eq("user_id", user.id)
     .single();
 
-  if (!challengeRecord) {
+  if (ucError || !uc) {
     return NextResponse.json({ error: "Challenge not found" }, { status: 404 });
   }
 
-  const xp = challengeRecord.xp_reward;
-
-  const { data: result, error } = await supabase.rpc("complete_weekly_quest", {
-    p_user_id:    user.id,
-    p_quest_id:   questId,
-    p_week_start: weekStart,
-    p_xp:         xp,
-  });
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-  const rpcResult = result as { success: boolean; xp_awarded: number; new_total: number; reason?: string };
-
-  if (rpcResult.reason === "already_awarded") {
+  // ── 2. Already completed? ─────────────────────────────────────────────────
+  if (uc.status === "completed") {
     return NextResponse.json({ xpGained: 0, alreadyAwarded: true, newAchievements: [] });
   }
 
-  // Achievement check
+  if (uc.status !== "active") {
+    return NextResponse.json({ error: "Challenge is not active" }, { status: 400 });
+  }
+
+  // ── 3. Mark complete ──────────────────────────────────────────────────────
+  const { error: updateError } = await supabase
+    .from("user_challenges")
+    .update({ status: "completed", completed_at: new Date().toISOString() })
+    .eq("id", userChallengeId)
+    .eq("user_id", user.id)
+    .eq("status", "active"); // atomic guard — second concurrent request hits 0 rows
+
+  if (updateError) {
+    return NextResponse.json({ error: updateError.message }, { status: 500 });
+  }
+
+  // ── 4. Award XP server-side ───────────────────────────────────────────────
+  const challenge = uc.challenges as any;
+  const xp        = challenge?.xp_reward ?? 0;
+
+  let xpAwarded = 0;
+  let newTotal   = 0;
+
+  if (xp > 0) {
+    const { data: xpResult } = await supabase.rpc("award_xp", {
+      p_user_id:     user.id,
+      p_source_type: "challenge",
+      p_source_id:   userChallengeId,
+      p_xp:          xp,
+    });
+
+    const r = xpResult as any;
+    if (r?.reason === "already_awarded") {
+      return NextResponse.json({ xpGained: 0, alreadyAwarded: true, newAchievements: [] });
+    }
+    xpAwarded = r?.xp_awarded ?? 0;
+    newTotal   = r?.new_total  ?? 0;
+  }
+
+  // ── 5. Achievement check ──────────────────────────────────────────────────
   const { data: profile } = await supabase
     .from("profiles")
     .select("streak_days, daily_quests_completed, weekly_quests_completed")
     .eq("id", user.id)
     .single();
 
-  const [weeklyCountRes, chainRes, earnedRes] = await Promise.all([
-    supabase.from("user_weekly_quests").select("id").eq("user_id", user.id).eq("status", "completed"),
+  const [challengeCountRes, chainRes, earnedRes] = await Promise.all([
+    supabase.from("user_challenges").select("id").eq("user_id", user.id).eq("status", "completed"),
     supabase.from("quest_chain_progress").select("id").eq("user_id", user.id).eq("status", "completed"),
     supabase.from("user_achievements").select("achievement_id").eq("user_id", user.id),
   ]);
@@ -79,22 +108,25 @@ export async function POST(req: NextRequest) {
     totalSaved:            0,
     goalsCompleted:        0,
     activeGoals:           0,
-    challengesCompleted:   weeklyCountRes.data?.length ?? 0,
+    challengesCompleted:   challengeCountRes.data?.length ?? 0,
     dailyQuestsCompleted:  profile?.daily_quests_completed ?? 0,
-    weeklyQuestsCompleted: (profile?.weekly_quests_completed ?? 0) + 1,
+    weeklyQuestsCompleted: profile?.weekly_quests_completed ?? 0,
     questChainsCompleted:  chainRes.data?.length ?? 0,
     earnedIds:             (earnedRes.data ?? []).map((a: any) => a.achievement_id),
   });
 
+  // ── 6. Analytics + activity log ──────────────────────────────────────────
   await trackServerEvent(AnalyticsEvents.SEASONAL_CHALLENGE_COMPLETED, user.id, {
-    challenge_id: questId,
-    xp_gained:    rpcResult.xp_awarded,
+    challenge_id: uc.challenge_id,
+    xp_gained:    xpAwarded,
   });
 
-  await trackServerEvent(AnalyticsEvents.XP_AWARDED, user.id, {
-    amount:      rpcResult.xp_awarded,
-    source_type: "challenge",
-  });
+  if (xpAwarded > 0) {
+    await trackServerEvent(AnalyticsEvents.XP_AWARDED, user.id, {
+      amount:      xpAwarded,
+      source_type: "challenge",
+    });
+  }
 
   for (const achievement of newAchievements) {
     await trackServerEvent(AnalyticsEvents.ACHIEVEMENT_UNLOCKED, user.id, {
@@ -105,13 +137,13 @@ export async function POST(req: NextRequest) {
 
   await recordDailyActivity(supabase, user.id, {
     app_opened:  true,
-    xp_delta:    rpcResult.xp_awarded,
+    xp_delta:    xpAwarded,
     quest_delta: 1,
   });
 
   return NextResponse.json({
-    xpGained:       rpcResult.xp_awarded,
-    newTotal:       rpcResult.new_total,
+    xpGained:       xpAwarded,
+    newTotal,
     newAchievements,
     alreadyAwarded: false,
   });
