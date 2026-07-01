@@ -29,15 +29,46 @@ const nextConfig = {
   },
 
   async headers() {
+  // ── Content-Security-Policy ────────────────────────────────────────────
+  // Sprint 13 follow-up: closes the gap identified in the production
+  // readiness audit (no CSP existed; Sprint 12 report's claim that Vercel
+  // provides one by default was incorrect).
+  //
+  // DEPLOYED IN REPORT-ONLY MODE FIRST. This logs violations to the
+  // configured report-uri without blocking anything. Once a few days of
+  // production traffic show zero unexpected violations, flip
+  // "Content-Security-Policy-Report-Only" to "Content-Security-Policy"
+  // below to start enforcing.
+  //
+  // Domains included:
+  //   'self'                  — app's own origin
+  //   *.supabase.co           — Supabase API + auth + realtime
+  //   us.i.posthog.com        — PostHog client SDK (matches providers/posthog.ts api_host)
+  //   *.ingest.sentry.io      — Sentry error reporting (DSN host varies by org)
+  //   *.ingest.us.sentry.io   — Sentry's newer US-region ingest host
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://us.i.posthog.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https://*.supabase.co",
+    "font-src 'self' data:",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://us.i.posthog.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+
   return [
     {
       source: "/(.*)",
       headers: [
-        
         { key: "X-Frame-Options",       value: "DENY" },
         { key: "X-Content-Type-Options", value: "nosniff" },
         { key: "Referrer-Policy",        value: "strict-origin-when-cross-origin" },
         { key: "Permissions-Policy",     value: "camera=(), microphone=(), geolocation=()" },
+        // Start as Report-Only. Switch the key below to
+        // "Content-Security-Policy" once verified safe in production.
+        { key: "Content-Security-Policy-Report-Only", value: csp },
       ],
     },
     {
