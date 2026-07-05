@@ -13,8 +13,26 @@
 // cache-first or stale-while-revalidate rule that could otherwise
 // accidentally shadow it.
 
+/// <reference lib="webworker" />
+// The line above is required because this file needs ServiceWorkerGlobalScope
+// and other worker-only types (e.g. `self.registration`, `self.clients`).
+// The project's tsconfig.json intentionally only includes "dom" in `lib`
+// (correct for every other file, which runs in the browser main thread) —
+// adding "webworker" there globally would conflict with "dom" across the
+// rest of the app. A triple-slash reference scopes the extra lib to just
+// this file, since this file is a module (it has top-level imports), which
+// is what caused the Vercel build failure:
+//   "Cannot find name 'ServiceWorkerGlobalScope'"
+export {};
+
 import { defaultCache } from "@serwist/next/worker";
 import { installSerwist } from "@serwist/sw";
+import {
+  NetworkOnly,
+  StaleWhileRevalidate,
+  CacheFirst,
+  ExpirationPlugin,
+} from "serwist";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 
 declare const self: ServiceWorkerGlobalScope &
@@ -79,11 +97,16 @@ installSerwist({
           url.pathname.includes("admin") ||
           url.pathname.includes("xp") ||
           url.pathname.includes("onboarding")),
-      handler: "NetworkOnly",
+      // Serwist's `handler` expects an actual Strategy instance (this is a
+      // different API shape than the older workbox-webpack-plugin /
+      // next-pwa config format, which took string names like "NetworkOnly").
+      // `new NetworkOnly()` with no options is exactly equivalent — it never
+      // reads from or writes to any cache in either direction.
+      handler: new NetworkOnly(),
     },
     {
       matcher: ({ url }: { url: URL }) => url.pathname.startsWith("/auth"),
-      handler: "NetworkOnly",
+      handler: new NetworkOnly(),
     },
 
     // ── 2. Read-mostly, non-financial catalog data ──────────────────────────
@@ -94,11 +117,10 @@ installSerwist({
     {
       matcher: ({ url }: { url: URL }) =>
         url.pathname === "/api/quest/daily" || url.pathname === "/api/quest/weekly",
-      handler: "StaleWhileRevalidate",
-      options: {
+      handler: new StaleWhileRevalidate({
         cacheName: "savequest-quests",
-        expiration: { maxAgeSeconds: 60 * 15 },
-      },
+        plugins: [new ExpirationPlugin({ maxAgeSeconds: 60 * 15 })],
+      }),
     },
 
     // ── 3. Hashed Next.js build assets ──────────────────────────────────────
@@ -106,21 +128,19 @@ installSerwist({
     // (content hash), so a cache hit can never be stale by definition.
     {
       matcher: ({ url }: { url: URL }) => url.pathname.startsWith("/_next/static/"),
-      handler: "CacheFirst",
-      options: {
+      handler: new CacheFirst({
         cacheName: "savequest-static",
-        expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 },
-      },
+        plugins: [new ExpirationPlugin({ maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 })],
+      }),
     },
 
     // ── 4. Images ────────────────────────────────────────────────────────────
     {
       matcher: ({ request }: { request: Request }) => request.destination === "image",
-      handler: "CacheFirst",
-      options: {
+      handler: new CacheFirst({
         cacheName: "savequest-images",
-        expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 14 },
-      },
+        plugins: [new ExpirationPlugin({ maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 14 })],
+      }),
     },
 
     // ── 5. Serwist's own sane defaults for everything else (fonts, etc.) ────
@@ -131,6 +151,13 @@ installSerwist({
     entries: [
       {
         url: "/offline",
+        // Serwist's FallbackEntry type requires `revision` (it's how Workbox
+        // decides whether a cached fallback needs re-fetching on activate).
+        // `null` is correct here, not a missing value — it tells Serwist
+        // "don't revision this, /offline is already covered by the
+        // precache manifest above (self.__SW_MANIFEST), which revisions it
+        // via Next.js's own build-output content hash."
+        revision: null,
         matcher: ({ request }: { request: Request }) => request.destination === "document",
       },
     ],
@@ -157,7 +184,20 @@ self.addEventListener("push", (event) => {
 
   const { title, body, icon, badge, tag, url, notificationId, type } = payload;
 
-  const options: NotificationOptions = {
+  // `renotify` and `actions` are both real, runtime-supported
+  // NotificationOptions in every target browser, but which fields the
+  // built-in lib.dom.d.ts / lib.webworker.d.ts NotificationOptions type
+  // declares varies by TypeScript version — using ts-expect-error per field
+  // is brittle (exactly what broke here: the two libs disagree on which
+  // property is "missing", so a comment pinned to one line stops matching
+  // the actual error). Extending the type once, explicitly, is stable
+  // regardless of which lib version is active.
+  type ExtendedNotificationOptions = NotificationOptions & {
+    renotify?: boolean;
+    actions?: { action: string; title: string; icon?: string }[];
+  };
+
+  const options: ExtendedNotificationOptions = {
     body: body || "Check your SaveQuest goals.",
     icon: icon || "/icons/icon-192.png",
     badge: badge || "/icons/badge-72.png",
@@ -165,8 +205,6 @@ self.addEventListener("push", (event) => {
     data: { url: url || "/dashboard", notificationId, type },
     requireInteraction: false,
     renotify: true,
-    // @ts-expect-error — `actions` is valid on NotificationOptions at runtime
-    // in supporting browsers but not yet in the lib.dom.d.ts NotificationOptions type.
     actions: [
       { action: "open", title: "Open SaveQuest" },
       { action: "dismiss", title: "Dismiss" },
