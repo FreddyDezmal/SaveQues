@@ -151,13 +151,15 @@ installSerwist({
     entries: [
       {
         url: "/offline",
-        // Serwist's FallbackEntry type requires `revision` (it's how Workbox
-        // decides whether a cached fallback needs re-fetching on activate).
-        // `null` is correct here, not a missing value — it tells Serwist
-        // "don't revision this, /offline is already covered by the
-        // precache manifest above (self.__SW_MANIFEST), which revisions it
-        // via Next.js's own build-output content hash."
-        revision: null,
+        // Serwist 9.x's FallbackEntry.revision type is `string` (not
+        // nullable) — my previous fix used `revision: null`, which is what
+        // the *type* for a regular PrecacheEntry allows (meaning "don't
+        // version this"), but FallbackEntry specifically requires an actual
+        // string here. This is just a manual cache-busting tag for the
+        // fallback shell itself: bump this string any time /offline's
+        // content changes meaningfully, so Serwist knows to refetch it
+        // rather than keep serving a cached copy from before the change.
+        revision: "v1",
         matcher: ({ request }: { request: Request }) => request.destination === "document",
       },
     ],
