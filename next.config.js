@@ -1,5 +1,17 @@
 /** @type {import('next').NextConfig} */
 
+// ── Service worker build (Sprint 14) ──────────────────────────────────────────
+// Compiles app/sw.ts -> public/sw.js at build time, injecting a precache
+// manifest of hashed build assets. Disabled in dev so a caching SW never
+// intercepts local hot-reload requests. Writes to the SAME path
+// (public/sw.js) that the existing push-notification registration code in
+// lib/hooks/useNotifications.ts already calls, so that file needs no changes.
+const withSerwist = require("@serwist/next").default({
+  swSrc: "app/sw.ts",
+  swDest: "public/sw.js",
+  disable: process.env.NODE_ENV === "development",
+});
+
 // ── Environment variable validation ───────────────────────────────────────────
 const REQUIRED_VARS = [
   "NEXT_PUBLIC_SUPABASE_URL",
@@ -88,4 +100,4 @@ const nextConfig = {
 },
 };
 
-module.exports = nextConfig;
+module.exports = withSerwist(nextConfig);

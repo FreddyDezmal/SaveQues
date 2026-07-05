@@ -74,5 +74,15 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|manifest.json|icons/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|json)$).*)"],
+  // Sprint 14: added `sw\.js` and `screenshots/` to the existing exclusion
+  // list. Without excluding sw.js specifically, every fetch of the service
+  // worker script would run through getUser() above — and if that ever
+  // produced a redirect response, the browser would receive a redirect as
+  // the service worker's script body, which throws a SecurityError and
+  // breaks registration outright. `screenshots/` mirrors the existing
+  // `icons/` exclusion for the same static-asset reasoning. No existing
+  // pattern in this matcher was removed or altered.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|manifest.json|sw\\.js|icons/|screenshots/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|json)$).*)",
+  ],
 };

@@ -21,6 +21,21 @@
     scroll-behavior: smooth;
   }
 
+  /* Sprint 14 a11y: respect prefers-reduced-motion for users who've asked
+     the OS to minimize motion (often for vestibular disorders). This
+     targets the XP bar fill, goal bar fill, and any framer-motion /
+     transition-based animation site-wide by shortening durations to
+     effectively-instant rather than disabling transitions outright — an
+     instant state change reads better than a frozen/broken-looking UI. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
   body {
     -webkit-font-smoothing: antialiased;
     background: var(--color-surface-base);
@@ -41,12 +56,20 @@
   .btn-primary {
     @apply bg-brand-500 hover:bg-brand-400 text-black font-semibold font-display
            px-5 py-3 rounded-xl transition-all duration-200
-           active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+           active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50;
+    /* Sprint 14 a11y: active:scale-95 only fires on mouse/touch click, not
+       on keyboard focus — a keyboard user tabbing to this button previously
+       had no visible focus indicator at all. focus-visible (not :focus)
+       means mouse users still don't see a ring on click, only keyboard
+       users tabbing through the page do, so no visual regression for the
+       majority interaction path. */
   }
 
   .btn-ghost {
     @apply bg-surface-elevated hover:bg-surface-border text-white font-medium
-           px-5 py-3 rounded-xl transition-all duration-200 active:scale-95;
+           px-5 py-3 rounded-xl transition-all duration-200 active:scale-95
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30;
   }
 
   .input-field {

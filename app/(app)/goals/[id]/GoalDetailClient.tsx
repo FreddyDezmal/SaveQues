@@ -12,6 +12,7 @@ import { GOAL_EMOJIS } from "@/lib/utils";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { TimelineEventGroup } from "@/lib/types";
+import { useOnlineStatus } from "@/lib/hooks/useOnlineStatus";
 
 type TxType = "deposit" | "withdrawal" | "goal_purchase";
 
@@ -37,6 +38,13 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
   const [loading, setLoading]          = useState(false);
   const [error, setError]              = useState("");
   const [showNextGoal, setShowNextGoal] = useState(false);
+
+  // Sprint 14: financial-safety gate. Deposits/withdrawals must never
+  // execute (or appear to execute) while offline — see useOnlineStatus.ts
+  // for the full reasoning. Read once per render; the button below also
+  // subscribes to this so it re-enables automatically on reconnect with no
+  // page reload needed.
+  const isOnline = useOnlineStatus();
 
   // ── Idempotency key (Sprint 10 — Part 1) ────────────────────────
   // Generated lazily via a ref, NOT useState — a ref persists across
@@ -109,6 +117,19 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    // Sprint 14: hard safety net, not just a disabled-button convenience.
+    // Disabling the submit button alone does NOT stop this handler from
+    // firing — pressing Enter inside the amount <input> submits the <form>
+    // directly regardless of the button's disabled attribute. This check
+    // is what actually guarantees a financial mutation is never attempted
+    // offline; the disabled button is the (also necessary) visible half of
+    // the same guarantee.
+    if (!isOnline) {
+      setError("You're offline — reconnect to log this safely.");
+      return;
+    }
+
     if (!amount || Number(amount) <= 0) return;
     setLoading(true);
     setError("");
@@ -359,6 +380,7 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
                 </span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   className="input-field pl-8"
                   placeholder={TX[txType].placeholder}
                   min="0.01"
@@ -366,6 +388,7 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
                   value={amount}
                   onChange={e => setAmount(e.target.value)}
                   required
+                  disabled={!isOnline}
                 />
               </div>
 
@@ -392,10 +415,23 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
                 </div>
               )}
 
+              {!isOnline && (
+                <div className="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10">
+                  <p className="text-xs text-white/60">
+                    You're offline. SaveQuest never queues financial actions for
+                    later — reconnect to make sure this is recorded correctly.
+                  </p>
+                </div>
+              )}
+
               {error && <p className="text-red-400 text-sm">{error}</p>}
 
-              <button type="submit" className="btn-primary w-full flex items-center justify-center gap-2" disabled={loading}>
-                {loading ? "Saving…" : TX[txType].buttonText}
+              <button
+                type="submit"
+                className="btn-primary w-full flex items-center justify-center gap-2 focus-visible:ring-2 focus-visible:ring-brand-500/50"
+                disabled={loading || !isOnline}
+              >
+                {loading ? "Saving…" : !isOnline ? "Reconnect to continue" : TX[txType].buttonText}
               </button>
             </form>
           </div>
