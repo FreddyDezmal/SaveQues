@@ -14,6 +14,9 @@ importers:
       '@serwist/next':
         specifier: ^9.0.11
         version: 9.5.11(next@14.2.16(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(react@18.3.1)(typescript@5.9.3)(webpack@5.107.2(postcss@8.5.15))
+      '@serwist/sw':
+        specifier: ^9.5.11
+        version: 9.5.11(browserslist@4.28.2)(typescript@5.9.3)
       '@supabase/ssr':
         specifier: ^0.5.2
         version: 0.5.2(@supabase/supabase-js@2.107.0)
@@ -784,6 +787,14 @@ packages:
     peerDependenciesMeta:
       '@serwist/cli':
         optional: true
+      typescript:
+        optional: true
+
+  '@serwist/sw@9.5.11':
+    resolution: {integrity: sha512-hcSuiqqwhlV3nV4f1kHuusdx+fKIBAUFTnxUFA5Wb5GfeUyDsUVt8V08xI2H83cXpTsKJBHlsA3HpsIEWIrB0A==}
+    peerDependencies:
+      typescript: '>=5.0.0'
+    peerDependenciesMeta:
       typescript:
         optional: true
 
@@ -3178,6 +3189,14 @@ snapshots:
       typescript: 5.9.3
     transitivePeerDependencies:
       - webpack
+
+  '@serwist/sw@9.5.11(browserslist@4.28.2)(typescript@5.9.3)':
+    dependencies:
+      serwist: 9.5.11(browserslist@4.28.2)(typescript@5.9.3)
+    optionalDependencies:
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - browserslist
 
   '@serwist/utils@9.5.11(browserslist@4.28.2)':
     optionalDependencies:
