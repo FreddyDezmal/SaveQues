@@ -237,7 +237,6 @@ self.addEventListener("notificationclick", (event) => {
       for (const client of clients) {
         if (client.url.includes(self.location.origin)) {
           await client.focus();
-          // @ts-expect-error — navigate() exists on WindowClient at runtime.
           client.navigate(targetUrl);
           return;
         }
