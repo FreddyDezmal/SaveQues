@@ -21,6 +21,18 @@
     scroll-behavior: smooth;
   }
 
+  /* Sprint 15: used by UpdateToast and OfflineBanner. Automatically
+     shortened to near-instant by the prefers-reduced-motion rule below,
+     since that rule targets *, *::before, *::after animation-duration
+     globally — no separate reduced-motion handling needed here. */
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in {
+    animation: fade-in 0.25s ease-out;
+  }
+
   /* Sprint 14 a11y: respect prefers-reduced-motion for users who've asked
      the OS to minimize motion (often for vestibular disorders). This
      targets the XP bar fill, goal bar fill, and any framer-motion /

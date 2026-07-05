@@ -19,6 +19,7 @@ import { createClient } from "@/lib/supabase/client";
 import UpcomingEventsBanner from "@/components/events/UpcomingEventsBanner";
 import OnboardingChecklist from "@/components/onboarding/OnboardingChecklist";
 import NotificationPromptBanner from "@/components/onboarding/NotificationPromptBanner";
+import InstallSaveQuestCard from "@/components/pwa/InstallSaveQuestCard";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
 import type { TimelineEventGroup } from "@/lib/types";
@@ -474,6 +475,16 @@ export default function DashboardClient({
           alreadyDismissed={notificationPromptDismissed}
         />
       )}
+
+      {/* ── Sprint 15: PWA install card ──────────────────────────
+          Deliberately not gated by userStage — install is valuable at any
+          point in the lifecycle, unlike the onboarding-specific banners
+          above. Its own internal logic (usePWAInstall + localStorage
+          dismissal) already prevents it from ever showing to an installed
+          or previously-dismissed user, so no additional gating condition
+          is needed here. Placed last so it's the lowest-priority banner
+          when a brand-new user could theoretically see more than one. */}
+      <InstallSaveQuestCard userId={profile.id} />
 
       {/* Badge detail panel (Task 2) */}
       {selectedBadge && (

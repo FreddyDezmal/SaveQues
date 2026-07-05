@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import ShareButton from "@/components/sharing/ShareButton";
 
 interface Props {
   show: boolean;
@@ -43,6 +44,10 @@ export default function CelebrationOverlay({ show, type, title, subtitle, icon, 
 
   const isGoalComplete = type === "goal";
   const isAchievement  = type === "achievement";
+  // Phase 5: sharing applies to the milestone-y celebration types, not the
+  // frequent, low-signal "xp" type — sharing "+15 XP" on every deposit
+  // would be noisy rather than a meaningful moment worth a share sheet.
+  const isShareable = ["goal", "streak", "achievement", "levelup"].includes(type);
 
   const defaultIcon =
     type === "levelup"      ? "⬆️" :
@@ -148,6 +153,22 @@ export default function CelebrationOverlay({ show, type, title, subtitle, icon, 
         >
           {ctaLabel}
         </button>
+
+        {isShareable && (
+          <div className="mt-2.5" style={{ animation: "badgePop 0.4s 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) both" }}>
+            <ShareButton
+              title="SaveQuest"
+              text={`I just ${
+                type === "goal" ? `hit my "${title}" savings goal` :
+                type === "streak" ? title :
+                type === "levelup" ? title :
+                `unlocked "${title}"`
+              } on SaveQuest! 💪`}
+              shareContext={type}
+              className="w-full"
+            />
+          </div>
+        )}
       </div>
     </div>
   );

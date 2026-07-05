@@ -4,6 +4,7 @@ import "./globals.css";
 import { createClient } from "@/lib/supabase/server";
 import AnalyticsProvider from "@/components/AnalyticsProvider";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
+import UpdateToast from "@/components/pwa/UpdateToast";
 import * as Sentry from "@sentry/nextjs";
 import type { Metadata } from "next";
 
@@ -97,6 +98,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             owns entirely.
           */}
           <ServiceWorkerRegistration />
+          <UpdateToast />
           {children}
         </AnalyticsProvider>
       </body>

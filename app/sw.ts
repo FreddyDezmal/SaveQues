@@ -159,7 +159,11 @@ installSerwist({
         // fallback shell itself: bump this string any time /offline's
         // content changes meaningfully, so Serwist knows to refetch it
         // rather than keep serving a cached copy from before the change.
-        revision: "v1",
+        // Bumped to v2 in Sprint 15 (Phase 3): /offline's content changed
+        // meaningfully (illustration, retry button, dashboard link) —
+        // this tells Serwist to refetch it rather than keep serving the
+        // Sprint 14 version indefinitely.
+        revision: "v2",
         matcher: ({ request }: { request: Request }) => request.destination === "document",
       },
     ],
@@ -244,6 +248,27 @@ self.addEventListener("notificationclick", (event) => {
       await self.clients.openWindow(targetUrl);
     })()
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sprint 15: explicit, user-triggered update activation.
+//
+// Sprint 14 set skipWaiting/clientsClaim to false specifically so a deploy
+// never swaps a live session's network layer out from under it (see the
+// long comment on installSerwist() above). The trade-off flagged at the
+// time was slower update propagation, with "an explicit Update available —
+// reload UI prompt" named as the correct fast-follow rather than flipping
+// those flags back to automatic. This listener is that fast-follow: it does
+// nothing on its own — a new SW still just sits in "waiting" state after
+// install, same as before. It only activates when the PAGE explicitly posts
+// this message, which only happens when a user clicks "Update" in the
+// UpdateToast component (components/pwa/UpdateToast.tsx). No automatic
+// activation path was added.
+// ─────────────────────────────────────────────────────────────────────────
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("pushsubscriptionchange", (event: any) => {

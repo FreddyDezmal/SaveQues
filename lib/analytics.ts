@@ -163,6 +163,24 @@ export const AnalyticsEvents = {
   // Sprint 10 — Financial Integrity & Write Consolidation
   NOTIFICATIONS_ENABLED: "notifications_enabled",
   ACCOUNT_DELETED:       "account_deleted",
+
+  // Sprint 15 — PWA UX polish
+  PWA_INSTALL_PROMPT_SHOWN:     "pwa_install_prompt_shown",
+  PWA_INSTALL_PROMPT_ACCEPTED:  "pwa_install_prompt_accepted",
+  PWA_INSTALL_PROMPT_DISMISSED: "pwa_install_prompt_dismissed",
+  PWA_INSTALLED:                "pwa_installed",
+  PWA_UPDATE_AVAILABLE_SHOWN:   "pwa_update_available_shown",
+  PWA_UPDATE_INSTALLED:         "pwa_update_installed",
+  OFFLINE_SESSION_STARTED:      "offline_session_started",
+  OFFLINE_SESSION_ENDED:        "offline_session_ended",
+  SHARE_INITIATED:              "share_initiated",
+  SHARE_COMPLETED:              "share_completed",
+  SHARE_FALLBACK_COPY:          "share_fallback_copy",
+  NOTIFICATION_CENTER_OPENED:   "notification_center_opened",
+  NOTIFICATION_MARKED_READ:     "notification_marked_read",
+  NOTIFICATION_MARK_ALL_READ:   "notification_mark_all_read",
+  BADGE_SET:                    "badge_set",
+  BADGE_CLEARED:                "badge_cleared",
 } as const;
 
 export type AnalyticsEventName = (typeof AnalyticsEvents)[keyof typeof AnalyticsEvents];
