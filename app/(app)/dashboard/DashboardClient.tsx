@@ -443,7 +443,7 @@ export default function DashboardClient({
             </Link>
           </div>
           <div className="card px-4 divide-y divide-surface-border">
-            {previewEvents.map(event => (
+            {previewEvents.slice(0, 5).map(event => (
               <TimelineEventRow
                 key={event.id}
                 event={event}
