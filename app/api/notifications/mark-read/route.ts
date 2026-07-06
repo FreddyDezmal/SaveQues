@@ -24,10 +24,10 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { id, all } = body as { id?: string; all?: boolean };
+    const { id, ids, all } = body as { id?: string; ids?: string[]; all?: boolean };
 
-    if (!id && !all) {
-      return NextResponse.json({ error: "Provide either { id } or { all: true }" }, { status: 400 });
+    if (!id && !all && !(Array.isArray(ids) && ids.length > 0)) {
+      return NextResponse.json({ error: "Provide { id }, { ids: string[] }, or { all: true }" }, { status: 400 });
     }
 
     let query = supabase
@@ -38,6 +38,11 @@ export async function POST(req: NextRequest) {
 
     if (id) {
       query = query.eq("id", id);
+    } else if (ids && ids.length > 0) {
+      // Sprint 16, Phase 2: lets NotificationCenter mark an entire grouped
+      // row (e.g. "3 new quest reminders") read in one request instead of
+      // firing N separate mark-read calls.
+      query = query.in("id", ids);
     }
 
     const { error } = await query;

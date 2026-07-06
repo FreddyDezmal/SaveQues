@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
 import { STATIC_EVENTS } from "@/lib/events";
 import EventCard from "@/components/events/EventCard";
+import EmptyState from "@/components/ui/EmptyState";
 import { Calendar, Clock, Trophy } from "lucide-react";
 
 interface Props {
@@ -63,15 +64,11 @@ export default function EventsClient({ events, participationMap, history, userId
       {activeTab === "active" && (
         <div className="space-y-3">
           {activeEvents.length === 0 ? (
-            <div className="card p-10 text-center">
-              <div className="text-5xl mb-4">⚡</div>
-              <h3 className="font-display text-lg font-semibold text-white mb-2">
-                No active events right now
-              </h3>
-              <p className="text-white/40 text-sm">
-                Check the Upcoming tab — something might be starting soon.
-              </p>
-            </div>
+            <EmptyState
+              emoji="⚡"
+              title="No active events right now"
+              description="Check the Upcoming tab — something might be starting soon."
+            />
           ) : (
             activeEvents.map(event => (
               <EventCard
@@ -89,15 +86,11 @@ export default function EventsClient({ events, participationMap, history, userId
       {activeTab === "upcoming" && (
         <div className="space-y-3">
           {upcomingEvents.length === 0 ? (
-            <div className="card p-10 text-center">
-              <div className="text-5xl mb-4">📅</div>
-              <h3 className="font-display text-lg font-semibold text-white mb-2">
-                Nothing upcoming right now
-              </h3>
-              <p className="text-white/40 text-sm">
-                New events are added regularly — check back soon.
-              </p>
-            </div>
+            <EmptyState
+              emoji="📅"
+              title="Nothing upcoming right now"
+              description="New events are added regularly — check back soon."
+            />
           ) : (
             <>
               <div className="px-4 py-2.5 rounded-xl bg-surface-elevated border border-surface-border mb-2">
@@ -122,15 +115,11 @@ export default function EventsClient({ events, participationMap, history, userId
       {activeTab === "history" && (
         <div className="space-y-3">
           {history.length === 0 ? (
-            <div className="card p-10 text-center">
-              <div className="text-5xl mb-4">🏅</div>
-              <h3 className="font-display text-lg font-semibold text-white mb-2">
-                No completed events yet
-              </h3>
-              <p className="text-white/40 text-sm">
-                Complete an active event and it will appear here.
-              </p>
-            </div>
+            <EmptyState
+              emoji="🏅"
+              title="No completed events yet"
+              description="Complete an active event and it will appear here."
+            />
           ) : (
             <>
               {/* XP summary */}

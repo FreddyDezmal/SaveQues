@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import AnalyticsProvider from "@/components/AnalyticsProvider";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import UpdateToast from "@/components/pwa/UpdateToast";
+import { UndoSnackbarProvider } from "@/components/ui/UndoSnackbar";
+import InstallSuccessCelebration from "@/components/pwa/InstallSuccessCelebration";
 import * as Sentry from "@sentry/nextjs";
 import type { Metadata } from "next";
 
@@ -99,7 +101,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           */}
           <ServiceWorkerRegistration />
           <UpdateToast />
-          {children}
+          <InstallSuccessCelebration />
+          <UndoSnackbarProvider>{children}</UndoSnackbarProvider>
         </AnalyticsProvider>
       </body>
     </html>

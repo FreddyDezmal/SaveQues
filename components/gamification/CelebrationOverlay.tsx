@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import ShareButton from "@/components/sharing/ShareButton";
+import { useHaptics } from "@/lib/hooks/useHaptics";
 
 interface Props {
   show: boolean;
@@ -17,6 +18,7 @@ interface Props {
 
 export default function CelebrationOverlay({ show, type, title, subtitle, icon, xpGained, onClose, autoDismissMs }: Props) {
   const [confetti, setConfetti] = useState<{ x: number; y: number; color: string; delay: number }[]>([]);
+  const { vibrate } = useHaptics();
 
   useEffect(() => {
     if (show) {
@@ -28,6 +30,13 @@ export default function CelebrationOverlay({ show, type, title, subtitle, icon, 
         delay: Math.random() * 0.6,
       }));
       setConfetti(pieces);
+      // Sprint 16, Phase 8: goal completion and level-up get the fuller
+      // "success" pattern (this is the biggest moment in the app); routine
+      // XP pops get nothing at all — an app that buzzes on every small
+      // deposit would make the haptic meaningless by the time a real
+      // milestone happens. Achievement unlocks sit in between: a light tap.
+      if (type === "goal" || type === "levelup") vibrate("success");
+      else if (type === "achievement") vibrate("light");
     }
   }, [show, type]);
 

@@ -12,9 +12,13 @@
  * + read-state layer on top of what already gets sent.
  */
 
-import { useEffect, useState } from "react";
-import { X, Flame, Target, Trophy, Clock, Bell, CheckCheck } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { X, Flame, Target, Trophy, Clock, Bell, CheckCheck, ChevronDown } from "lucide-react";
 import { trackEvent, AnalyticsEvents } from "@/lib/analytics";
+import { groupNotifications, type NotificationGroup } from "@/lib/notificationGrouping";
+import { useUndoSnackbar } from "@/components/ui/UndoSnackbar";
+import EmptyState from "@/components/ui/EmptyState";
+import { useHaptics } from "@/lib/hooks/useHaptics";
 
 interface NotificationRow {
   id: string;
@@ -52,6 +56,14 @@ function timeAgo(iso: string): string {
 export default function NotificationCenter({ onClose, onUnreadCountChange }: Props) {
   const [notifications, setNotifications] = useState<NotificationRow[] | null>(null);
   const [error, setError] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const { showUndo } = useUndoSnackbar();
+  const { vibrate } = useHaptics();
+  // Sprint 16, Phase 3: pending server commits, keyed by a request id, so
+  // Undo can cancel the actual API call rather than needing a separate
+  // "mark unread" endpoint to reverse an already-persisted write. The UI
+  // updates optimistically either way; only the SERVER write is delayed.
+  const pendingCommits = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
     trackEvent(AnalyticsEvents.NOTIFICATION_CENTER_OPENED);
@@ -68,40 +80,123 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const AUTO_DISMISS_MS = 5000; // must match UndoSnackbar's own window
+
+  function commitMarkRead(body: object) {
+    fetch("/api/notifications/mark-read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => {
+      // Non-fatal: worst case, read state re-syncs correctly next time the
+      // panel opens and refetches from the server.
+    });
+  }
+
+  /** Reverts the specific rows back to their pre-mark-read state. Used both
+   *  by the "single row" and "group row" undo paths below. */
+  function revertReadState(ids: string[], previousReadAt: Map<string, string | null>) {
+    setNotifications((prev) =>
+      prev ? prev.map((n) => (ids.includes(n.id) ? { ...n, read_at: previousReadAt.get(n.id) ?? null } : n)) : prev
+    );
+    const revertedUnreadCount = (notifications ?? []).filter(
+      (n) => ids.includes(n.id) || !n.read_at
+    ).length;
+    onUnreadCountChange(revertedUnreadCount);
+  }
+
   async function handleMarkAllRead() {
     if (!notifications) return;
+    const previousReadAt = new Map(notifications.map((n) => [n.id, n.read_at]));
+    const idsBeingMarked = notifications.filter((n) => !n.read_at).map((n) => n.id);
+    if (idsBeingMarked.length === 0) return;
+
     const now = new Date().toISOString();
     setNotifications(notifications.map((n) => ({ ...n, read_at: n.read_at ?? now })));
     onUnreadCountChange(0);
     trackEvent(AnalyticsEvents.NOTIFICATION_MARK_ALL_READ);
-    try {
-      await fetch("/api/notifications/mark-read", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ all: true }),
-      });
-    } catch {
-      // Non-fatal: worst case, read state re-syncs correctly next time the
-      // panel opens and refetches from the server, which is the source of
-      // truth — the optimistic UI update above doesn't need to be undone.
-    }
+    vibrate("light");
+
+    const timeoutId = setTimeout(() => {
+      commitMarkRead({ all: true });
+      pendingCommits.current.delete("all");
+    }, AUTO_DISMISS_MS);
+    pendingCommits.current.set("all", timeoutId);
+
+    showUndo(`Marked ${idsBeingMarked.length} notification${idsBeingMarked.length === 1 ? "" : "s"} as read`, () => {
+      const t = pendingCommits.current.get("all");
+      if (t) clearTimeout(t);
+      pendingCommits.current.delete("all");
+      revertReadState(idsBeingMarked, previousReadAt);
+    });
   }
 
   async function handleMarkOneRead(id: string) {
+    const target = notifications?.find((n) => n.id === id);
+    if (!target || target.read_at) return; // already read — nothing to undo
+    const previousReadAt = new Map([[id, target.read_at]]);
+
     setNotifications((prev) =>
-      prev ? prev.map((n) => (n.id === id ? { ...n, read_at: n.read_at ?? new Date().toISOString() } : n)) : prev
+      prev ? prev.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n)) : prev
     );
     const unread = (notifications ?? []).filter((n) => n.id !== id && !n.read_at).length;
     onUnreadCountChange(unread);
     trackEvent(AnalyticsEvents.NOTIFICATION_MARKED_READ);
-    try {
-      await fetch("/api/notifications/mark-read", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
-      });
-    } catch {}
+    vibrate("light");
+
+    const timeoutId = setTimeout(() => {
+      commitMarkRead({ id });
+      pendingCommits.current.delete(id);
+    }, AUTO_DISMISS_MS);
+    pendingCommits.current.set(id, timeoutId);
+
+    showUndo("Notification marked as read", () => {
+      const t = pendingCommits.current.get(id);
+      if (t) clearTimeout(t);
+      pendingCommits.current.delete(id);
+      revertReadState([id], previousReadAt);
+    });
   }
+
+  async function handleMarkGroupRead(ids: string[]) {
+    if (ids.length === 0 || !notifications) return;
+    const previousReadAt = new Map(notifications.filter((n) => ids.includes(n.id)).map((n) => [n.id, n.read_at]));
+    const now = new Date().toISOString();
+
+    setNotifications((prev) =>
+      prev ? prev.map((n) => (ids.includes(n.id) ? { ...n, read_at: n.read_at ?? now } : n)) : prev
+    );
+    const unread = (notifications ?? []).filter((n) => !ids.includes(n.id) && !n.read_at).length;
+    onUnreadCountChange(unread);
+    trackEvent(AnalyticsEvents.NOTIFICATION_MARKED_READ, { grouped: true, count: ids.length });
+    vibrate("light");
+
+    const groupKey = ids.join(",");
+    const timeoutId = setTimeout(() => {
+      commitMarkRead({ ids });
+      pendingCommits.current.delete(groupKey);
+    }, AUTO_DISMISS_MS);
+    pendingCommits.current.set(groupKey, timeoutId);
+
+    showUndo(`Marked ${ids.length} notifications as read`, () => {
+      const t = pendingCommits.current.get(groupKey);
+      if (t) clearTimeout(t);
+      pendingCommits.current.delete(groupKey);
+      revertReadState(ids, previousReadAt);
+    });
+  }
+
+
+  function toggleGroup(type: string) {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  }
+
+  const groups: NotificationGroup[] = notifications ? groupNotifications(notifications) : [];
 
   const hasUnread = (notifications ?? []).some((n) => !n.read_at);
 
@@ -146,29 +241,95 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
           )}
 
           {!error && notifications !== null && notifications.length === 0 && (
-            <p className="text-xs text-white/40 text-center py-8 px-4">
-              No notifications yet — streak reminders and goal alerts will show up here.
-            </p>
+            <EmptyState
+              bare
+              emoji="🔔"
+              title="No notifications yet"
+              description="Streak reminders, quest deadlines, and goal alerts will show up here."
+            />
           )}
 
           {!error &&
-            notifications?.map((n) => (
-              <button
-                key={n.id}
-                onClick={() => handleMarkOneRead(n.id)}
-                className={`w-full text-left px-4 py-3 flex items-start gap-3 border-b border-surface-border last:border-b-0 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:bg-white/5 ${
-                  !n.read_at ? "bg-brand-500/[0.04]" : ""
-                }`}
-              >
-                <div className="mt-0.5 flex-shrink-0">{TYPE_ICON[n.notification_type] ?? <Bell size={16} className="text-white/40" />}</div>
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm ${!n.read_at ? "font-semibold text-white" : "text-white/70"}`}>{n.title}</p>
-                  <p className="text-xs text-white/40 mt-0.5 line-clamp-2">{n.body}</p>
-                  <p className="text-[11px] text-white/30 mt-1">{timeAgo(n.sent_at)}</p>
+            groups.map((g) => {
+              if (g.kind === "single") {
+                const n = g.notification;
+                return (
+                  <button
+                    key={n.id}
+                    onClick={() => handleMarkOneRead(n.id)}
+                    className={`w-full text-left px-4 py-3 flex items-start gap-3 border-b border-surface-border last:border-b-0 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:bg-white/5 ${
+                      !n.read_at ? "bg-brand-500/[0.04]" : ""
+                    }`}
+                  >
+                    <div className="mt-0.5 flex-shrink-0">{TYPE_ICON[n.notification_type] ?? <Bell size={16} className="text-white/40" />}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm ${!n.read_at ? "font-semibold text-white" : "text-white/70"}`}>{n.title}</p>
+                      <p className="text-xs text-white/40 mt-0.5 line-clamp-2">{n.body}</p>
+                      <p className="text-[11px] text-white/30 mt-1">{timeAgo(n.sent_at)}</p>
+                    </div>
+                    {!n.read_at && <span className="w-2 h-2 rounded-full bg-brand-400 flex-shrink-0 mt-1.5" aria-label="Unread" />}
+                  </button>
+                );
+              }
+
+              // Grouped row — e.g. "3 new quest reminders"
+              const isExpanded = expandedGroups.has(g.notification_type);
+              const unreadIds = g.notifications.filter((n) => !n.read_at).map((n) => n.id);
+
+              return (
+                <div key={g.notification_type} className="border-b border-surface-border last:border-b-0">
+                  <div
+                    className={`w-full flex items-start gap-3 px-4 py-3 ${unreadIds.length > 0 ? "bg-brand-500/[0.04]" : ""}`}
+                  >
+                    <button
+                      onClick={() => toggleGroup(g.notification_type)}
+                      className="flex items-start gap-3 flex-1 min-w-0 text-left focus-visible:outline-none"
+                      aria-expanded={isExpanded}
+                    >
+                      <div className="mt-0.5 flex-shrink-0">
+                        {TYPE_ICON[g.notification_type] ?? <Bell size={16} className="text-white/40" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm ${unreadIds.length > 0 ? "font-semibold text-white" : "text-white/70"}`}>
+                          {g.label}
+                        </p>
+                        <p className="text-[11px] text-white/30 mt-1">{timeAgo(g.notifications[0].sent_at)}</p>
+                      </div>
+                      <ChevronDown
+                        size={15}
+                        className={`text-white/30 flex-shrink-0 mt-0.5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                    {unreadIds.length > 0 && (
+                      <button
+                        onClick={() => handleMarkGroupRead(unreadIds)}
+                        className="text-[11px] text-brand-400 hover:text-brand-300 flex-shrink-0 mt-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 rounded px-1"
+                      >
+                        Mark read
+                      </button>
+                    )}
+                  </div>
+
+                  {isExpanded && (
+                    <div className="bg-black/10">
+                      {g.notifications.map((n) => (
+                        <button
+                          key={n.id}
+                          onClick={() => handleMarkOneRead(n.id)}
+                          className="w-full text-left pl-11 pr-4 py-2.5 flex items-start gap-3 border-t border-surface-border/50 hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:bg-white/5"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-xs ${!n.read_at ? "font-medium text-white/90" : "text-white/50"}`}>{n.title}</p>
+                            <p className="text-[11px] text-white/30 mt-0.5">{timeAgo(n.sent_at)}</p>
+                          </div>
+                          {!n.read_at && <span className="w-1.5 h-1.5 rounded-full bg-brand-400 flex-shrink-0 mt-1" aria-label="Unread" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {!n.read_at && <span className="w-2 h-2 rounded-full bg-brand-400 flex-shrink-0 mt-1.5" aria-label="Unread" />}
-              </button>
-            ))}
+              );
+            })}
         </div>
       </div>
     </div>

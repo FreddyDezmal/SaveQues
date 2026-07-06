@@ -7,6 +7,7 @@ import { getXPForAction } from "@/lib/xp";
 import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import Link from "next/link";
 import { Zap, CheckCircle, Clock, Trophy, Calendar, Sparkles, Timer } from "lucide-react";
+import EmptyState from "@/components/ui/EmptyState";
 
 interface Props {
   allChallenges: any[];
@@ -565,10 +566,11 @@ export default function QuestsClient({
             )}
 
             {availableChallenges.length === 0 && activeUCs.length === 0 && completedUCs.length === 0 && (
-              <div className="card p-10 text-center">
-                <div className="text-4xl mb-3">🌸</div>
-                <p className="text-white/40 text-sm">No seasonal quests available right now.</p>
-              </div>
+              <EmptyState
+                emoji="🌸"
+                title="No seasonal quests right now"
+                description="Check back soon — new seasonal challenges are added throughout the year."
+              />
             )}
           </div>
         )}

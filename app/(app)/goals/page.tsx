@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import GoalCard from "@/components/goals/GoalCard";
+import EmptyState from "@/components/ui/EmptyState";
 import { Plus, ChevronRight } from "lucide-react";
 
 export default async function GoalsPage() {
@@ -31,14 +32,12 @@ export default async function GoalsPage() {
       </div>
 
       {active.length === 0 && completed.length === 0 ? (
-        <div className="card p-10 text-center">
-          <div className="text-5xl mb-4">🎯</div>
-          <h2 className="font-display text-xl font-semibold text-white mb-2">No goals yet</h2>
-          <p className="text-white/40 text-sm mb-6">Create your first savings goal and start earning XP!</p>
-          <Link href="/goals/new" className="btn-primary inline-flex items-center gap-2">
-            <Plus size={16} /> Create My First Goal
-          </Link>
-        </div>
+        <EmptyState
+          emoji="🎯"
+          title="No goals yet"
+          description="Create your first savings goal and start earning XP!"
+          action={{ label: "Create My First Goal", href: "/goals/new" }}
+        />
       ) : (
         <>
           {active.length > 0 && (

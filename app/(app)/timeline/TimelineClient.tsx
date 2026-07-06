@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
+import EmptyState from "@/components/ui/EmptyState";
 import type { TimelineEventGroup } from "@/lib/types";
 
 interface Props {
@@ -44,21 +45,17 @@ export default function TimelineClient({
 
       {/* Empty state */}
       {isEmpty && (
-        <div className="card p-10 text-center mt-12">
-          <div className="text-5xl mb-4">🌱</div>
-          <p className="font-display font-semibold text-white text-base mb-1">Nothing here yet</p>
-          <p className="text-white/40 text-sm">
-            {goalTitle
+        <EmptyState
+          className="mt-12"
+          emoji="🌱"
+          title="Nothing here yet"
+          description={
+            goalTitle
               ? "Log your first deposit to start your goal story."
-              : "Make your first deposit to start your savings journey."}
-          </p>
-          <Link
-            href={goalTitle ? backHref : "/goals"}
-            className="inline-flex mt-6 btn-primary text-sm"
-          >
-            {goalTitle ? "Back to goal" : "Go to Goals"}
-          </Link>
-        </div>
+              : "Make your first deposit to start your savings journey."
+          }
+          action={{ label: goalTitle ? "Back to goal" : "Go to Goals", href: goalTitle ? backHref : "/goals" }}
+        />
       )}
 
       {/* Event groups */}

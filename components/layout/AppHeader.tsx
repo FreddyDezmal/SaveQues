@@ -12,7 +12,10 @@ import NotificationBell from "@/components/notifications/NotificationBell";
  */
 export default function AppHeader() {
   return (
-    <header className="sticky top-0 z-30 flex items-center justify-between px-4 h-14 bg-surface-base/80 backdrop-blur-md border-b border-surface-border">
+    <header
+      className="sticky top-0 z-30 flex items-center justify-between px-4 h-14 bg-surface-base/80 backdrop-blur-md border-b border-surface-border"
+      style={{ paddingTop: "env(safe-area-inset-top, 0px)", height: "var(--app-header-height)" }}
+    >
       <span className="font-display font-bold text-white text-sm">SaveQuest</span>
       <NotificationBell />
     </header>

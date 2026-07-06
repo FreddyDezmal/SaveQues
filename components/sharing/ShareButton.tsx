@@ -14,6 +14,7 @@
 import { useState } from "react";
 import { Share2, Copy, Check } from "lucide-react";
 import { trackEvent, AnalyticsEvents } from "@/lib/analytics";
+import { useHaptics } from "@/lib/hooks/useHaptics";
 
 interface Props {
   title: string;
@@ -25,6 +26,7 @@ interface Props {
 
 export default function ShareButton({ title, text, shareContext, className }: Props) {
   const [copied, setCopied] = useState(false);
+  const { vibrate } = useHaptics();
 
   async function handleShare() {
     trackEvent(AnalyticsEvents.SHARE_INITIATED, { context: shareContext });
@@ -33,6 +35,7 @@ export default function ShareButton({ title, text, shareContext, className }: Pr
       try {
         await navigator.share({ title, text, url: "https://savequest.app" });
         trackEvent(AnalyticsEvents.SHARE_COMPLETED, { context: shareContext, method: "native" });
+        vibrate("light");
         return;
       } catch (err: any) {
         // AbortError = user closed the native share sheet without picking

@@ -62,14 +62,12 @@ export default function OfflineBanner() {
   return (
     <div
       role="status"
-      // top-14 (not top-0): sits directly below AppHeader, which is also
-      // sticky top-0 at a fixed 56px (h-14) height. Two elements both
-      // pinned to top-0 in the same scroll container would overlap instead
-      // of stacking — this offset is what makes them stack correctly.
-      // Coupling to AppHeader's exact height is a small fragility worth
-      // noting: if AppHeader's height ever changes, this value needs to
-      // change with it.
-      className="sticky top-14 z-30 w-full bg-amber-500/15 border-b border-amber-500/25 px-4 py-2 flex items-center justify-center gap-2"
+      // Sprint 16, Phase 9: uses the shared --app-header-height variable
+      // (globals.css) rather than repeating AppHeader's calc() here —
+      // the earlier version of this comment described exactly the drift
+      // risk that a shared variable, not a comment, actually solves.
+      style={{ top: "var(--app-header-height)" }}
+      className="sticky z-30 w-full bg-amber-500/15 border-b border-amber-500/25 px-4 py-2 flex items-center justify-center gap-2"
     >
       <WifiOff size={13} className="text-amber-400 flex-shrink-0" />
       <p className="text-xs text-amber-300">

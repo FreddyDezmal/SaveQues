@@ -5,6 +5,7 @@ import { formatAmount } from "@/lib/currency";
 import { getCategoryById } from "@/lib/utils";
 import { ArrowLeft, Trophy, Plus } from "lucide-react";
 import { format } from "date-fns";
+import EmptyState from "@/components/ui/EmptyState";
 
 interface Props {
   goals: any[];
@@ -44,18 +45,12 @@ export default function GoalHistoryClient({ goals, totalLifetimeSaved, profile }
       )}
 
       {goals.length === 0 ? (
-        <div className="card p-10 text-center">
-          <div className="text-5xl mb-4">🏆</div>
-          <h3 className="font-display text-lg font-semibold text-white mb-2">
-            Your first completed goal will live here
-          </h3>
-          <p className="text-white/40 text-sm mb-5">
-            Every goal you complete becomes a permanent part of your story.
-          </p>
-          <Link href="/goals/new" className="btn-primary inline-flex items-center gap-2 text-sm">
-            <Plus size={15} /> Create a Goal
-          </Link>
-        </div>
+        <EmptyState
+          emoji="🏆"
+          title="Your first completed goal will live here"
+          description="Every goal you complete becomes a permanent part of your story."
+          action={{ label: "Create a Goal", href: "/goals/new", icon: <Plus size={15} /> }}
+        />
       ) : (
         <div className="space-y-4">
           {goals.map((goal, idx) => {

@@ -7,6 +7,7 @@ import { ACHIEVEMENTS } from "@/lib/achievements";
 import { formatCurrency } from "@/lib/utils";
 import { LEVELS, TIER_COLORS, TIER_LABELS, type LevelTier } from "@/lib/xp";
 import { LogOut, ChevronDown, ChevronUp, Lock, ChevronRight } from "lucide-react";
+import EmptyState from "@/components/ui/EmptyState";
 import { formatAmount } from "@/lib/currency";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import BadgeDetailPanel, { type BadgeDetailData } from "@/components/gamification/BadgeDetailPanel";
@@ -375,10 +376,11 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, earnedAch
       {activeTab === "timeline" && (
         <div className="mb-6">
           {timelineGroups.length === 0 ? (
-            <div className="card p-8 text-center">
-              <div className="text-4xl mb-3">🌱</div>
-              <p className="text-white/40 text-sm">Your savings journey starts with your first deposit.</p>
-            </div>
+            <EmptyState
+              emoji="🌱"
+              title="Your journey starts here"
+              description="Your savings journey starts with your first deposit."
+            />
           ) : (
             <>
               <div className="space-y-4 mb-4">

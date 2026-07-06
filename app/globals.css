@@ -9,6 +9,15 @@
     --color-emerald: #10b981;
     --color-surface-base: #0f0f14;
     --color-surface-card: #17171f;
+    /* Sprint 16, Phase 9: single source of truth for AppHeader's rendered
+       height, consumed by both AppHeader.tsx (to set its own height) and
+       OfflineBanner.tsx (to position itself directly below it). These two
+       values drifting apart (one hardcoded, one dynamic) is exactly what
+       caused a real overlap bug on notched devices earlier in this same
+       phase — a shared variable is what actually prevents that class of
+       bug from recurring, not a comment reminding someone to keep two
+       calc() expressions in sync by hand. */
+    --app-header-height: calc(3.5rem + env(safe-area-inset-top, 0px));
     --color-surface-elevated: #1e1e28;
     --color-surface-border: #2a2a38;
   }

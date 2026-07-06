@@ -6,6 +6,7 @@ import { SUPPORTED_CURRENCIES } from "@/lib/currency";
 import { ArrowLeft, ChevronRight, Trash2 } from "lucide-react";
 import Link from "next/link";
 import NotificationSettings from "@/components/notifications/NotificationSettings";
+import VersionInfo from "@/components/settings/VersionInfo";
 
 interface Props {
   profile: any;
@@ -136,6 +137,17 @@ export default function SettingsClient({ profile, email }: Props) {
         notificationsEnabled={profile.notifications_enabled ?? false}
       />
 
+      <Link
+        href="/settings/notifications"
+        className="card p-4 flex items-center justify-between hover:border-white/10 transition-colors mb-6 -mt-3"
+      >
+        <div>
+          <p className="text-sm font-medium text-white">Notification preferences</p>
+          <p className="text-xs text-white/40 mt-0.5">Choose which types of notifications you receive</p>
+        </div>
+        <ChevronRight size={16} className="text-white/20" />
+      </Link>
+
       {/* Password */}
       <div className="mb-6">
         <p className="text-xs text-white/40 uppercase tracking-wider font-medium mb-3">Security</p>
@@ -157,6 +169,10 @@ export default function SettingsClient({ profile, email }: Props) {
       <button onClick={handleSave} disabled={saving} className="btn-primary w-full mb-8">
         {saving ? "Saving…" : saved ? "✓ Saved" : "Save changes"}
       </button>
+
+      <div className="mb-8">
+        <VersionInfo />
+      </div>
 
       {/* Danger zone */}
       <div>

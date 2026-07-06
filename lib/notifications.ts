@@ -288,6 +288,35 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
     return { processed: 0, notifications_sent: 0, errors: 1 };
   }
 
+  // Sprint 16 — Phase 1: batch-fetch notification_preferences for every user
+  // in this run, once, rather than a per-user query inside the loop below.
+  // With potentially thousands of subscribers processed per cron run, N+1
+  // queries here would be the kind of thing that only shows up as a
+  // production slowdown much later — worth avoiding from the start rather
+  // than "fixing efficiently later" per the sprint brief's Phase 2 note on
+  // efficient logic applying in spirit here too.
+  const userIds = (subs as any[]).map((s) => s.profiles?.id).filter(Boolean);
+  const { data: prefRows } = await supabase
+    .from("notification_preferences")
+    .select("user_id, goal_reminders, streak_reminders")
+    .in("user_id", userIds);
+
+  const prefsByUser = new Map<string, { goal_reminders: boolean; streak_reminders: boolean }>();
+  for (const row of prefRows ?? []) {
+    prefsByUser.set(row.user_id, {
+      goal_reminders: row.goal_reminders,
+      streak_reminders: row.streak_reminders,
+    });
+  }
+  // Users with no preferences row yet (haven't visited the new preferences
+  // page) get the same defaults the table itself defines — true for both —
+  // so behavior for existing users is UNCHANGED until they explicitly
+  // opt out. This is what "provide sensible defaults" means in practice:
+  // the absence of a row is not treated as "assume everything off."
+  function getPref(userId: string, key: "goal_reminders" | "streak_reminders"): boolean {
+    return prefsByUser.get(userId)?.[key] ?? true;
+  }
+
   // Deduplicate by user_id (one user may have multiple subscriptions)
   const usersToProcess = new Map<string, {
     timezone: string;
@@ -340,6 +369,12 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
       : 999;
 
     // 1. Inactive 3+ days
+    // Sprint 16: deliberately NOT gated by any of the six new preference
+    // categories — "come back, we miss you" doesn't map cleanly to
+    // achievements/goals/streaks/summaries/milestones/announcements, and
+    // forcing it under one would misrepresent what that toggle controls.
+    // It remains governed only by the existing master notifications_enabled
+    // switch (already applied in the query above).
     if (daysSinceActive >= 3) {
       const r = await sendInactiveReminder(userId, daysSinceActive);
       notifications_sent += r.sent; errors += r.errors;
@@ -347,7 +382,10 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
     }
 
     // 2. Streak at risk (active yesterday but not today)
-    if (streakDays > 0 && daysSinceActive === 1) {
+    // Sprint 16 — gated by the streak_reminders preference. Kept as an
+    // early boolean check rather than skipping the whole block, so the
+    // existing daysSinceActive/streakDays logic above stays untouched.
+    if (streakDays > 0 && daysSinceActive === 1 && getPref(userId, "streak_reminders")) {
       const r = await sendStreakAtRisk(userId, streakDays);
       notifications_sent += r.sent; errors += r.errors;
     }
@@ -361,7 +399,7 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
       .limit(1)
       .maybeSingle();
 
-    if (!questLog) {
+    if (!questLog && getPref(userId, "goal_reminders")) {
       const r = await sendDailyQuestReminder(userId);
       notifications_sent += r.sent; errors += r.errors;
     }
@@ -379,7 +417,7 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
         .limit(1)
         .maybeSingle();
 
-      if (weeklyQuest) {
+      if (weeklyQuest && getPref(userId, "goal_reminders")) {
         // They have an incomplete weekly quest this week — remind them
         const r = await sendWeeklyQuestExpiry(userId, daysLeftInWeek);
         notifications_sent += r.sent; errors += r.errors;
@@ -399,7 +437,7 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
         const expiresAt = new Date(uc.started_at);
         expiresAt.setDate(expiresAt.getDate() + ch.duration_days);
         const daysLeft = Math.ceil((expiresAt.getTime() - Date.now()) / 86400000);
-        if (daysLeft >= 1 && daysLeft <= 3) {
+        if (daysLeft >= 1 && daysLeft <= 3 && getPref(userId, "goal_reminders")) {
           const r = await sendSeasonalExpiry(userId, ch.title, daysLeft);
           notifications_sent += r.sent; errors += r.errors;
         }

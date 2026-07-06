@@ -24,12 +24,24 @@ export default function ServiceWorkerRegistration() {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
 
-    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch((err) => {
-      // Non-fatal by design: the app must remain fully usable without a
-      // service worker. Losing install/offline support is acceptable;
-      // breaking navigation is not.
-      console.error("[SaveQuest] Service worker registration failed:", err);
-    });
+    navigator.serviceWorker.register("/sw.js", { scope: "/" })
+      .then(() => {
+        // Sprint 16, Phase 5: real per-device signal for "Last Updated" in
+        // Settings' Version Info section — distinct from the global build
+        // date (lib/buildInfo.ts), which is the same for every user on a
+        // given deploy. This is "when did THIS device last confirm it has
+        // an active service worker registration," which is closer to what
+        // a user actually means by "when was I last updated."
+        try {
+          localStorage.setItem("sq_sw_last_registered_at", new Date().toISOString());
+        } catch {}
+      })
+      .catch((err) => {
+        // Non-fatal by design: the app must remain fully usable without a
+        // service worker. Losing install/offline support is acceptable;
+        // breaking navigation is not.
+        console.error("[SaveQuest] Service worker registration failed:", err);
+      });
   }, []);
 
   return null;

@@ -30,6 +30,16 @@ interface UsePWAInstallReturn {
   canInstall: boolean;
   /** True if the app is already running installed (standalone display mode). */
   isInstalled: boolean;
+  /**
+   * True only in the exact browser session where the `appinstalled` event
+   * just fired — i.e. an install that happened THIS session, not "was
+   * already installed before this page load." Sprint 16's
+   * InstallSuccessCelebration relies on this distinction specifically:
+   * isInstalled alone would be true on every subsequent launch of an
+   * already-installed app, which would wrongly re-trigger a "just
+   * installed!" celebration on every normal open.
+   */
+  justInstalled: boolean;
   /** Triggers the native install dialog. Resolves with the user's choice. */
   promptInstall: () => Promise<"accepted" | "dismissed" | "unavailable">;
 }
@@ -47,6 +57,7 @@ function detectStandalone(): boolean {
 export function usePWAInstall(): UsePWAInstallReturn {
   const [deferredEvent, setDeferredEvent] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [justInstalled, setJustInstalled] = useState(false);
 
   useEffect(() => {
     setIsInstalled(detectStandalone());
@@ -60,6 +71,7 @@ export function usePWAInstall(): UsePWAInstallReturn {
 
     function handleAppInstalled() {
       setIsInstalled(true);
+      setJustInstalled(true);
       setDeferredEvent(null);
       // Fired here (not in the card component) so it's captured regardless
       // of whether install happened via our custom card or the browser's
@@ -87,6 +99,7 @@ export function usePWAInstall(): UsePWAInstallReturn {
   return {
     canInstall: deferredEvent !== null && !isInstalled,
     isInstalled,
+    justInstalled,
     promptInstall,
   };
 }
