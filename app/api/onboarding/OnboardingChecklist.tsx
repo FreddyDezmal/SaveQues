@@ -130,13 +130,14 @@ export default function OnboardingChecklist({
     return (
       <div className="mb-4 card p-5 border-brand-500/30 bg-brand-500/5 text-center">
         <div className="text-3xl mb-2">🎉</div>
-        <p className="font-display font-bold text-white text-sm">You're all set!</p>
+        <p className="font-display font-bold text-white text-sm">{"You're all set!"}</p>
         <p className="text-xs text-white/50 mt-1">
-          You've completed onboarding — now keep that streak alive.
+          {"You've completed onboarding — now keep that streak alive."}
         </p>
       </div>
     );
   }
+
 
   // ── Active checklist ──────────────────────────────────────────────────────
   return (
