@@ -410,7 +410,7 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
               {txType === "goal_purchase" && (
                 <div className="px-3 py-2.5 rounded-xl bg-brand-500/8 border border-brand-500/15">
                   <p className="text-xs text-brand-300">
-                    Use this when you've spent the money on what you saved for. This celebrates your goal. 🎯
+                    Use this when you&apos;ve spent the money on what you saved for. This celebrates your goal. 🎯
                   </p>
                 </div>
               )}
@@ -418,7 +418,7 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
               {!isOnline && (
                 <div className="px-3 py-2.5 rounded-xl bg-white/5 border border-white/10">
                   <p className="text-xs text-white/60">
-                    You're offline. SaveQuest never queues financial actions for
+                    You&apos;re offline. SaveQuest never queues financial actions for
                     later — reconnect to make sure this is recorded correctly.
                   </p>
                 </div>
@@ -667,7 +667,7 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
           >
             <div className="text-center mb-5">
               <div className="text-5xl mb-3">🚀</div>
-              <h2 className="font-display text-xl font-bold text-white">What's next for you?</h2>
+              <h2 className="font-display text-xl font-bold text-white">What&apos;s next for you?</h2>
               <p className="text-white/50 text-sm mt-1">
                 You proved you can follow through. Keep that momentum going.
               </p>
@@ -691,7 +691,7 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
                 onClick={() => setShowNextGoal(false)}
                 className="w-full py-3 text-white/30 text-sm hover:text-white/50 transition-colors"
               >
-                I'll decide later
+                I&apos;ll decide later
               </button>
             </div>
           </div>

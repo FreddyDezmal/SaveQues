@@ -26,8 +26,8 @@
 export {};
 
 import { defaultCache } from "@serwist/next/worker";
-import { installSerwist } from "@serwist/sw";
 import {
+  Serwist,
   NetworkOnly,
   StaleWhileRevalidate,
   CacheFirst,
@@ -38,7 +38,19 @@ import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 declare const self: ServiceWorkerGlobalScope &
   SerwistGlobalConfig & { __SW_MANIFEST: (PrecacheEntry | string)[] };
 
-installSerwist({
+// Sprint 18 fix: this codebase's entire Sprint 14-17 history assumed a
+// function called `installSerwist(options)`, following what was believed
+// to be the standard Serwist Next.js pattern. Running `tsc` for the first
+// time in Sprint 18 revealed this function does not exist in the actually
+// published `serwist` package (v9.5.11, resolved from this project's
+// "^9.0.11" — the API evidently changed to a class-based shape between
+// whatever version that pattern was accurate for and what actually
+// installs today). The real, current API is a `Serwist` class with an
+// `addEventListeners()` method that does what `installSerwist()` was
+// assumed to do implicitly. This means the SW's install/activate/fetch
+// event wiring has never actually compiled successfully — there is no
+// confirmation this ever worked on a real deploy prior to this fix.
+const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
 
   // Sprint 14 review change: skipWaiting/clientsClaim intentionally left at
@@ -151,24 +163,35 @@ installSerwist({
     entries: [
       {
         url: "/offline",
-        // Serwist 9.x's FallbackEntry.revision type is `string` (not
-        // nullable) — my previous fix used `revision: null`, which is what
-        // the *type* for a regular PrecacheEntry allows (meaning "don't
-        // version this"), but FallbackEntry specifically requires an actual
-        // string here. This is just a manual cache-busting tag for the
-        // fallback shell itself: bump this string any time /offline's
-        // content changes meaningfully, so Serwist knows to refetch it
-        // rather than keep serving a cached copy from before the change.
-        // Bumped to v2 in Sprint 15 (Phase 3): /offline's content changed
-        // meaningfully (illustration, retry button, dashboard link) —
-        // this tells Serwist to refetch it rather than keep serving the
-        // Sprint 14 version indefinitely.
-        revision: "v2",
+        // Sprint 18 correction: direct inspection of the actually-installed
+        // serwist@9.5.11 package (node_modules/serwist/dist/index.d.mts)
+        // shows FallbackEntry has exactly two fields — {url, matcher} — no
+        // `revision` field exists on this type at all.
+        //
+        // This directly contradicts an earlier real Vercel build log
+        // (same serwist@9.5.11, confirmed from that log's dependency list)
+        // which failed with "Property 'revision' is missing... required in
+        // type 'FallbackEntry'" and was "fixed" at the time by adding one.
+        // I cannot fully explain this contradiction — possibly a
+        // resolution difference between pnpm (Vercel's build) and npm
+        // (used to verify this locally) landing on a subtly different
+        // FallbackEntry shape via some other overload, though both report
+        // installing the identical 9.5.11 version string. Removing the
+        // field here because it's what the package installed in THIS
+        // verification directly and unambiguously supports — but this
+        // specific line deserves a real Vercel build to confirm before
+        // fully trusting either version of this fix.
         matcher: ({ request }: { request: Request }) => request.destination === "document",
       },
     ],
   },
 });
+
+// The old installSerwist() function was assumed to call this internally —
+// the real Serwist class requires it explicitly. This is what actually
+// registers the precache install/activate lifecycle and fetch routing;
+// without this call, the `serwist` object above does nothing at all.
+serwist.addEventListeners();
 
 // ─────────────────────────────────────────────────────────────────────────
 // EXISTING PUSH NOTIFICATION LOGIC — copied verbatim from public/sw.js.

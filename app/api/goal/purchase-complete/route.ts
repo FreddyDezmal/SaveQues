@@ -29,7 +29,14 @@ export async function POST(req: NextRequest) {
   // ── 1. Verify goal ownership + completion ─────────────────────
   const { data: goal } = await supabase
     .from("savings_goals")
-    .select("id, is_complete, current_amount, target_amount, created_at, completed_at")
+    // Sprint 18 fix: "title" was missing from this select — Sprint 17
+    // added `goalTitle: goal.title` a few lines below (for the
+    // milestone_celebration push notification), but never added "title" to
+    // this query, so `goal.title` was always `undefined` here. The
+    // notification wasn't crashing (undefined is silently falsy), it was
+    // just never firing from THIS route — found only now because `tsc`
+    // was never run on this codebase until Sprint 18.
+    .select("id, title, is_complete, current_amount, target_amount, created_at, completed_at")
     .eq("id", goalId)
     .eq("user_id", user.id)
     .single();
@@ -71,6 +78,7 @@ export async function POST(req: NextRequest) {
   const xpResult = await awardGoalCompleteXP({
     userId:    user.id,
     goalId:    goalId,
+    goalTitle: goal.title,
     xp,
     achievementParams: {
       streakDays,

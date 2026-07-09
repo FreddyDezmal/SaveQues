@@ -71,7 +71,7 @@ export default function OfflineBanner() {
     >
       <WifiOff size={13} className="text-amber-400 flex-shrink-0" />
       <p className="text-xs text-amber-300">
-        You're offline
+        You&apos;re offline
         {lastSyncedAt && <span className="text-amber-300/60"> · last synced {formatRelativeTime(lastSyncedAt)}</span>}
       </p>
     </div>

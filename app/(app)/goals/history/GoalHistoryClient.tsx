@@ -26,7 +26,7 @@ export default function GoalHistoryClient({ goals, totalLifetimeSaved, profile }
         </Link>
         <div>
           <h1 className="font-display text-2xl font-bold text-white">Goal History</h1>
-          <p className="text-white/40 text-sm mt-0.5">Every goal you've ever completed</p>
+          <p className="text-white/40 text-sm mt-0.5">Every goal you&apos;ve ever completed</p>
         </div>
       </div>
 

@@ -139,7 +139,7 @@ export default function SignupPage() {
             {step === 2 && (
               <>
                 <h2 className="font-display text-xl font-semibold mb-1">What are you saving for?</h2>
-                <p className="text-white/40 text-sm mb-5">We'll set up your first goal</p>
+                <p className="text-white/40 text-sm mb-5">We&apos;ll set up your first goal</p>
                 <div className="grid grid-cols-2 gap-3 mb-5">
                   {options.map(opt => (
                     <button

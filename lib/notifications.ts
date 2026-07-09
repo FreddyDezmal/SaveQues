@@ -7,6 +7,7 @@ import { createServiceClient } from "./supabase/server";
 import { sendWebPush, type SendResult } from "./webpush";
 import type { NotificationType, PushPayload, PushSubscriptionRow } from "./types.notifications";
 import { getDaysRemainingInWeek } from "./weeklyQuests";
+import { formatAmount } from "./currency";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -254,6 +255,153 @@ export async function sendInactiveReminder(userId: string, daysSinceActive: numb
     "inactive",
     "👋 We miss you at SaveQuest!",
     `It's been ${daysSinceActive} days since your last saving. Your goals are waiting.`,
+    "/dashboard"
+  );
+}
+
+// ── Sprint 17: completing Sprint 16's unfinished notification categories ────
+//
+// achievement_unlocked and milestone_celebration are triggered from an
+// immediate, request-time code path (lib/awardXP.ts, called from the
+// transactions and goal-purchase-complete API routes) rather than the
+// daily cron scheduler above. That scheduler's own initial query already
+// filters on profiles.notifications_enabled — this path doesn't go through
+// that query, so it needs its own explicit two-part check: the same
+// master switch, plus the specific notification_preferences category.
+// Centralized here so both new send functions share one check rather than
+// each re-implementing it slightly differently.
+
+async function canSendNotificationToUser(
+  userId: string,
+  category: "achievements" | "milestone_celebrations" | "weekly_summaries"
+): Promise<boolean> {
+  const supabase = createServiceClient();
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("notifications_enabled")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!profile?.notifications_enabled) return false;
+
+  const { data: prefs } = await supabase
+    .from("notification_preferences")
+    .select(category)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  // No preferences row yet (user never opened the preferences page) →
+  // same "sensible default" behavior as everywhere else this sprint's
+  // categories are checked: default to true, not false.
+  return (prefs as any)?.[category] ?? true;
+}
+
+/**
+ * Fires when a user unlocks an achievement — called from
+ * checkAndAwardAchievements() in lib/awardXP.ts, fire-and-forget (not
+ * awaited by the caller), specifically so a slow or failed push send can
+ * never add latency to, or fail, the deposit/goal-completion request that
+ * triggered it. See the call site for the full reasoning.
+ */
+export async function sendAchievementUnlocked(
+  userId: string,
+  achievementTitle: string,
+  achievementIcon: string
+): Promise<{ sent: number; errors: number }> {
+  const allowed = await canSendNotificationToUser(userId, "achievements");
+  if (!allowed) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "achievement_unlocked",
+    `${achievementIcon} Achievement unlocked: ${achievementTitle}`,
+    "Tap to see your badge collection.",
+    "/profile"
+  );
+}
+
+/**
+ * Fires on goal completion — called from awardGoalCompleteXP() in
+ * lib/awardXP.ts. Scoped specifically to goal completion (not e.g. every
+ * round-number lifetime-savings threshold) for this pass — see the Sprint
+ * 17 engineering audit for why broader milestone detection (lifetime
+ * totals crossing $100/$500/$1000/etc.) is scoped to a future sprint
+ * rather than guessed at here.
+ */
+export async function sendMilestoneCelebration(
+  userId: string,
+  goalTitle: string
+): Promise<{ sent: number; errors: number }> {
+  const allowed = await canSendNotificationToUser(userId, "milestone_celebrations");
+  if (!allowed) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "milestone_celebration",
+    `🎉 Goal complete: ${goalTitle}!`,
+    "You did it — check out your progress and start your next goal.",
+    "/goals"
+  );
+}
+
+/**
+ * Weekly savings recap — reuses the existing daily cron trigger rather
+ * than requesting a new Vercel Cron schedule slot; runWeeklySummaryScheduler()
+ * is called from app/api/cron/notifications/route.ts but internally no-ops
+ * on every day except Monday. This keeps the "one new cron entry per
+ * feature" footprint at zero for this addition.
+ */
+export async function runWeeklySummaryScheduler(): Promise<{ processed: number; notifications_sent: number; errors: number }> {
+  const supabase = createServiceClient();
+
+  const { data: profiles, error } = await supabase
+    .from("profiles")
+    .select("id, currency_code")
+    .eq("notifications_enabled", true);
+
+  if (error || !profiles) {
+    console.error("[weekly-summary] Failed to fetch profiles:", error);
+    return { processed: 0, notifications_sent: 0, errors: 1 };
+  }
+
+  let notifications_sent = 0, errors = 0;
+  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  for (const { id: userId, currency_code } of profiles as any[]) {
+    const allowed = await canSendNotificationToUser(userId, "weekly_summaries");
+    if (!allowed) continue;
+
+    const { data: deposits } = await supabase
+      .from("transactions")
+      .select("amount")
+      .eq("user_id", userId)
+      .eq("transaction_type", "deposit")
+      .gte("created_at", oneWeekAgo);
+
+    const totalSaved = (deposits ?? []).reduce((sum, t: any) => sum + Number(t.amount), 0);
+
+    // Skip the recap entirely for a user who saved nothing this week —
+    // "you saved $0 this week" is not a motivational message, it's a
+    // discouraging one, and this app's own notification philosophy
+    // elsewhere (streak-at-risk, inactive reminders) is about prompting
+    // action, not reporting a null result.
+    if (totalSaved <= 0) continue;
+
+    const r = await sendWeeklySummary(userId, totalSaved, currency_code);
+    notifications_sent += r.sent;
+    errors += r.errors;
+  }
+
+  return { processed: profiles.length, notifications_sent, errors };
+}
+
+async function sendWeeklySummary(userId: string, totalSaved: number, currencyCode: string): Promise<{ sent: number; errors: number }> {
+  return sendToUser(
+    userId,
+    "weekly_summary",
+    `📊 You saved ${formatAmount(totalSaved, currencyCode)} this week!`,
+    "See your full weekly breakdown and keep the momentum going.",
     "/dashboard"
   );
 }

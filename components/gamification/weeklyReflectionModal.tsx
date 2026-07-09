@@ -73,7 +73,7 @@ export default function WeeklyReflectionModal({ data, reflectionId, onClose }: P
         ) : (
           <div className="mb-5 px-4 py-3 rounded-xl bg-surface-elevated border border-surface-border">
             <p className="text-sm text-white/50">
-              A quiet week — that's okay. Next week is a fresh start.
+              A quiet week — that&apos;s okay. Next week is a fresh start.
             </p>
           </div>
         )}

@@ -80,8 +80,9 @@ function LoginForm() {
           <h2 className="font-display text-xl font-semibold mb-6">Welcome back</h2>
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-sm text-white/60 mb-1.5">Email</label>
+              <label htmlFor="login-email" className="block text-sm text-white/60 mb-1.5">Email</label>
               <input
+                id="login-email"
                 type="email"
                 className="input-field"
                 placeholder="you@example.com"
@@ -93,7 +94,7 @@ function LoginForm() {
             </div>
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-sm text-white/60">Password</label>
+                <label htmlFor="login-password" className="text-sm text-white/60">Password</label>
                 <Link
                   href="/auth/forgot-password"
                   className="text-xs text-brand-400 hover:text-brand-300 transition-colors"
@@ -102,6 +103,7 @@ function LoginForm() {
                 </Link>
               </div>
               <input
+                id="login-password"
                 type="password"
                 className="input-field"
                 placeholder="••••••••"

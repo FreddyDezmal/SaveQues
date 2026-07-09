@@ -18,6 +18,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { checkAchievements, ACHIEVEMENTS } from "@/lib/achievements";
+import { sendAchievementUnlocked, sendMilestoneCelebration } from "@/lib/notifications";
 import { getLevelFromXP } from "@/lib/xp";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -122,6 +123,18 @@ export async function checkAndAwardAchievements(
     // Only surface to the UI if it was actually newly granted this call
     if (result.success && (result.xp_awarded ?? 0) > 0) {
       awarded.push(achievement);
+
+      // Sprint 17: fire-and-forget by design — deliberately NOT awaited.
+      // This runs inside the request/response cycle of a deposit or goal
+      // completion; a slow webpush send (network I/O to a push service)
+      // or a transient error here must never add latency to, or fail, the
+      // financial mutation that triggered it. The .catch() is what makes
+      // "not awaited" safe — without it, an unhandled promise rejection
+      // here would surface as an unhandled rejection warning/crash risk
+      // at the process level even though nothing is awaiting it.
+      sendAchievementUnlocked(userId, achievement.title, achievement.icon).catch((err) => {
+        console.error("[checkAndAwardAchievements] Failed to send achievement notification:", err);
+      });
     }
   }
 
@@ -159,6 +172,13 @@ export async function awardGoalCompleteXP(params: {
   goalId: string;
   xp: number;
   achievementParams: Parameters<typeof checkAchievements>[0];
+  /**
+   * Sprint 17: optional, backward-compatible addition — used to send the
+   * milestone_celebration push notification with the actual goal name.
+   * Callers that don't pass it (none currently, but any future/external
+   * caller) simply don't get that notification rather than erroring.
+   */
+  goalTitle?: string;
 }): Promise<AwardXPWithAchievementsResult> {
   const primary = await awardXP(params.userId, "goal_complete", params.goalId, params.xp);
   if (!primary.success) return { ...primary, newAchievements: [] };
@@ -166,6 +186,17 @@ export async function awardGoalCompleteXP(params: {
   const newAchievements = primary.alreadyAwarded
     ? []
     : await checkAndAwardAchievements(params.userId, params.achievementParams);
+
+  // Sprint 17: fire-and-forget, same reasoning as the achievement send in
+  // checkAndAwardAchievements above — never let a push notification's
+  // latency or failure affect this financial response. Only fires on the
+  // FIRST completion of this goal (primary.alreadyAwarded false), so
+  // re-triggering this endpoint idempotently never double-celebrates.
+  if (!primary.alreadyAwarded && params.goalTitle) {
+    sendMilestoneCelebration(params.userId, params.goalTitle).catch((err) => {
+      console.error("[awardGoalCompleteXP] Failed to send milestone notification:", err);
+    });
+  }
 
   return { ...primary, newAchievements };
 }

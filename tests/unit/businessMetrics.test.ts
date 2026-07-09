@@ -139,15 +139,23 @@ describe("checkDepositSuccessRate", () => {
     mockRequestOutcomes = [];
   });
 
-  it("does not alert when success rate is above the 95% threshold", async () => {
+  it("does not alert when success rate is above the 99% threshold", async () => {
+    // Sprint 18 fix: this test previously asserted a 95% threshold with a
+    // 19/20 sample (see git history) — but lib/businessMetrics.ts's
+    // DEPOSIT_SUCCESS_RATE_MIN is 0.99, deliberately and documented as such
+    // in that file's own comment ("deliberately much stricter... because a
+    // failed deposit has direct user/financial impact"). The old test was
+    // stale relative to the code, not the other way around — caught only
+    // now because this suite had no CI running it before Sprint 18. Fixed
+    // to actually test the real threshold: 99/100, exactly at the line.
     mockRequestOutcomes = [
-      ...Array(19).fill({ outcome: "success" }),
-      { outcome: "failure" }, // 19/20 = 95% exactly
+      ...Array(99).fill({ outcome: "success" }),
+      { outcome: "failure" }, // 99/100 = 99% exactly
     ];
 
     const result = await checkDepositSuccessRate();
 
-    expect(result.successRate).toBeCloseTo(0.95);
+    expect(result.successRate).toBeCloseTo(0.99);
     expect(result.alerted).toBe(false); // exactly at threshold, not below
   });
 

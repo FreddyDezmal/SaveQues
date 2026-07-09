@@ -250,7 +250,7 @@ export default function DashboardClient({
               {pauseConfirm ? (
                 <div className="px-4 py-3 rounded-xl bg-surface-elevated border border-surface-border">
                   <p className="text-xs text-white/60 mb-2.5">
-                    Pause your streak for 7 days? It won't break while paused. Use this if you're travelling, busy, or just need a rest.
+                    Pause your streak for 7 days? It won&apos;t break while paused. Use this if you&apos;re travelling, busy, or just need a rest.
                   </p>
                   <div className="flex gap-2">
                     <button

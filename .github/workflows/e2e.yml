@@ -1,0 +1,50 @@
+name: E2E Tests
+
+# Sprint 18 — Phase 6. Deliberately separate from ci.yml and NOT wired to
+# run automatically on every PR — see the comment at the bottom of ci.yml
+# for why. Enable the `push`/`pull_request` triggers below once
+# E2E_TEST_EMAIL / E2E_TEST_PASSWORD / a Supabase TEST project's
+# credentials exist as repo secrets (Settings -> Secrets and variables ->
+# Actions). Until then, this only runs when someone explicitly triggers it.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Build
+        run: pnpm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.E2E_SUPABASE_SERVICE_ROLE_KEY }}
+          CRON_SECRET: ${{ secrets.E2E_CRON_SECRET }}
+          NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.E2E_VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.E2E_VAPID_PRIVATE_KEY }}
+      - name: Run Playwright tests
+        run: pnpm run test:e2e
+        env:
+          E2E_TEST_EMAIL: ${{ secrets.E2E_TEST_EMAIL }}
+          E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14

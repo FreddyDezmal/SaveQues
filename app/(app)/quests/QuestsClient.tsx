@@ -296,7 +296,7 @@ export default function QuestsClient({
             <div className="card p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Calendar size={14} className="text-brand-400" />
-                <span className="text-xs text-brand-400 font-bold uppercase tracking-wider">Today's Quest</span>
+                <span className="text-xs text-brand-400 font-bold uppercase tracking-wider">Today&apos;s Quest</span>
                 <span className="ml-auto text-xs text-white/30">Resets at midnight</span>
               </div>
               <div className="flex items-start gap-3 mb-4">
@@ -349,7 +349,7 @@ export default function QuestsClient({
             <div className="card p-4">
               <div className="flex items-center gap-2 mb-3">
                 <Sparkles size={14} className="text-brand-400" />
-                <span className="text-xs text-brand-400 font-bold uppercase tracking-wider">This Week's Quest</span>
+                <span className="text-xs text-brand-400 font-bold uppercase tracking-wider">This Week&apos;s Quest</span>
                 <span className="ml-auto text-xs text-white/30">Resets Monday</span>
               </div>
               <div className="flex items-start gap-3 mb-4">

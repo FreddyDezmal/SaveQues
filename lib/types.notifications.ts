@@ -5,7 +5,15 @@ export type NotificationType =
   | "daily_quest"
   | "weekly_expiry"
   | "seasonal_expiry"
-  | "inactive";
+  | "inactive"
+  // Sprint 17: completing two of the four notification_preferences
+  // categories left as "coming soon" placeholders in Sprint 16 (see that
+  // migration's honesty note). "weekly_summaries" and
+  // "product_announcements" remain unimplemented — see the Sprint 17
+  // engineering audit for why those two are scoped out of this pass.
+  | "achievement_unlocked"
+  | "milestone_celebration"
+  | "weekly_summary";
 
 export interface PushSubscriptionRow {
   id: string;

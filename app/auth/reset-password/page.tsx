@@ -104,7 +104,7 @@ export default function ResetPasswordPage() {
 
         <div className="card p-6">
           <h2 className="font-display text-xl font-semibold text-white mb-1">Set a new password</h2>
-          <p className="text-white/40 text-sm mb-5">Choose something you haven't used before.</p>
+          <p className="text-white/40 text-sm mb-5">Choose something you haven&apos;t used before.</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -148,7 +148,7 @@ export default function ResetPasswordPage() {
               />
               {confirm.length > 0 && password !== confirm && (
                 <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
-                  <XCircle size={12} /> Passwords don't match
+                  <XCircle size={12} /> Passwords don&apos;t match
                 </p>
               )}
               {confirm.length > 0 && password === confirm && (

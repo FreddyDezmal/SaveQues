@@ -13,9 +13,10 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { X, Flame, Target, Trophy, Clock, Bell, CheckCheck, ChevronDown } from "lucide-react";
+import { X, Flame, Target, Trophy, Clock, Bell, CheckCheck, ChevronDown, PartyPopper, BarChart3 } from "lucide-react";
 import { trackEvent, AnalyticsEvents } from "@/lib/analytics";
 import { groupNotifications, type NotificationGroup } from "@/lib/notificationGrouping";
+import { timeAgo } from "@/lib/utils";
 import { useUndoSnackbar } from "@/components/ui/UndoSnackbar";
 import EmptyState from "@/components/ui/EmptyState";
 import { useHaptics } from "@/lib/hooks/useHaptics";
@@ -41,17 +42,16 @@ const TYPE_ICON: Record<string, React.ReactNode> = {
   weekly_expiry: <Clock size={16} className="text-amber-400" />,
   seasonal_expiry: <Trophy size={16} className="text-purple-400" />,
   inactive: <Bell size={16} className="text-white/40" />,
+  // Sprint 17: the three notification categories completed this sprint —
+  // previously these would have silently fallen back to the generic Bell
+  // icon (by design, per Sprint 16's comment on TYPE_ICON's fallback), but
+  // now that they're real, sent notifications, they get their own icons.
+  achievement_unlocked: <Trophy size={16} className="text-purple-400" />,
+  milestone_celebration: <PartyPopper size={16} className="text-emerald-400" />,
+  weekly_summary: <BarChart3 size={16} className="text-blue-400" />,
 };
 
-function timeAgo(iso: string): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
+
 
 export default function NotificationCenter({ onClose, onUnreadCountChange }: Props) {
   const [notifications, setNotifications] = useState<NotificationRow[] | null>(null);
@@ -64,6 +64,64 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
   // "mark unread" endpoint to reverse an already-persisted write. The UI
   // updates optimistically either way; only the SERVER write is delayed.
   const pendingCommits = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Sprint 17: closes an accessibility gap flagged as open in both the
+  // Sprint 15 and Sprint 16 testing checklists — this modal previously had
+  // no focus trap, no Escape-to-close, and didn't return focus to whatever
+  // opened it. All three are standard WAI-ARIA dialog pattern requirements
+  // for any modal, not specific to notifications.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const triggerElementRef = useRef<Element | null>(null);
+
+  useEffect(() => {
+    // Remember what had focus before the modal opened (almost certainly
+    // the bell button in NotificationBell) so it can be restored on close
+    // — without this, closing the modal would drop focus back to <body>,
+    // stranding a keyboard user.
+    triggerElementRef.current = document.activeElement;
+
+    // Move focus into the panel itself on open, rather than leaving it on
+    // whatever was focused before a mouse-triggered open (e.g. the bell
+    // button, now hidden behind the overlay).
+    panelRef.current?.focus();
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+
+      // Basic focus trap: cycle Tab/Shift+Tab between the first and last
+      // focusable elements inside the panel, rather than letting focus
+      // escape to the page behind the overlay.
+      const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
+        'button, [href], input, [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      // Return focus to whatever opened the modal, matching standard
+      // WAI-ARIA dialog close behavior.
+      if (triggerElementRef.current instanceof HTMLElement) {
+        triggerElementRef.current.focus();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     trackEvent(AnalyticsEvents.NOTIFICATION_CENTER_OPENED);
@@ -203,7 +261,12 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 px-4 bg-black/40" onClick={onClose}>
       <div
-        className="w-full max-w-sm rounded-2xl bg-surface-elevated border border-surface-border shadow-xl overflow-hidden animate-fade-in"
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Notifications"
+        tabIndex={-1}
+        className="w-full max-w-sm rounded-2xl bg-surface-elevated border border-surface-border shadow-xl overflow-hidden outline-none animate-fade-in"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
@@ -230,7 +293,7 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
         <div className="max-h-[60vh] overflow-y-auto">
           {error && (
             <p className="text-xs text-white/40 text-center py-8 px-4">
-              Couldn't load notifications — check your connection and try again.
+              Couldn&apos;t load notifications — check your connection and try again.
             </p>
           )}
 

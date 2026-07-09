@@ -41,7 +41,7 @@ export default function SettingUpPage() {
           <div className="text-5xl mb-4">⚠️</div>
           <h1 className="font-display text-xl font-bold text-white mb-2">Taking longer than expected</h1>
           <p className="text-white/50 text-sm mb-6">
-            Your account was created but we're having trouble loading your dashboard.
+            Your account was created but we&apos;re having trouble loading your dashboard.
           </p>
           <button
             onClick={() => { setFailed(false); setAttempt(0); }}

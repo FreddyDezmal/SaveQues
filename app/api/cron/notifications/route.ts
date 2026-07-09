@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runDailyNotificationScheduler } from "@/lib/notifications";
+import { runDailyNotificationScheduler, runWeeklySummaryScheduler } from "@/lib/notifications";
 import { checkNotificationDeliveryRate } from "@/lib/businessMetrics";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
@@ -71,6 +71,25 @@ export async function GET(req: NextRequest) {
       notifications_skipped: (result as any).skipped ?? 0,
       errors:                (result as any).errors  ?? 0,
     });
+
+    // Sprint 17: weekly savings recap. Deliberately piggybacks on this
+    // same once-daily cron invocation rather than adding a second Vercel
+    // Cron entry — Vercel's free/hobby tier caps the number of cron jobs
+    // per project, and a day-of-week gate here costs nothing extra to run
+    // (the function no-ops immediately most days). Wrapped in its own
+    // try/catch, same reasoning as checkNotificationDeliveryRate below: a
+    // failure in the weekly summary must never fail the daily scheduler's
+    // own (already-successful) run.
+    if (new Date().getUTCDay() === 1 /* Monday */) {
+      try {
+        const weeklyResult = await runWeeklySummaryScheduler();
+        log.info("Weekly summary run complete", { run_id: runId, ...weeklyResult });
+      } catch (weeklyErr: any) {
+        log.warn("Weekly summary run failed (non-fatal to daily scheduler)", {
+          run_id: runId, error: weeklyErr.message ?? String(weeklyErr),
+        });
+      }
+    }
 
     // Sprint 11 — Phase 4: evaluate whether today's run actually reached a
     // healthy fraction of eligible users. This is the check that would

@@ -50,13 +50,9 @@ export function useLastSyncedAt(): { lastSyncedAt: number | null; isOnline: bool
   return { lastSyncedAt, isOnline };
 }
 
-export function formatRelativeTime(timestamp: number): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
+// Sprint 17: this was a byte-for-byte duplicate of NotificationCenter.tsx's
+// local timeAgo() — consolidated into lib/utils.ts's timeAgo(). Re-exported
+// under the original name here so OfflineBanner.tsx's existing
+// `import { formatRelativeTime } from "@/lib/hooks/useLastSyncedAt"` keeps
+// working with zero changes at that call site.
+export { timeAgo as formatRelativeTime } from "@/lib/utils";

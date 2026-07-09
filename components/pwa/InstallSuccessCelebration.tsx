@@ -43,7 +43,7 @@ export default function InstallSuccessCelebration() {
       setVisible(true);
       vibrate("success");
     }
-  }, [justInstalled]);
+  }, [justInstalled, vibrate]);
 
   function dismiss() {
     setVisible(false);
@@ -71,7 +71,7 @@ export default function InstallSuccessCelebration() {
 
         <h2 className="font-display text-xl font-bold text-white mb-2">SaveQuest Installed! 🎉</h2>
         <p className="text-sm text-white/60 mb-6">
-          You're now using SaveQuest like a native app. Launch it anytime from your home screen —
+          You&apos;re now using SaveQuest like a native app. Launch it anytime from your home screen —
           faster, full-screen, and ready even with a spotty connection.
         </p>
 

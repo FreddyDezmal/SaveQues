@@ -53,28 +53,28 @@ const CATEGORY_META: {
     icon: <Trophy size={16} className="text-purple-400" />,
     title: "Achievement notifications",
     description: "When you unlock a new badge",
-    live: false,
+    live: true, // Sprint 17: wired to a real send (lib/awardXP.ts)
   },
   {
     key: "weekly_summaries",
     icon: <BarChart3 size={16} className="text-blue-400" />,
     title: "Weekly progress summaries",
     description: "A recap of your saving activity each week",
-    live: false,
+    live: true, // Sprint 17: wired to a real send (weekly cron, Mondays)
   },
   {
     key: "milestone_celebrations",
     icon: <PartyPopper size={16} className="text-emerald-400" />,
     title: "Saving milestone celebrations",
     description: "Big deposits, goal completions, and other wins",
-    live: false,
+    live: true, // Sprint 17: wired to a real send (goal completion only — see audit)
   },
   {
     key: "product_announcements",
     icon: <Megaphone size={16} className="text-white/50" />,
     title: "Product announcements",
     description: "New features and occasional SaveQuest news",
-    live: false,
+    live: false, // Still no sender — no content/CMS system exists for this yet
   },
 ];
 
@@ -124,7 +124,7 @@ export default function NotificationPreferencesClient() {
       {error && (
         <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-500/10 border border-red-500/20 mb-4">
           <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />
-          <p className="text-xs text-red-300/80">Couldn't load your preferences. Check your connection and reload.</p>
+          <p className="text-xs text-red-300/80">Couldn&apos;t load your preferences. Check your connection and reload.</p>
         </div>
       )}
 

@@ -70,7 +70,7 @@ export default function ForgotPasswordPage() {
 
           <h2 className="font-display text-xl font-semibold text-white mb-1">Forgot your password?</h2>
           <p className="text-white/40 text-sm mb-5">
-            No problem. Enter your email and we'll send you a reset link.
+            No problem. Enter your email and we&apos;ll send you a reset link.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

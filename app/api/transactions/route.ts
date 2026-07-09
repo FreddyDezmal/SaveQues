@@ -299,6 +299,7 @@ async function handlePOST(req: NextRequest) {
     xpResult = await awardGoalCompleteXP({
       userId:           user.id,
       goalId:           goal_id,
+      goalTitle:        goal.title,
       xp:               xpForAction,
       achievementParams,
     });

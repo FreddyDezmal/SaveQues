@@ -39,7 +39,7 @@ export default function OfflinePage() {
         <h1 className="font-display text-2xl font-bold text-white mb-2">No connection</h1>
         <p className="text-white/50 text-sm mb-6">
           SaveQuest needs an internet connection to sync your progress. Your data is safe —
-          we'll pick up right where you left off.
+          we&apos;ll pick up right where you left off.
         </p>
 
         <div className="flex flex-col gap-2">

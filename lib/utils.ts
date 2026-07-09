@@ -62,3 +62,22 @@ export const GOAL_EMOJIS = [
 export function getCategoryById(id: string) {
   return GOAL_CATEGORIES.find(c => c.id === id) ?? GOAL_CATEGORIES[GOAL_CATEGORIES.length - 1];
 }
+
+/**
+ * Sprint 17 — consolidates two byte-for-byte identical implementations
+ * found during the Sprint 17 audit: NotificationCenter.tsx's local
+ * `timeAgo()` and useLastSyncedAt.ts's `formatRelativeTime()`. Both took a
+ * slightly different input type (ISO string vs. epoch ms) purely by
+ * accident of where each was first written, not for any real reason —
+ * this accepts either.
+ */
+export function timeAgo(input: string | number): string {
+  const timestamp = typeof input === "string" ? new Date(input).getTime() : input;
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}

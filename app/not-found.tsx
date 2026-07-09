@@ -7,7 +7,7 @@ export default function NotFound() {
         <div className="text-6xl mb-4">🗺️</div>
         <h1 className="font-display text-2xl font-bold text-white mb-2">Lost your way?</h1>
         <p className="text-white/50 text-sm mb-6">
-          This page doesn't exist. Your goals and streak are safe — let's get you back.
+          This page doesn&apos;t exist. Your goals and streak are safe — let&apos;s get you back.
         </p>
         <Link href="/dashboard" className="btn-primary inline-block px-6">
           Back to dashboard

@@ -420,7 +420,7 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, earnedAch
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-sm text-white/70">Need a break?</p>
-              <p className="text-xs text-white/40 mt-0.5">Pause your streak for up to 7 days — it won't break while paused. Free, unlimited uses.</p>
+              <p className="text-xs text-white/40 mt-0.5">Pause your streak for up to 7 days — it won&apos;t break while paused. Free, unlimited uses.</p>
             </div>
             <a href="/dashboard" className="text-brand-400 text-xs hover:text-brand-300 transition-colors flex-shrink-0 mt-0.5">
               Manage →

@@ -95,7 +95,7 @@ export default function EventsClient({ events, participationMap, history, userId
             <>
               <div className="px-4 py-2.5 rounded-xl bg-surface-elevated border border-surface-border mb-2">
                 <p className="text-xs text-white/40">
-                  🔒 These events aren't open yet. You'll be able to join when they start.
+                  🔒 These events aren&apos;t open yet. You&apos;ll be able to join when they start.
                 </p>
               </div>
               {upcomingEvents.map(event => (

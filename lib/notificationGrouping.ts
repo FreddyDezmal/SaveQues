@@ -40,6 +40,10 @@ const TYPE_LABELS: Record<string, string> = {
   weekly_expiry:    "quest deadline alerts",
   seasonal_expiry:  "challenge alerts",
   inactive:         "check-in reminders",
+  // Sprint 17
+  achievement_unlocked:  "achievements unlocked",
+  milestone_celebration: "goals completed",
+  weekly_summary:        "weekly summaries",
 };
 
 function labelFor(type: string): string {

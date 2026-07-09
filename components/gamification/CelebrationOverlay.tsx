@@ -38,7 +38,7 @@ export default function CelebrationOverlay({ show, type, title, subtitle, icon, 
       if (type === "goal" || type === "levelup") vibrate("success");
       else if (type === "achievement") vibrate("light");
     }
-  }, [show, type]);
+  }, [show, type, vibrate]);
 
   // Auto-dismiss for achievement overlays (and any caller that sets autoDismissMs)
   useEffect(() => {
