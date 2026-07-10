@@ -41,3 +41,35 @@ export function getLastNUTCDateStrings(days: number, from: Date = new Date()): s
     return getUTCDateString(d);
   });
 }
+
+/**
+ * Sprint 19 — added for the analytics/insights engine (lib/analyticsEngine.ts),
+ * which needs to bucket deposits into calendar weeks. Reuses the same UTC
+ * convention as the rest of this file so weekly buckets never disagree with
+ * activity_log-based streak/momentum calculations near a local midnight.
+ *
+ * Returns the UTC date string ("YYYY-MM-DD") of the Monday that starts the
+ * week containing `date`.
+ */
+export function getUTCWeekStartString(date: Date): string {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay(); // 0 = Sunday ... 6 = Saturday
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  d.setUTCDate(d.getUTCDate() - diffToMonday);
+  return getUTCDateString(d);
+}
+
+/** Sprint 19 — UTC "YYYY-MM" month bucket key, same convention as above. */
+export function getUTCMonthString(date: Date): string {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+/** Whole calendar days (UTC) between two dates. Positive when `b` is after `a`. */
+export function utcDaysBetween(a: Date, b: Date): number {
+  const MS_PER_DAY = 86400000;
+  const aUTC = Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), a.getUTCDate());
+  const bUTC = Date.UTC(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+  return Math.round((bUTC - aUTC) / MS_PER_DAY);
+}

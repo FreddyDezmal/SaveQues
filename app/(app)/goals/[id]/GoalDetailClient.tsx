@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -13,6 +13,11 @@ import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { TimelineEventGroup } from "@/lib/types";
 import { useOnlineStatus } from "@/lib/hooks/useOnlineStatus";
+import { forecastGoal } from "@/lib/forecast";
+import { computeGoalHealth } from "@/lib/goalHealth";
+import { coachingMessagesForGoal } from "@/lib/coaching";
+import { buildCelebrationStats } from "@/lib/celebrationSummary";
+import GoalIntelligenceCard from "@/components/goals/GoalIntelligenceCard";
 
 type TxType = "deposit" | "withdrawal" | "goal_purchase";
 
@@ -20,12 +25,13 @@ interface Props {
   goal: any;
   transactions: any[];
   streakDays: number;
+  xpTotal?: number;
   currencyCode: string;
   locale: string;
   timelineGroups: TimelineEventGroup[];
 }
 
-export default function GoalDetailClient({ goal: initialGoal, transactions: initialTxs, streakDays, currencyCode, locale, timelineGroups: initialGroups }: Props) {
+export default function GoalDetailClient({ goal: initialGoal, transactions: initialTxs, streakDays, xpTotal = 0, currencyCode, locale, timelineGroups: initialGroups }: Props) {
   const router = useRouter();
   const fc = (n: number) => formatAmount(n, currencyCode, locale);
 
@@ -45,6 +51,15 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
   // subscribes to this so it re-enables automatically on reconnect with no
   // page reload needed.
   const isOnline = useOnlineStatus();
+
+  // ── Sprint 19: Intelligence layer ────────────────────────────────────────
+  // Pure client-side derivation from data this component already fetched —
+  // no extra network round-trip. Recomputes only when the goal or its
+  // transaction list actually changes (e.g. after a deposit).
+  const forecast = useMemo(() => forecastGoal(goal, transactions), [goal, transactions]);
+  const health   = useMemo(() => computeGoalHealth(goal, transactions), [goal, transactions]);
+  const coaching = useMemo(() => coachingMessagesForGoal(goal, transactions), [goal, transactions]);
+
 
   // ── Idempotency key (Sprint 10 — Part 1) ────────────────────────
   // Generated lazily via a ref, NOT useState — a ref persists across
@@ -87,6 +102,25 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
   const [celebration, setCelebration]  = useState<{
     show: boolean; title: string; subtitle: string; xpGained: number; icon?: string; type?: any;
   }>({ show: false, title: "", subtitle: "", xpGained: 0 });
+
+  // Sprint 20 — Phase 8: only computed (and only rendered) for the "goal"
+  // celebration type — every other celebration type keeps its existing,
+  // simpler overlay exactly as before. Must be declared after `celebration`
+  // itself (above) since it reads celebration.type.
+  const celebrationStats = useMemo(
+    () =>
+      celebration.type === "goal"
+        ? buildCelebrationStats({
+            celebrationType: "goal",
+            xpTotal,
+            streakDays,
+            transactions,
+            formatAmount: fc,
+            completedGoal: { title: goal.title, target_amount: Number(goal.target_amount) },
+          })
+        : [],
+    [celebration.type, streakDays, xpTotal, transactions, goal, fc]
+  );
 
   const category  = getCategoryById(goal.category);
   const percent   = goal.target_amount > 0 ? (Number(goal.current_amount) / Number(goal.target_amount)) * 100 : 0;
@@ -346,6 +380,10 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
             )}
           </div>
         </div>
+
+        {!goal.is_complete && (
+          <GoalIntelligenceCard forecast={forecast} health={health} coaching={coaching} formatAmount={fc} />
+        )}
 
         {/* Transaction form */}
         {!goal.is_complete && (
@@ -643,6 +681,7 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
         subtitle={celebration.subtitle}
         xpGained={celebration.xpGained}
         icon={celebration.icon}
+        stats={celebrationStats}
         onClose={() => setCelebration(prev => ({ ...prev, show: false }))}
       />
 

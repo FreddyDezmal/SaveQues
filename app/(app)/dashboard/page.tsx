@@ -7,6 +7,11 @@ import DashboardClient         from "./DashboardClient";
 import { getEventsForUser }    from "@/lib/events";
 import { getUTCDateString }    from "@/lib/dateUtils";
 import { createLogger }        from "@/lib/logger";
+import { generateInsights }    from "@/lib/insights";
+import { buildWeeklyReview }   from "@/lib/weeklyReview";
+import { generateCoachingMessages } from "@/lib/coaching";
+import { classifyJourneyStage, getDashboardSectionOrder } from "@/lib/dashboardPersonalization";
+import type { Transaction }    from "@/lib/types";
 
 // Sprint 12 audit fix: measure server-side render time so the dashboard
 // P95 SLO (#5 in SLO_DEFINITIONS.md) is measurable from structured logs.
@@ -107,6 +112,86 @@ export default async function DashboardPage() {
   const userStage            = getUserStage(profile.created_at);
   const streakCurrentlyPaused = isStreakPaused(profile.streak_paused_until);
 
+  // ── Sprint 19: Intelligence layer ──────────────────────────────────────
+  // The dashboard RPC (032) intentionally does not return full transaction
+  // history (it was scoped to the 5-event timeline preview only — see the
+  // RPC's own comments). Insights/forecasting/coaching need the full
+  // deposit history, so it's fetched here as one additional indexed query
+  // (idx_transactions_user_created_at, migration 024/033 — already covers
+  // this access pattern) rather than modifying the RPC and risking the
+  // dashboard's existing single-round-trip guarantee for users who don't
+  // need this data (new users skip the fetch entirely below).
+  //
+  // hasDeposit is already known false for brand-new users — skip the query
+  // and every downstream computation for them rather than running an
+  // analytics engine over an empty array.
+  let insights: ReturnType<typeof generateInsights> = [];
+  let weeklyReview: ReturnType<typeof buildWeeklyReview> | null = null;
+  let topCoachingMessage: string | null = null;
+  let depositCount = 0;
+
+  if (hasDeposit && userStage !== "new") {
+    const { data: txData, error: txError } = await supabase
+      .from("transactions")
+      .select("id, user_id, goal_id, amount, note, transaction_type, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (txError) {
+      log.error("intelligence layer: transaction fetch failed", { user_id: user.id, error: txError.message });
+    } else {
+      const transactions = (txData ?? []) as Transaction[];
+      depositCount = transactions.filter((t) => t.transaction_type === "deposit").length;
+      insights = generateInsights(transactions, {
+        currencyCode: profile.currency_code ?? "ZAR",
+        locale: profile.locale ?? "en-ZA",
+      });
+      weeklyReview = buildWeeklyReview({
+        transactions,
+        goals: goals.map((g: any) => ({ id: g.id, is_complete: g.is_complete })),
+        achievements: dash.achievements ?? [],
+        activityLog: (dash.activity_log ?? []).map((a: any) => ({
+          date: a.date,
+          xp_earned: a.xp_earned,
+          actions_count: a.actions_count,
+        })),
+        profile: { streak_days: profile.streak_days, longest_streak: profile.longest_streak },
+      });
+
+      const transactionsByGoal: Record<string, Transaction[]> = {};
+      for (const t of transactions) {
+        (transactionsByGoal[t.goal_id] ??= []).push(t);
+      }
+      const coachingMessages = generateCoachingMessages({
+        transactions,
+        goals: activeGoals.map((g: any) => ({
+          id: g.id,
+          title: g.title,
+          target_amount: g.target_amount,
+          current_amount: g.current_amount,
+          target_date: g.target_date,
+          is_complete: g.is_complete,
+        })),
+        transactionsByGoal,
+      });
+      topCoachingMessage = coachingMessages[0]?.message ?? null;
+    }
+  }
+
+  // ── Sprint 20: Phase 4 — Dynamic Dashboard ───────────────────────────────
+  // Does not redesign the dashboard — only decides which of the
+  // insights/coaching/weekly-review content (added in Sprint 19/20, all
+  // inside IntelligencePanel) leads for this user. Core Sprint 18 sections
+  // above (stat cards, goals, streak controls) are untouched and keep their
+  // existing order and their existing 3-stage `getUserStage` gating.
+  const accountAgeDays = Math.floor((Date.now() - new Date(profile.created_at).getTime()) / 86400000);
+  const journeyStage = classifyJourneyStage({
+    accountAgeDays,
+    depositCount,
+    completedGoalCount: completedGoals.length,
+  });
+  const intelligenceSectionOrder = getDashboardSectionOrder(journeyStage);
+
   const almostMessages = userStage !== "new"
     ? getAlmostMessages({
         streakDays:           profile.streak_days,
@@ -182,6 +267,8 @@ export default async function DashboardPage() {
       timelinePreview={timelinePreview}
       hasDeposit={hasDeposit}
       notificationPromptDismissed={!!(profile as any).notification_prompt_dismissed}
+      intelligence={{ insights, weeklyReview, topCoachingMessage }}
+      intelligenceSectionOrder={intelligenceSectionOrder}
     />
   );
 }

@@ -43,7 +43,20 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["savings_goals"]["Insert"]>;
       };
       transactions: {
-        Row: { id: string; user_id: string; goal_id: string; amount: number; note: string | null; created_at: string; };
+        // Sprint 19 audit fix: this Row type was missing `transaction_type`,
+        // even though the column has existed since migration 014 and every
+        // RPC/query in the codebase (get_dashboard_data, fetchTimelineEvents,
+        // the balance/withdrawal triggers) already reads and writes it.
+        // Source of truth is supabase/migrations/014_consolidated_schema.sql.
+        Row: {
+          id: string;
+          user_id: string;
+          goal_id: string;
+          amount: number;
+          note: string | null;
+          transaction_type: "deposit" | "withdrawal" | "goal_purchase" | "adjustment";
+          created_at: string;
+        };
         Insert: Omit<Database["public"]["Tables"]["transactions"]["Row"], "id" | "created_at">;
         Update: Partial<Database["public"]["Tables"]["transactions"]["Insert"]>;
       };

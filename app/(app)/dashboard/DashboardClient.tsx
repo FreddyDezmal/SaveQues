@@ -23,6 +23,9 @@ import InstallSaveQuestCard from "@/components/pwa/InstallSaveQuestCard";
 import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
 import type { TimelineEventGroup } from "@/lib/types";
+import IntelligencePanel from "@/components/insights/IntelligencePanel";
+import type { Insight } from "@/lib/insights";
+import type { WeeklyReview } from "@/lib/weeklyReview";
 
 interface Props {
   profile: any;
@@ -51,6 +54,13 @@ interface Props {
     lastReflectionDate: string;
     reflectionQuestions: string[];
   };
+  intelligence?: {
+    insights: Insight[];
+    weeklyReview: WeeklyReview | null;
+    topCoachingMessage: string | null;
+  };
+  /** Sprint 20 — Phase 4: which of insights/coaching/weekly-review leads inside IntelligencePanel, personalized by journey stage. */
+  intelligenceSectionOrder?: import("@/lib/dashboardPersonalization").DashboardSection[];
 }
 
 export default function DashboardClient({
@@ -60,7 +70,7 @@ export default function DashboardClient({
   almostMessages, activeChain, streakBroken,
   userStage, streakPaused, streakPausedUntil, dashboardEvents,
   timelinePreview, primaryGoal, reflectionData,
-  hasDeposit, notificationPromptDismissed
+  hasDeposit, notificationPromptDismissed, intelligence, intelligenceSectionOrder
 }: Props) {
   const router = useRouter();
   const [pauseLoading, setPauseLoading] = useState(false);
@@ -226,6 +236,28 @@ export default function DashboardClient({
           <StatCard label="Goals" value={String(activeGoals.length)} icon="🎯" />
           <StatCard label="Streak" value={streakPaused ? "⏸" : `${profile.streak_days}d`} icon="🔥" />
         </div>
+      )}
+
+      {/* Sprint 20: lightweight entry point to the new Portfolio overview page — a single link, not a nav redesign. */}
+      {userStage !== "new" && (
+        <Link
+          href="/portfolio"
+          className="flex items-center justify-between card p-3 mb-4 text-sm text-white/60 hover:text-white/90 transition-colors"
+        >
+          <span>View your full portfolio</span>
+          <span aria-hidden>→</span>
+        </Link>
+      )}
+
+      {/* ── Sprint 19: Intelligence panel (insights + coaching + weekly snapshot) ── */}
+      {userStage !== "new" && intelligence && (
+        <IntelligencePanel
+          insights={intelligence.insights}
+          weeklyReview={intelligence.weeklyReview}
+          topCoachingMessage={intelligence.topCoachingMessage}
+          formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
+          sectionOrder={intelligenceSectionOrder}
+        />
       )}
 
       {/* ── Grace days + pause control (building/established only) ── */}
@@ -494,7 +526,7 @@ export default function DashboardClient({
   );
 }
 
-function StatCard({ label, value, icon }: { label: string; value: string; icon: string }) {
+export function StatCard({ label, value, icon }: { label: string; value: string; icon: string }) {
   return (
     <div className="card p-3 text-center">
       <div className="text-xl mb-1">{icon}</div>
