@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -33,7 +33,7 @@ interface Props {
 
 export default function GoalDetailClient({ goal: initialGoal, transactions: initialTxs, streakDays, xpTotal = 0, currencyCode, locale, timelineGroups: initialGroups }: Props) {
   const router = useRouter();
-  const fc = (n: number) => formatAmount(n, currencyCode, locale);
+  const fc = useCallback((n: number) => formatAmount(n, currencyCode, locale), [currencyCode, locale]);
 
   const [goal, setGoal]                 = useState(initialGoal);
   const [transactions, setTransactions]  = useState(initialTxs);

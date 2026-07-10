@@ -77,7 +77,7 @@ export function buildMonthlyReport(inputs: MonthlyReportInputs): MonthlyReport {
     byDay.set(key, (byDay.get(key) ?? 0) + Number(d.amount));
   }
   let bestSavingDay: MonthlyReport["bestSavingDay"] = null;
-  for (const [date, amount] of byDay.entries()) {
+  for (const [date, amount] of Array.from(byDay.entries())) {
     if (!bestSavingDay || amount > bestSavingDay.amount) bestSavingDay = { date, amount };
   }
 
@@ -140,7 +140,7 @@ export function buildMonthlyReport(inputs: MonthlyReportInputs): MonthlyReport {
     weeklyCounts.set(w, (weeklyCounts.get(w) ?? 0) + 1);
   }
   let mostConsistentWeek: MonthlyReport["mostConsistentWeek"] = null;
-  for (const [weekStart, count] of weeklyCounts.entries()) {
+  for (const [weekStart, count] of Array.from(weeklyCounts.entries())) {
     if (!mostConsistentWeek || count > mostConsistentWeek.count) mostConsistentWeek = { weekStart, count };
   }
 

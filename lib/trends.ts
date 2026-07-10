@@ -93,7 +93,7 @@ export function strongestMonth(
   }
 
   let strongest: MonthStrength = { monthKey: "", total: -1 };
-  for (const [monthKey, total] of map.entries()) {
+  for (const [monthKey, total] of Array.from(map.entries())) {
     if (total > strongest.total) strongest = { monthKey, total };
   }
 

@@ -175,6 +175,22 @@ See sections above for: Financial Personality algorithm (§5), Recommendation en
 | Monthly report export (PDF/email) | 🔜 Explicitly out of scope this sprint, per the brief. |
 | Portfolio page visual polish | ⚠️ Functional, matches existing card styling, not visually reviewed in a running app in this sandbox. |
 
+## 19a. Post-delivery Build Fix
+
+A Vercel build after this sprint's initial delivery failed with:
+
+```
+./lib/monthlyReport.ts:80:32
+Type error: Type 'MapIterator<[string, number]>' can only be iterated through
+when using the '--downlevelIteration' flag or with a '--target' of 'es2015' or higher.
+```
+
+This project's TS build target doesn't support iterating `Map`/`Set` directly with `for...of` — the existing codebase already worked around this consistently (see `lib/notifications.ts`'s `Array.from(usersToProcess.entries())`), but four new loops introduced this sprint (`for (const [k, v] of someMap.entries())` in `lib/trends.ts`, `lib/weeklyReview.ts`, and twice in `lib/monthlyReport.ts`; plus a bare `for (const x of someSet)` in `lib/weeklyReview.ts`) didn't follow it. All four/five are now wrapped in `Array.from(...)`, matching the established pattern. A full-repo grep for the unwrapped pattern now returns zero matches.
+
+Also fixed, from the same build's ESLint output: `GoalDetailClient.tsx`'s `fc` helper was recreated every render and used inside a `useMemo` dependency array (`react-hooks/exhaustive-deps` warning, not a build failure, but worth fixing) — it's now wrapped in `useCallback`.
+
+This is exactly why `npm test`/a real build needs to run before merge — flagged as a caveat in both this sprint's and Sprint 19's readiness assessments, and confirmed here. No other issues were found in this build log (the OpenTelemetry/Sentry warnings and the pre-existing ESLint warnings in `app/layout.tsx` and `AnalyticsProvider.tsx` are unrelated to this sprint's changes).
+
 ## 19. Sprint Summary
 
 Sprint 20 adds a personalization layer on top of Sprint 19's intelligence engine, entirely by composition — no Sprint 19 module was modified or duplicated, only extended and combined. A user now gets an explainable financial personality, capacity-scaled goal recommendations, achievable weekly challenges, a monthly story instead of raw numbers, an account-wide health score, and a premium portfolio overview — while the dashboard itself was deliberately left visually alone, per the brief, with only its *content hierarchy* now stage-aware. Two real, previously-unaddressed gaps were found and fixed along the way (missing reduced-motion support; a challenge type that could never have honestly resolved), rather than glossed over. What's explicitly deferred — heatmap UI, remaining celebration call sites, and report export — is documented rather than silently left out, so the next sprint has a clear, honest starting point.

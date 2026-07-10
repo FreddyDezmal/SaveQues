@@ -74,7 +74,7 @@ export function buildWeeklyReview(inputs: WeeklyReviewInputs): WeeklyReview {
     if (!existing || new Date(t.created_at) > new Date(existing)) lastTxByGoal.set(t.goal_id, t.created_at);
   }
   let goalsCompleted = 0;
-  for (const goalId of goalIdsComplete) {
+  for (const goalId of Array.from(goalIdsComplete)) {
     const lastTx = lastTxByGoal.get(goalId);
     if (lastTx && withinLastNDays(lastTx, now, 7)) goalsCompleted += 1;
   }
@@ -93,7 +93,7 @@ export function buildWeeklyReview(inputs: WeeklyReviewInputs): WeeklyReview {
     byDay.set(key, (byDay.get(key) ?? 0) + Number(d.amount));
   }
   let bestSavingDay: WeeklyReview["bestSavingDay"] = null;
-  for (const [date, amount] of byDay.entries()) {
+  for (const [date, amount] of Array.from(byDay.entries())) {
     if (!bestSavingDay || amount > bestSavingDay.amount) bestSavingDay = { date, amount };
   }
 
