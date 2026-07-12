@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkAndAwardAchievements } from "@/lib/awardXP";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { recordDailyActivity } from "@/lib/recordDailyActivity";
+import { checkQuestRequirement, type QuestRequirementType } from "@/lib/questRequirements";
 
 export async function POST(req: NextRequest) {
   const supabase = createClient();
@@ -34,13 +35,45 @@ export async function POST(req: NextRequest) {
   // M3 fix: load XP reward from the database, never from the client
   const { data: questRecord } = await supabase
     .from("weekly_quests")
-    .select("xp_reward")
+    .select("xp_reward, requirement_type, requirement_value")
     .eq("id", questId)
     .eq("is_active", true)
     .single();
 
   if (!questRecord) {
     return NextResponse.json({ error: "Quest not found" }, { status: 404 });
+  }
+
+  // FIX (admin CRUD audit, migration 038): previously nothing checked
+  // whether the user actually satisfied the quest's requirement before
+  // awarding XP — e.g. a "streak 7 days this week" quest could be
+  // completed by clicking it on day one. requirement_type/value are
+  // optional (default 'none' = unchanged, self-reported behavior for
+  // every quest that hasn't been given a structured requirement).
+  if (questRecord.requirement_type && questRecord.requirement_type !== "none") {
+    const { data: profileForCheck } = await supabase
+      .from("profiles")
+      .select("streak_days")
+      .eq("id", user.id)
+      .single();
+
+    const { data: weekTxs } = await supabase
+      .from("transactions")
+      .select("amount")
+      .eq("user_id", user.id)
+      .eq("transaction_type", "deposit")
+      .gte("created_at", `${weekStart}T00:00:00.000Z`);
+    const savedThisWeek = (weekTxs ?? []).reduce((sum, t) => sum + Math.max(0, Number(t.amount)), 0);
+
+    const check = checkQuestRequirement(
+      questRecord.requirement_type as QuestRequirementType,
+      questRecord.requirement_value ?? 0,
+      { streakDays: profileForCheck?.streak_days ?? 0, totalSaved: 0 },
+      savedThisWeek
+    );
+    if (!check.met) {
+      return NextResponse.json({ error: `Requirement not met: ${check.reason}` }, { status: 409 });
+    }
   }
 
   const xp = questRecord.xp_reward;

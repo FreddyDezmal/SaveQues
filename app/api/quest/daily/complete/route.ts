@@ -36,6 +36,7 @@ import { captureError, setSentryUser } from "@/lib/monitoring";
 import { checkAttemptRateLimit, recordAttempt } from "@/lib/rateLimit";
 import { withOutcomeTracking } from "@/lib/recordOutcome";
 import { deferAnalytics } from "@/lib/deferredAnalytics";
+import { checkQuestRequirement, type QuestRequirementType } from "@/lib/questRequirements";
 
 const log = createLogger("quest.daily.complete");
 const RATE_LIMIT_ENDPOINT = "quest.daily.complete";
@@ -91,9 +92,57 @@ async function handlePOST(req: NextRequest) {
   }
 
   const today = getUTCDateString();
-  const xp    = getXPForAction("DAILY_QUEST_COMPLETE", profile.streak_days);
+
+  // FIX (admin CRUD audit, migration 038): this route previously never
+  // checked that `questId` corresponded to a real, active quest at all —
+  // any string awarded the flat "one daily quest today" XP. It also never
+  // checked the quest's requirement_type/requirement_value (added in
+  // migration 038) before awarding. Both are now enforced server-side.
+  const { data: questRow } = await supabase
+    .from("daily_quests")
+    .select("id, is_active, requirement_type, requirement_value")
+    .eq("id", questId)
+    .single();
+
+  if (!questRow || !questRow.is_active) {
+    log.warn("Quest complete rejected — unknown or inactive quest", { user_id: user.id, request_id: requestId, quest_id: questId });
+    return NextResponse.json({ error: "Quest not found" }, { status: 404 });
+  }
+
+  if (questRow.requirement_type !== "none") {
+    const { data: todaysTxs } = await supabase
+      .from("transactions")
+      .select("amount, transaction_type")
+      .eq("user_id", user.id)
+      .eq("transaction_type", "deposit")
+      .gte("created_at", `${today}T00:00:00.000Z`);
+    const savedToday = (todaysTxs ?? []).reduce((sum, t) => sum + Math.max(0, Number(t.amount)), 0);
+
+    const check = checkQuestRequirement(
+      questRow.requirement_type as QuestRequirementType,
+      questRow.requirement_value,
+      { streakDays: profile.streak_days, totalSaved: 0 },
+      savedToday
+    );
+    if (!check.met) {
+      log.info("Quest complete rejected — requirement not met", {
+        user_id: user.id, request_id: requestId, quest_id: questId, reason: check.reason,
+      });
+      return NextResponse.json({ error: `Requirement not met: ${check.reason}` }, { status: 409 });
+    }
+  }
+
+  const xp = getXPForAction("DAILY_QUEST_COMPLETE", profile.streak_days);
 
   // ── Atomic DB function: logs quest + awards XP idempotently ──
+  // NOTE (audit finding, unchanged by this fix): complete_daily_quest()'s
+  // idempotency key is (user_id, quest_date) — NOT quest_id. Only the
+  // first daily quest claimed each day is ever actually paid; a second
+  // quest_id claimed the same day returns already_awarded regardless of
+  // its own requirement. That's pre-existing "one daily quest reward per
+  // day" product behavior, not something introduced here — flagged in
+  // docs/ADMIN_CRUD_AUDIT.md as worth a deliberate product decision rather
+  // than changed silently in an audit-fix pass.
   const { data: result, error } = await supabase.rpc("complete_daily_quest", {
     p_user_id:   user.id,
     p_quest_id:  questId,

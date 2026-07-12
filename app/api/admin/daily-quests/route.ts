@@ -6,6 +6,9 @@ import { requireAdmin, auditLog }    from "@/lib/adminAudit";
 import { writeAuditLog } from "@/lib/auditLog";
 
 const CATEGORIES = ["savings", "behavioral", "streak", "challenge"];
+// Migration 038 — see lib/questRequirements.ts for how these are enforced
+// server-side at completion time.
+const REQUIREMENT_TYPES = ["none", "streak", "save_amount"];
 
 function validate(body: any) {
   if (!body.id || typeof body.id !== "string" || !/^[a-z0-9_]+$/.test(body.id))
@@ -18,6 +21,12 @@ function validate(body: any) {
     return "xp_reward must be a non-negative number";
   if (body.day_of_week != null && (body.day_of_week < 0 || body.day_of_week > 6))
     return "day_of_week must be between 0 and 6";
+  if (body.requirement_type != null && !REQUIREMENT_TYPES.includes(body.requirement_type))
+    return `requirement_type must be one of: ${REQUIREMENT_TYPES.join(", ")}`;
+  if (body.requirement_value != null && (typeof body.requirement_value !== "number" || body.requirement_value < 0))
+    return "requirement_value must be a non-negative number";
+  if (body.requirement_type && body.requirement_type !== "none" && !body.requirement_value)
+    return `requirement_type "${body.requirement_type}" needs a requirement_value greater than 0`;
   return null;
 }
 
@@ -42,6 +51,8 @@ export async function POST(req: NextRequest) {
       category: body.category ?? "behavioral", xp_reward: body.xp_reward ?? 50,
       icon: body.icon ?? "⭐", day_of_week: body.day_of_week ?? null,
       is_active: body.is_active ?? true,
+      requirement_type: body.requirement_type ?? "none",
+      requirement_value: body.requirement_value ?? 0,
     }).select().single();
 
     if (error) {
@@ -76,12 +87,17 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: `category must be one of: ${CATEGORIES.join(", ")}` }, { status: 400 });
     if (updates.xp_reward != null && (typeof updates.xp_reward !== "number" || updates.xp_reward < 0))
       return NextResponse.json({ error: "xp_reward must be a non-negative number" }, { status: 400 });
+    if (updates.requirement_type != null && !REQUIREMENT_TYPES.includes(updates.requirement_type))
+      return NextResponse.json({ error: `requirement_type must be one of: ${REQUIREMENT_TYPES.join(", ")}` }, { status: 400 });
+    if (updates.requirement_value != null && (typeof updates.requirement_value !== "number" || updates.requirement_value < 0))
+      return NextResponse.json({ error: "requirement_value must be a non-negative number" }, { status: 400 });
 
     const { data: before } = await service.from("daily_quests").select("*").eq("id", id).single();
     const { data, error } = await service.from("daily_quests").update({
       title: updates.title, description: updates.description, category: updates.category,
       xp_reward: updates.xp_reward, icon: updates.icon,
       day_of_week: updates.day_of_week, is_active: updates.is_active,
+      requirement_type: updates.requirement_type, requirement_value: updates.requirement_value,
     }).eq("id", id).select().single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

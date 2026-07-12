@@ -8,6 +8,14 @@
  * use the user_challenges table, not user_weekly_quests. The client
  * correctly sends { userChallengeId } (the user_challenges.id).
  *
+ * FIX (admin CRUD audit, migration 039): the status→'completed' transition
+ * used to be a direct client-side `.update()`, which RLS silently blocked
+ * (no UPDATE policy exists on user_challenges for `authenticated` since
+ * migration 019) — XP was still awarded, but the row never actually
+ * flipped to 'completed'. Now uses complete_challenge(), a SECURITY
+ * DEFINER RPC that does both atomically, mirroring complete_daily_quest()
+ * / complete_weekly_quest().
+ *
  * Security guarantees:
  *  • Auth required     — session verified via createClient()
  *  • Ownership guard   — user_challenges row fetched with .eq("user_id", user.id)
@@ -55,40 +63,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Challenge is not active" }, { status: 400 });
   }
 
-  // ── 3. Mark complete ──────────────────────────────────────────────────────
-  const { error: updateError } = await supabase
-    .from("user_challenges")
-    .update({ status: "completed", completed_at: new Date().toISOString() })
-    .eq("id", userChallengeId)
-    .eq("user_id", user.id)
-    .eq("status", "active"); // atomic guard — second concurrent request hits 0 rows
-
-  if (updateError) {
-    return NextResponse.json({ error: updateError.message }, { status: 500 });
-  }
-
-  // ── 4. Award XP server-side ───────────────────────────────────────────────
+  // ── 3. Mark complete + award XP atomically, server-side ──────────────────
+  // FIX (admin CRUD audit, migration 039): this used to be a direct
+  // `.update()` here, which silently did nothing — migration 019 removed
+  // the UPDATE policy on user_challenges for the authenticated role, and
+  // Supabase does not error on an RLS-filtered zero-row update. XP was
+  // still being awarded correctly via award_xp() below, but `status` was
+  // never actually persisted as 'completed'. complete_challenge() is a
+  // SECURITY DEFINER function (mirrors complete_daily_quest /
+  // complete_weekly_quest) that does both in one atomic, authorized step.
   const challenge = uc.challenges as any;
   const xp        = challenge?.xp_reward ?? 0;
 
-  let xpAwarded = 0;
-  let newTotal   = 0;
+  const { data: completeResult, error: completeError } = await supabase.rpc("complete_challenge", {
+    p_user_id:           user.id,
+    p_user_challenge_id: userChallengeId,
+    p_xp:                xp,
+  });
 
-  if (xp > 0) {
-    const { data: xpResult } = await supabase.rpc("award_xp", {
-      p_user_id:     user.id,
-      p_source_type: "challenge",
-      p_source_id:   userChallengeId,
-      p_xp:          xp,
-    });
-
-    const r = xpResult as any;
-    if (r?.reason === "already_awarded") {
-      return NextResponse.json({ xpGained: 0, alreadyAwarded: true, newAchievements: [] });
-    }
-    xpAwarded = r?.xp_awarded ?? 0;
-    newTotal   = r?.new_total  ?? 0;
+  if (completeError) {
+    return NextResponse.json({ error: completeError.message }, { status: 500 });
   }
+
+  const completeRpcResult = completeResult as { success: boolean; xp_awarded: number; new_total: number; reason?: string };
+
+  if (completeRpcResult.reason === "already_awarded") {
+    return NextResponse.json({ xpGained: 0, alreadyAwarded: true, newAchievements: [] });
+  }
+
+  const xpAwarded = completeRpcResult.xp_awarded ?? 0;
+  const newTotal  = completeRpcResult.new_total  ?? 0;
 
   // ── 5. Achievement check ──────────────────────────────────────────────────
   const { data: profile } = await supabase

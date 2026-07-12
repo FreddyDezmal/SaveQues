@@ -1007,6 +1007,19 @@ export default function AdminClient({
             </button>
           </div>
 
+          {/* AUDIT NOTE (docs/ADMIN_CRUD_AUDIT.md): this tab manages the `badges`
+              catalog table, which is display/reference only. The actual unlock
+              logic that awards badges to users runs entirely from the hardcoded
+              ACHIEVEMENTS array in lib/achievements.ts and is never read from
+              this table. Creating a badge here does NOT make it earnable, and
+              editing unlock_criteria here has no effect on anything. */}
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            <strong className="font-semibold">Heads up:</strong> badges created or edited here are catalog/display
+            entries only. The actual unlock logic lives in code (<code className="text-amber-100">lib/achievements.ts</code>)
+            and does not read from this table — a new badge added here will not be earnable by users until a
+            developer also adds matching logic in code. See the admin CRUD audit for details.
+          </div>
+
           {/* Badge form */}
           {(newBadge || editingBadge) && (
             <div className="card p-4 border-brand-500/30">
@@ -1144,6 +1157,19 @@ export default function AdminClient({
             <button onClick={startNewChain} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
               <Plus size={14} /> New Chain
             </button>
+          </div>
+
+          {/* AUDIT NOTE (docs/ADMIN_CRUD_AUDIT.md): the live chain-progression
+              flow (app/api/quest/chain/step/route.ts) reads chain/step
+              definitions from the hardcoded QUEST_CHAINS constant in
+              lib/quests.ts, not from these DB tables. Chains created or edited
+              here are catalog/display entries only, until a developer also
+              adds/updates the matching entry in code. */}
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            <strong className="font-semibold">Heads up:</strong> chains created or edited here are catalog/display
+            entries only. Live chain progression reads from a hardcoded list in
+            code (<code className="text-amber-100">lib/quests.ts</code>), not from this table — a new chain added here
+            will not be playable until a developer also adds it in code. See the admin CRUD audit for details.
           </div>
 
           {/* Chain form */}

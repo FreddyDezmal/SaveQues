@@ -209,7 +209,7 @@ export const QUEST_CHAINS: QuestChain[] = [
     completionBadgeId: "chain_starter",
     steps: [
       { stepNumber: 1, title: "Open the App",           description: "Log into SaveQuest for the first time.", xpReward: 50,  requiresType: "open_app",       requiresValue: 1 },
-      { stepNumber: 2, title: "Create a Goal",           description: "Set up your very first savings goal.",   xpReward: 75,  requiresType: "complete_daily", requiresValue: 1 },
+      { stepNumber: 2, title: "Create a Goal",           description: "Set up your very first savings goal.",   xpReward: 75,  requiresType: "open_app",       requiresValue: 1 }, // AUDIT FIX: was "complete_daily" — mismatched with the title/description and unrelated to goal creation; see docs/ADMIN_CRUD_AUDIT.md
       { stepNumber: 3, title: "First Deposit",           description: "Log your first saving of any amount.",   xpReward: 100, requiresType: "save_amount",    requiresValue: 1 },
       { stepNumber: 4, title: "3-Day Streak",            description: "Stay active 3 days in a row.",           xpReward: 150, requiresType: "streak",         requiresValue: 3 },
       { stepNumber: 5, title: "First Quest",             description: "Complete any daily quest.",               xpReward: 150, requiresType: "complete_daily", requiresValue: 1 },
@@ -250,7 +250,7 @@ export const QUEST_CHAINS: QuestChain[] = [
     icon: "🛡️",
     completionXP: 1500,
     steps: [
-      { stepNumber: 1, title: "Create Emergency Goal",   description: "Set up an Emergency Fund goal.",          xpReward: 100, requiresType: "complete_daily", requiresValue: 1   },
+      { stepNumber: 1, title: "Create Emergency Goal",   description: "Set up an Emergency Fund goal.",          xpReward: 100, requiresType: "open_app",       requiresValue: 1   }, // AUDIT FIX: was "complete_daily" — see docs/ADMIN_CRUD_AUDIT.md
       { stepNumber: 2, title: "First R500",              description: "Save R500 toward your emergency fund.",   xpReward: 200, requiresType: "save_amount",    requiresValue: 500 },
       { stepNumber: 3, title: "Stay Consistent",         description: "Maintain a 14-day streak.",               xpReward: 300, requiresType: "streak",         requiresValue: 14  },
       { stepNumber: 4, title: "Reach R1,000",            description: "Save R1,000 total.",                      xpReward: 400, requiresType: "save_amount",    requiresValue: 1000},
