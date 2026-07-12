@@ -24,8 +24,13 @@ import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
 import type { TimelineEventGroup } from "@/lib/types";
 import IntelligencePanel from "@/components/insights/IntelligencePanel";
+import BehaviorInsights from "@/components/behavior/BehaviorInsights";
 import type { Insight } from "@/lib/insights";
 import type { WeeklyReview } from "@/lib/weeklyReview";
+import type { HabitProfile } from "@/lib/habits";
+import type { BehaviorProfile } from "@/lib/behaviorProfile";
+import type { BehavioralRisk } from "@/lib/riskEngine";
+import type { Intervention } from "@/lib/interventions";
 
 interface Props {
   profile: any;
@@ -61,6 +66,13 @@ interface Props {
   };
   /** Sprint 20 — Phase 4: which of insights/coaching/weekly-review leads inside IntelligencePanel, personalized by journey stage. */
   intelligenceSectionOrder?: import("@/lib/dashboardPersonalization").DashboardSection[];
+  /** Sprint 21 — Phases 2-5: habit/behavior/risk/intervention data, null when there isn't enough evidence yet. */
+  behavior?: {
+    habits: HabitProfile;
+    behaviorProfile: BehaviorProfile;
+    risk: BehavioralRisk;
+    interventions: Intervention[];
+  } | null;
 }
 
 export default function DashboardClient({
@@ -70,7 +82,7 @@ export default function DashboardClient({
   almostMessages, activeChain, streakBroken,
   userStage, streakPaused, streakPausedUntil, dashboardEvents,
   timelinePreview, primaryGoal, reflectionData,
-  hasDeposit, notificationPromptDismissed, intelligence, intelligenceSectionOrder
+  hasDeposit, notificationPromptDismissed, intelligence, intelligenceSectionOrder, behavior
 }: Props) {
   const router = useRouter();
   const [pauseLoading, setPauseLoading] = useState(false);
@@ -257,6 +269,16 @@ export default function DashboardClient({
           topCoachingMessage={intelligence.topCoachingMessage}
           formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
           sectionOrder={intelligenceSectionOrder}
+        />
+      )}
+
+      {/* ── Sprint 21: Behavior insights (habits + behavioral profile + risk + interventions) ── */}
+      {userStage !== "new" && behavior && (
+        <BehaviorInsights
+          habits={behavior.habits}
+          behaviorProfile={behavior.behaviorProfile}
+          risk={behavior.risk}
+          interventions={behavior.interventions}
         />
       )}
 

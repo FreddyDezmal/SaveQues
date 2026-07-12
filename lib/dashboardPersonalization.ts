@@ -32,7 +32,13 @@ export type DashboardSection =
   | "trends"
   | "monthly_comparisons"
   | "lifetime_achievements"
-  | "milestone_timeline";
+  | "milestone_timeline"
+  // Sprint 21, Phase 9 — behavioral risk/intervention sections. Additive to
+  // the union used by Sprint 20's `getDashboardSectionOrder()`; existing
+  // consumers that don't know about these two values are unaffected since
+  // nothing here does an exhaustive switch over DashboardSection.
+  | "risk_alert"
+  | "intervention";
 
 const SECTION_ORDER_BY_STAGE: Record<JourneyStage, DashboardSection[]> = {
   new: ["onboarding_prompts", "goal_progress"],
@@ -72,4 +78,25 @@ export function classifyJourneyStage(inputs: JourneyStageInputs): JourneyStage {
 
 export function getDashboardSectionOrder(stage: JourneyStage): DashboardSection[] {
   return SECTION_ORDER_BY_STAGE[stage];
+}
+
+/**
+ * Sprint 21, Phase 9 — layers behavioral risk on top of the existing,
+ * unmodified stage-based order rather than replacing
+ * `getDashboardSectionOrder()`. Existing callers (Sprint 20's dashboard
+ * wiring) keep working exactly as before; this is a new, additive entry
+ * point for callers that also have a `RiskLevel` (Sprint 21's
+ * lib/riskEngine.ts) available.
+ *
+ * Rule: "elevated"/"high" risk always leads with risk_alert + intervention,
+ * regardless of journey stage — a new user who's already shown risk
+ * signals (e.g. a stalled first goal) still deserves to see it first, not
+ * buried under onboarding prompts. "low"/"moderate" risk doesn't change
+ * the stage-based order at all.
+ */
+export function getRiskAwareSectionOrder(stage: JourneyStage, riskLevel: "low" | "moderate" | "elevated" | "high"): DashboardSection[] {
+  const base = getDashboardSectionOrder(stage);
+  if (riskLevel !== "elevated" && riskLevel !== "high") return base;
+  const withoutRiskSections = base.filter((s) => s !== "risk_alert" && s !== "intervention");
+  return ["risk_alert", "intervention", ...withoutRiskSections];
 }

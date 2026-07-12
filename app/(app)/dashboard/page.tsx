@@ -10,7 +10,12 @@ import { createLogger }        from "@/lib/logger";
 import { generateInsights }    from "@/lib/insights";
 import { buildWeeklyReview }   from "@/lib/weeklyReview";
 import { generateCoachingMessages } from "@/lib/coaching";
-import { classifyJourneyStage, getDashboardSectionOrder } from "@/lib/dashboardPersonalization";
+import { classifyJourneyStage, getDashboardSectionOrder, getRiskAwareSectionOrder } from "@/lib/dashboardPersonalization";
+import { computeHabitProfile } from "@/lib/habits";
+import { computeBehaviorProfile } from "@/lib/behaviorProfile";
+import { computeBehavioralRisk } from "@/lib/riskEngine";
+import { generateInterventions } from "@/lib/interventions";
+import { computeAccountHealth } from "@/lib/accountHealth";
 import type { Transaction }    from "@/lib/types";
 
 // Sprint 12 audit fix: measure server-side render time so the dashboard
@@ -129,6 +134,13 @@ export default async function DashboardPage() {
   let weeklyReview: ReturnType<typeof buildWeeklyReview> | null = null;
   let topCoachingMessage: string | null = null;
   let depositCount = 0;
+  // Sprint 21 — behavioral layer (Phases 2-5). Computed from the same
+  // `transactions`/`activityLog` already fetched below for Sprint 19/20's
+  // intelligence layer — no additional query.
+  let habitProfile: ReturnType<typeof computeHabitProfile> | null = null;
+  let behaviorProfile: ReturnType<typeof computeBehaviorProfile> | null = null;
+  let behavioralRisk: ReturnType<typeof computeBehavioralRisk> | null = null;
+  let interventions: ReturnType<typeof generateInterventions> = [];
 
   if (hasDeposit && userStage !== "new") {
     const { data: txData, error: txError } = await supabase
@@ -175,6 +187,42 @@ export default async function DashboardPage() {
         transactionsByGoal,
       });
       topCoachingMessage = coachingMessages[0]?.message ?? null;
+
+      // ── Sprint 21: Phases 2-5 — habits, behavior profile, risk, interventions ──
+      const activityLogForBehavior = (dash.activity_log ?? []).map((a: any) => ({
+        date: a.date,
+        xp_earned: a.xp_earned,
+        actions_count: a.actions_count,
+      }));
+      habitProfile = computeHabitProfile(transactions);
+      behaviorProfile = computeBehaviorProfile({
+        transactions,
+        goals: goals.map((g: any) => ({ id: g.id, is_complete: g.is_complete })),
+        streakDays: profile.streak_days,
+        longestStreak: profile.longest_streak,
+      });
+      behavioralRisk = computeBehavioralRisk({
+        transactions,
+        streakDays: profile.streak_days,
+        longestStreak: profile.longest_streak,
+      });
+      const accountHealthForInterventions = computeAccountHealth({
+        transactions,
+        goals: goals.map((g: any) => ({
+          id: g.id,
+          target_amount: g.target_amount,
+          current_amount: g.current_amount,
+          target_date: g.target_date,
+          is_complete: g.is_complete,
+        })),
+        activityLog: activityLogForBehavior,
+      });
+      interventions = generateInterventions({
+        behaviorProfile,
+        risk: behavioralRisk,
+        accountHealth: accountHealthForInterventions,
+        coachingMessages,
+      });
     }
   }
 
@@ -190,7 +238,9 @@ export default async function DashboardPage() {
     depositCount,
     completedGoalCount: completedGoals.length,
   });
-  const intelligenceSectionOrder = getDashboardSectionOrder(journeyStage);
+  const intelligenceSectionOrder = behavioralRisk
+    ? getRiskAwareSectionOrder(journeyStage, behavioralRisk.riskLevel)
+    : getDashboardSectionOrder(journeyStage);
 
   const almostMessages = userStage !== "new"
     ? getAlmostMessages({
@@ -269,6 +319,7 @@ export default async function DashboardPage() {
       notificationPromptDismissed={!!(profile as any).notification_prompt_dismissed}
       intelligence={{ insights, weeklyReview, topCoachingMessage }}
       intelligenceSectionOrder={intelligenceSectionOrder}
+      behavior={habitProfile && behaviorProfile && behavioralRisk ? { habits: habitProfile, behaviorProfile, risk: behavioralRisk, interventions } : null}
     />
   );
 }

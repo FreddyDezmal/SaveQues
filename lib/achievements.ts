@@ -1,5 +1,6 @@
 // ============================================================
-// SaveQuest Achievement Catalog — 60 achievements
+// SaveQuest Achievement Catalog — 65 achievements
+// (60 through Sprint 18/20 + 5 progressive deposit-count tiers, Sprint 21)
 // ============================================================
 
 export interface Achievement {
@@ -64,6 +65,17 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: "speed_30",       title: "Speed Runner",      description: "Complete a goal in under 30 days",      category: "savings", icon: "⚡",  xpReward: 500  },
   { id: "big_deposit",    title: "Big Spender",       description: "Single deposit over R1,000",            category: "savings", icon: "💸",  xpReward: 300  },
 
+  // ── SAVINGS — progressive deposit-count tiers (Sprint 21, Phase 12) ──
+  // Distinct from the amount-based "saved_*" tiers above: these track
+  // *how many times* a user has deposited, not how much — a separate,
+  // habit-oriented signal (someone making frequent small deposits earns
+  // these even if their "saved_*" tier progress is slow).
+  { id: "deposits_5",     title: "Getting Started",   description: "Make 5 deposits",                       category: "savings", icon: "🌿",  xpReward: 100  },
+  { id: "deposits_25",    title: "Building Momentum", description: "Make 25 deposits",                      category: "savings", icon: "🌳",  xpReward: 300  },
+  { id: "deposits_100",   title: "Habitual Saver",    description: "Make 100 deposits",                     category: "savings", icon: "🏔️",  xpReward: 800  },
+  { id: "deposits_250",   title: "Deposit Master",    description: "Make 250 deposits",                     category: "savings", icon: "🗻",  xpReward: 2000 },
+  { id: "deposits_500",   title: "Five Hundred Club", description: "Make 500 deposits",                     category: "savings", icon: "🏛️",  xpReward: 5000 },
+
   // ── QUEST & CHALLENGE (16) ────────────────────────────────
   { id: "first_quest",      title: "Quest Accepted",      description: "Complete your first quest",          category: "quest", icon: "⚔️",  xpReward: 200  },
   { id: "five_quests",      title: "Quest Adept",         description: "Complete 5 quests",                  category: "quest", icon: "🗡️",  xpReward: 500  },
@@ -118,6 +130,18 @@ export function checkAchievements(params: {
   goalCompletedInDays?: number;
   goalExceededByPercent?: number;    // how much over target
   goalTargetDaysAway?: number;       // days until target when created
+  /**
+   * Sprint 21, Phase 12 — total lifetime deposit count (not "today's
+   * count", unlike `transactionCount` above). Optional and additive: this
+   * function's existing callers pass nothing for it and every other check
+   * below is unaffected, so this doesn't change behavior for callers that
+   * don't opt in. Wiring the actual count into the deposit API route
+   * (where `transactionCount`/`totalSaved` are already tallied) is a
+   * follow-up — deliberately not touched this sprint to avoid changes near
+   * the deposit-writing code path (see docs/SPRINT21_BEHAVIOR.md, Security
+   * Audit).
+   */
+  lifetimeDepositCount?: number;
   earnedIds: string[];
 }): Achievement[] {
   const { earnedIds } = params;
@@ -162,6 +186,13 @@ export function checkAchievements(params: {
   check("five_active", params.activeGoals >= 5);
   check("speed_30",    (params.goalCompletedInDays ?? 999) <= 30);
   check("big_deposit", (params.transactionAmount ?? 0) >= 1000);
+
+  // Progressive deposit-count tiers (Sprint 21, Phase 12)
+  check("deposits_5",   (params.lifetimeDepositCount ?? 0) >= 5);
+  check("deposits_25",  (params.lifetimeDepositCount ?? 0) >= 25);
+  check("deposits_100", (params.lifetimeDepositCount ?? 0) >= 100);
+  check("deposits_250", (params.lifetimeDepositCount ?? 0) >= 250);
+  check("deposits_500", (params.lifetimeDepositCount ?? 0) >= 500);
 
   // Quests
   check("first_quest",      params.challengesCompleted >= 1);
