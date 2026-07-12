@@ -98,11 +98,27 @@ async function handlePOST(req: NextRequest) {
   // any string awarded the flat "one daily quest today" XP. It also never
   // checked the quest's requirement_type/requirement_value (added in
   // migration 038) before awarding. Both are now enforced server-side.
-  const { data: questRow } = await supabase
+  //
+  // BUG FIX: the original version of this fix discarded the query's
+  // `error` and only looked at `data`, so a query *failure* (e.g. this
+  // endpoint deployed before migration 038 actually ran against the
+  // database, meaning requirement_type/requirement_value don't exist yet)
+  // silently looked identical to "quest not found" — a 404 masking a
+  // missing migration, breaking every daily quest at once. Now logged and
+  // surfaced distinctly as a 500 so it's diagnosable instead of looking
+  // like bad quest data.
+  const { data: questRow, error: questFetchError } = await supabase
     .from("daily_quests")
     .select("id, is_active, requirement_type, requirement_value")
     .eq("id", questId)
     .single();
+
+  if (questFetchError) {
+    log.error("Quest complete failed — daily_quests lookup errored (check migration 038 has been applied)", {
+      user_id: user.id, request_id: requestId, quest_id: questId, error: questFetchError.message, code: questFetchError.code,
+    });
+    return NextResponse.json({ error: "Could not verify quest — please try again shortly" }, { status: 500 });
+  }
 
   if (!questRow || !questRow.is_active) {
     log.warn("Quest complete rejected — unknown or inactive quest", { user_id: user.id, request_id: requestId, quest_id: questId });

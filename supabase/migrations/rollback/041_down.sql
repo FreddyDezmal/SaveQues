@@ -1,4 +1,4 @@
--- 039_down.sql
+-- 040_down.sql
 -- Rollback for 039_complete_challenge_rpc.sql
 --
 -- CAUTION: rolling this back reintroduces the bug it fixed — reverting

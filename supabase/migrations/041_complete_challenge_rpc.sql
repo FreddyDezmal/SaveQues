@@ -1,4 +1,4 @@
--- 039_complete_challenge_rpc.sql
+-- 041_complete_challenge_rpc.sql
 --
 -- Admin CRUD audit finding (docs/ADMIN_CRUD_AUDIT.md): migration
 -- 019_s3_rls_write_lockdown.sql removed the UPDATE policy on

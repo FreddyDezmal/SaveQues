@@ -33,12 +33,25 @@ export async function POST(req: NextRequest) {
   }
 
   // M3 fix: load XP reward from the database, never from the client
-  const { data: questRecord } = await supabase
+  //
+  // BUG FIX (found via user-reported console errors after migration 038
+  // shipped): this used to discard the query's `error` and only check
+  // `data`, so a query failure (e.g. this endpoint deployed before
+  // migration 038 actually ran against the database, meaning
+  // requirement_type/requirement_value don't exist yet) looked identical
+  // to "quest not found" — see the matching fix in
+  // app/api/quest/daily/complete/route.ts for the full explanation.
+  const { data: questRecord, error: questFetchError } = await supabase
     .from("weekly_quests")
     .select("xp_reward, requirement_type, requirement_value")
     .eq("id", questId)
     .eq("is_active", true)
     .single();
+
+  if (questFetchError) {
+    console.error("[quest/weekly/complete] weekly_quests lookup errored (check migration 038 has been applied):", questFetchError.message);
+    return NextResponse.json({ error: "Could not verify quest — please try again shortly" }, { status: 500 });
+  }
 
   if (!questRecord) {
     return NextResponse.json({ error: "Quest not found" }, { status: 404 });

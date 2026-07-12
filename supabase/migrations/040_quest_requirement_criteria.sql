@@ -1,4 +1,4 @@
--- 038_quest_requirement_criteria.sql
+-- 040_quest_requirement_criteria.sql
 --
 -- Admin CRUD audit finding (docs/ADMIN_CRUD_AUDIT.md, Sprint "admin audit"):
 -- daily_quests and weekly_quests had no structured way to express *what*

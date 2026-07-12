@@ -1,4 +1,4 @@
--- 041_user_weekly_quests_rls_lockdown.sql
+-- 043_user_weekly_quests_rls_lockdown.sql
 --
 -- Admin CRUD audit finding (docs/ADMIN_CRUD_AUDIT.md): unlike
 -- daily_quest_logs and user_challenges (locked down in migration 019),

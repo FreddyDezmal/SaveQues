@@ -1,4 +1,4 @@
--- 040_award_xp_allowlist.sql
+-- 042_award_xp_allowlist.sql
 --
 -- Admin CRUD audit finding (docs/ADMIN_CRUD_AUDIT.md, "Critical: award_xp
 -- is directly callable and does not validate its inputs"): award_xp() is
