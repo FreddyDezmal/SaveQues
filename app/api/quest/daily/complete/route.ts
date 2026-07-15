@@ -28,6 +28,7 @@ import { createClient } from "@/lib/supabase/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getXPForAction } from "@/lib/xp";
 import { checkAndAwardAchievements, detectLevelUp } from "@/lib/awardXP";
+import { postLevelUpToFeed } from "@/lib/activityFeed";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { recordDailyActivity } from "@/lib/recordDailyActivity";
 import { getUTCDateString } from "@/lib/dateUtils";
@@ -228,6 +229,11 @@ async function handlePOST(req: NextRequest) {
         previous_level: levelUpResult.previousLevel,
         new_title:      levelUpResult.newTitle,
         source:         "daily_quest",
+      });
+      // Sprint 22, Phase 8 — see lib/activityFeed.ts for why this is a
+      // service-role call from application code rather than a trigger.
+      postLevelUpToFeed(user.id, levelUpResult.newLevel, levelUpResult.newTitle).catch((err) => {
+        console.error("[quest/daily/complete] Failed to post level_up to feed:", err);
       });
     }
 

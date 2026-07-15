@@ -32,6 +32,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getXPForAction } from "@/lib/xp";
 import { checkAchievements } from "@/lib/achievements";
 import { awardSavingXP, awardGoalCompleteXP, detectLevelUp } from "@/lib/awardXP";
+import { postLevelUpToFeed } from "@/lib/activityFeed";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { recordDailyActivity } from "@/lib/recordDailyActivity";
 import { getUTCDateString } from "@/lib/dateUtils";
@@ -370,6 +371,13 @@ async function handlePOST(req: NextRequest) {
         previous_level: levelUpResult.previousLevel,
         new_title:      levelUpResult.newTitle,
         source:         isGoalComplete ? "goal_complete" : "log_saving",
+      });
+      // Sprint 22, Phase 8: post to the activity feed too. Same
+      // fire-and-forget deferred-analytics context this already runs in
+      // — a failed feed post should never affect the deposit response,
+      // which has already been sent by this point.
+      postLevelUpToFeed(user.id, levelUpResult.newLevel, levelUpResult.newTitle).catch((err) => {
+        console.error("[transactions] Failed to post level_up to feed:", err);
       });
     }
 

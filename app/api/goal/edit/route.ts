@@ -26,6 +26,7 @@ import { writeAuditLog } from "@/lib/auditLog";
 const log = createLogger("goals.edit");
 
 const MAX_TITLE_LEN = 80;
+const VALID_GOAL_VISIBILITY = ["private", "friends", "group", "public"];
 
 export async function PATCH(req: NextRequest) {
   const requestId = req.headers.get("x-request-id") ?? undefined;
@@ -35,14 +36,14 @@ export async function PATCH(req: NextRequest) {
 
   setSentryUser(user.id);
 
-  let body: { goal_id?: string; title?: string; goal_emoji?: string; target_amount?: number };
+  let body: { goal_id?: string; title?: string; goal_emoji?: string; target_amount?: number; goal_visibility?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { goal_id, title, goal_emoji, target_amount } = body;
+  const { goal_id, title, goal_emoji, target_amount, goal_visibility } = body;
 
   if (!goal_id) {
     return NextResponse.json({ error: "goal_id is required" }, { status: 400 });
@@ -61,6 +62,12 @@ export async function PATCH(req: NextRequest) {
   }
   if (target_amount !== undefined && (typeof target_amount !== "number" || target_amount <= 0)) {
     validationErrors.push("target_amount must be greater than 0");
+  }
+  // Sprint 22, Phase 12. Mirrors savings_goals.goal_visibility's CHECK
+  // constraint (045) exactly. Purely a privacy/display field — doesn't
+  // touch, and isn't validated against, any of the financial fields above.
+  if (goal_visibility !== undefined && !VALID_GOAL_VISIBILITY.includes(goal_visibility)) {
+    validationErrors.push(`goal_visibility must be one of: ${VALID_GOAL_VISIBILITY.join(", ")}`);
   }
   if (validationErrors.length > 0) {
     return NextResponse.json({ error: validationErrors.join("; ") }, { status: 422 });
@@ -97,6 +104,8 @@ export async function PATCH(req: NextRequest) {
       updates.completed_at = new Date().toISOString();
     }
   }
+
+  if (goal_visibility !== undefined) updates.goal_visibility = goal_visibility;
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });

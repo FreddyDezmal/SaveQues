@@ -111,6 +111,12 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: "patient",         title: "The Patient One",    description: "Create a goal with target date 1yr+ away", category: "hidden", icon: "⏳", xpReward: 200, secret: true },
   { id: "overachiever",    title: "Overachiever",       description: "Exceed a goal by 10%",                category: "hidden",  icon: "📊",  xpReward: 300,  secret: true },
   { id: "perfectionist",   title: "Perfectionist",      description: "Complete a goal on exactly the target date", category: "hidden", icon: "🎯", xpReward: 500, secret: true },
+
+  // ── SOCIAL (3) — Sprint 22, Phase 10. First entries in a category that
+  // existed in the type union but had no achievements in it until now.
+  { id: "referral_first",  title: "Plus One",           description: "Invite your first friend to SaveQuest",  category: "social",  icon: "🤝",  xpReward: 200  },
+  { id: "referral_five",   title: "Squad Builder",      description: "5 successful referrals",                 category: "social",  icon: "👥",  xpReward: 750  },
+  { id: "referral_ten",    title: "Community Pillar",   description: "10 successful referrals",                category: "social",  icon: "🏘️",  xpReward: 2000 },
 ];
 
 // ── CHECK FUNCTION ────────────────────────────────────────────

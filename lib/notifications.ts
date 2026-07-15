@@ -604,3 +604,375 @@ function getWeekStart(): string {
   monday.setDate(diff);
   return monday.toISOString().split("T")[0];
 }
+
+// ── Sprint 22, Phase 4: accountability partners ─────────────────────────────
+//
+// No notification_preferences category exists for these (see the
+// NotificationType comment in lib/types.notifications.ts) — gated only by
+// the global profiles.notifications_enabled switch, same fallback
+// canSendNotificationToUser() uses for any type without a specific
+// category. A dedicated "partner_updates" category is Phase 11 scope.
+
+async function notificationsGloballyEnabled(userId: string): Promise<boolean> {
+  const supabase = createServiceClient();
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("notifications_enabled")
+    .eq("id", userId)
+    .maybeSingle();
+  return profile?.notifications_enabled ?? true;
+}
+
+/** Fires when someone sends a partner request. Called from /api/partner/request. */
+export async function sendPartnerRequest(
+  userId: string,
+  requesterDisplayName: string
+): Promise<{ sent: number; errors: number }> {
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "partner_request",
+    `🤝 ${requesterDisplayName} wants to be your accountability partner`,
+    "Tap to accept or decline.",
+    "/partner"
+  );
+}
+
+/** Fires when a partner request is accepted. Called from /api/partner/respond. */
+export async function sendPartnerAccepted(
+  userId: string,
+  partnerDisplayName: string
+): Promise<{ sent: number; errors: number }> {
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "partner_accepted",
+    `🎉 ${partnerDisplayName} accepted your partner request`,
+    "You're now accountability partners. Tap to see their progress.",
+    "/partner"
+  );
+}
+
+/**
+ * Fires when a user nudges their accountability partner. Called from
+ * /api/partner/nudge, which rate-limits the sender — this function itself
+ * doesn't, since it has no way to distinguish one legitimate nudge from a
+ * burst of them.
+ */
+export async function sendPartnerNudge(
+  userId: string,
+  senderDisplayName: string,
+  message?: string
+): Promise<{ sent: number; errors: number }> {
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "partner_nudge",
+    `👋 ${senderDisplayName} sent you a nudge`,
+    message?.slice(0, 120) || "Keep going — your partner is cheering you on!",
+    "/partner"
+  );
+}
+
+// ── Sprint 22, Phase 11 continuation ────────────────────────────────────────
+//
+// friend_request / friend_accepted / group_invite / goal_invitation /
+// partner_reminder have no dedicated notification_preferences category —
+// same honest gap as the Phase 4 partner_* types above, gated only by the
+// global profiles.notifications_enabled switch. group_quest_completed and
+// group_weekly_summary DO reuse existing categories (milestone_
+// celebrations and weekly_summaries respectively) — both existed in
+// 039_notification_preferences.sql with real, persisted toggles but no
+// send path anywhere in the codebase until now (see that migration's own
+// honesty note). This is the first code that actually gates on them.
+
+export async function sendFriendRequest(
+  userId: string,
+  requesterDisplayName: string
+): Promise<{ sent: number; errors: number }> {
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "friend_request",
+    `👋 ${requesterDisplayName} sent you a friend request`,
+    "Tap to accept or decline.",
+    "/friends"
+  );
+}
+
+export async function sendFriendAccepted(
+  userId: string,
+  accepterDisplayName: string
+): Promise<{ sent: number; errors: number }> {
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "friend_accepted",
+    `🎉 ${accepterDisplayName} accepted your friend request`,
+    "You're now friends. See their progress on your friends list.",
+    "/friends"
+  );
+}
+
+export async function sendGroupInvite(
+  userId: string,
+  inviterDisplayName: string,
+  groupName: string
+): Promise<{ sent: number; errors: number }> {
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "group_invite",
+    `👥 ${inviterDisplayName} invited you to join ${groupName}`,
+    "Tap to view the invite.",
+    "/groups"
+  );
+}
+
+export async function sendGoalInvitation(
+  userId: string,
+  inviterDisplayName: string,
+  goalTitle: string
+): Promise<{ sent: number; errors: number }> {
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "goal_invitation",
+    `🎯 ${inviterDisplayName} invited you to help with "${goalTitle}"`,
+    "Tap to view and join in.",
+    "/shared-goals"
+  );
+}
+
+/** Fires for every currently-active member when a group quest completes
+ *  (app/api/group-quests/check-completion/route.ts, after a successful
+ *  public.service_complete_group_quest() call, 050) — reuses the
+ *  milestone_celebrations preference, same framing as an individual goal
+ *  completion celebration. */
+export async function sendGroupQuestCompleted(
+  userId: string,
+  groupName: string,
+  questTitle: string
+): Promise<{ sent: number; errors: number }> {
+  const allowed = await canSendNotificationToUser(userId, "milestone_celebrations");
+  if (!allowed) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "group_quest_completed",
+    `🏆 ${groupName} completed "${questTitle}"!`,
+    "Great teamwork — check out the group's progress.",
+    "/groups"
+  );
+}
+
+async function sendPartnerReminder(userId: string): Promise<{ sent: number; errors: number }> {
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "partner_reminder",
+    "🤝 Check in with your accountability partner",
+    "A quick nudge or encouragement can go a long way — see how they're doing.",
+    "/partner"
+  );
+}
+
+/**
+ * Reminds both sides of a quiet accountability partnership. Runs from the
+ * SAME once-daily cron invocation as everything else here (not gated to
+ * Monday like the two weekly schedulers below — a partnership going quiet
+ * is worth catching sooner than a week later), piggybacking rather than
+ * requesting a new Vercel Cron slot, same reasoning as
+ * runWeeklySummaryScheduler().
+ *
+ * "Quiet" = neither party has nudged the other (activity_feed has no
+ * direct signal for this — nudges aren't feed events — so this reads
+ * notification_logs for the most recent partner_nudge either direction)
+ * in the last 5 days, AND a reminder hasn't already been sent to this
+ * user in the last 7 days (checked the same way — no new schema needed
+ * for either check, both reuse notification_logs as the source of truth
+ * for "when did we last do X", avoiding a dedicated last_reminder_at
+ * column for what's a fairly minor feature).
+ */
+export async function runPartnerReminderScheduler(): Promise<{ processed: number; notifications_sent: number; errors: number }> {
+  const supabase = createServiceClient();
+
+  const { data: partnerships, error } = await supabase
+    .from("accountability_partners")
+    .select("id, requester_id, partner_id")
+    .eq("status", "active");
+
+  if (error || !partnerships) {
+    console.error("[partner-reminder] Failed to fetch active partnerships:", error);
+    return { processed: 0, notifications_sent: 0, errors: 1 };
+  }
+  if (partnerships.length === 0) {
+    return { processed: 0, notifications_sent: 0, errors: 0 };
+  }
+
+  const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Sprint 22, Phase 13: batched to two queries total, regardless of how
+  // many partnerships exist — the original shape (see 055's audit
+  // findings) issued up to 3 separate round trips PER partnership (one
+  // nudge check, one reminder check per member), which scales linearly
+  // with partnership count for no reason: every relevant row for every
+  // partnership can be fetched in one shot and matched up in memory.
+  const allUserIds = Array.from(new Set((partnerships as any[]).flatMap((p) => [p.requester_id, p.partner_id])));
+
+  const { data: recentNudgeLogs } = await supabase
+    .from("notification_logs")
+    .select("user_id")
+    .eq("notification_type", "partner_nudge")
+    .in("user_id", allUserIds)
+    .gte("created_at", fiveDaysAgo);
+  const recentlyNudgedUserIds = new Set((recentNudgeLogs ?? []).map((r: any) => r.user_id));
+
+  const { data: recentReminderLogs } = await supabase
+    .from("notification_logs")
+    .select("user_id")
+    .eq("notification_type", "partner_reminder")
+    .in("user_id", allUserIds)
+    .gte("created_at", sevenDaysAgo);
+  const recentlyRemindedUserIds = new Set((recentReminderLogs ?? []).map((r: any) => r.user_id));
+
+  let notifications_sent = 0, errors = 0;
+
+  for (const p of partnerships as any[]) {
+    const pair = [p.requester_id, p.partner_id];
+
+    // A nudge from EITHER side counts for the pair — same "still active,
+    // leave them alone" semantics as the original per-partnership query.
+    if (pair.some((uid) => recentlyNudgedUserIds.has(uid))) continue;
+
+    for (const userId of pair) {
+      if (recentlyRemindedUserIds.has(userId)) continue;
+
+      try {
+        const r = await sendPartnerReminder(userId);
+        notifications_sent += r.sent;
+        errors += r.errors;
+      } catch (err) {
+        console.error("[partner-reminder] Send failed:", err);
+        errors += 1;
+      }
+    }
+  }
+
+  return { processed: partnerships.length, notifications_sent, errors };
+}
+
+async function sendGroupWeeklySummary(
+  userId: string,
+  groupName: string,
+  xpEarned: number,
+  questsCompleted: number,
+  activeMembers: number
+): Promise<{ sent: number; errors: number }> {
+  const allowed = await canSendNotificationToUser(userId, "weekly_summaries");
+  if (!allowed) return { sent: 0, errors: 0 };
+
+  return sendToUser(
+    userId,
+    "group_weekly_summary",
+    `📊 ${groupName}'s week: ${xpEarned} XP earned`,
+    `${activeMembers} active saver${activeMembers === 1 ? "" : "s"}${questsCompleted > 0 ? `, ${questsCompleted} quest${questsCompleted === 1 ? "" : "s"} completed` : ""} this week.`,
+    "/groups"
+  );
+}
+
+/**
+ * Weekly group digest — Monday only, same day-of-week gate and same
+ * reasoning as runWeeklySummaryScheduler() above (reuse the existing
+ * daily cron slot rather than requesting a new one). Deliberately
+ * non-monetary: group XP earned and quest completions, never a dollar
+ * total — same conservative "never expose financial balances" reading
+ * this sprint has applied consistently to every group-facing broadcast
+ * surface (leaderboards, group contribution counts).
+ */
+export async function runGroupWeeklySummaryScheduler(): Promise<{ processed: number; notifications_sent: number; errors: number }> {
+  const supabase = createServiceClient();
+
+  const { data: groups, error } = await supabase.from("groups").select("id, name").eq("is_active", true);
+  if (error || !groups) {
+    console.error("[group-weekly-summary] Failed to fetch groups:", error);
+    return { processed: 0, notifications_sent: 0, errors: 1 };
+  }
+  if (groups.length === 0) {
+    return { processed: 0, notifications_sent: 0, errors: 0 };
+  }
+
+  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const groupIds = (groups as any[]).map((g) => g.id);
+
+  // Sprint 22, Phase 13: batched to two queries total (members, quests)
+  // regardless of how many active groups exist, instead of two queries
+  // PER group — same reasoning as runPartnerReminderScheduler above.
+  const { data: allMembers } = await supabase
+    .from("group_members")
+    .select("group_id, user_id")
+    .in("group_id", groupIds)
+    .eq("status", "active");
+
+  const { data: allQuestRows } = await supabase
+    .from("group_quests")
+    .select("group_id, xp_reward")
+    .in("group_id", groupIds)
+    .eq("status", "completed")
+    .gte("completed_at", oneWeekAgo);
+
+  const membersByGroup = new Map<string, string[]>();
+  for (const m of (allMembers ?? []) as any[]) {
+    if (!membersByGroup.has(m.group_id)) membersByGroup.set(m.group_id, []);
+    membersByGroup.get(m.group_id)!.push(m.user_id);
+  }
+
+  const questStatsByGroup = new Map<string, { xpEarned: number; questsCompleted: number }>();
+  for (const q of (allQuestRows ?? []) as any[]) {
+    const existing = questStatsByGroup.get(q.group_id) ?? { xpEarned: 0, questsCompleted: 0 };
+    existing.xpEarned += q.xp_reward ?? 0;
+    existing.questsCompleted += 1;
+    questStatsByGroup.set(q.group_id, existing);
+  }
+
+  let notifications_sent = 0, errors = 0;
+
+  for (const group of groups as any[]) {
+    const memberIds = membersByGroup.get(group.id) ?? [];
+    if (memberIds.length === 0) continue;
+
+    // Each active member receives the full xp_reward per completed group
+    // quest (050's service_complete_group_quest — not divided between
+    // members), so a member's total group-quest XP this week is simply
+    // the sum of xp_reward across this week's completed quests. Reading
+    // this straight from group_quests.xp_reward instead of re-deriving it
+    // from xp_awards avoids an easy mistake: xp_awards would have one row
+    // PER MEMBER per quest, not one per quest, so naively summing that
+    // table here would overcount by a factor of the member count.
+    const { xpEarned, questsCompleted } = questStatsByGroup.get(group.id) ?? { xpEarned: 0, questsCompleted: 0 };
+
+    if (xpEarned === 0 && questsCompleted === 0) continue; // quiet week, nothing to report
+
+    for (const userId of memberIds) {
+      try {
+        const r = await sendGroupWeeklySummary(userId, group.name, xpEarned, questsCompleted, memberIds.length);
+        notifications_sent += r.sent;
+        errors += r.errors;
+      } catch (err) {
+        console.error("[group-weekly-summary] Send failed:", err);
+        errors += 1;
+      }
+    }
+  }
+
+  return { processed: groups.length, notifications_sent, errors };
+}

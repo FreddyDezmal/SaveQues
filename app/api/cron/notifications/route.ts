@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runDailyNotificationScheduler, runWeeklySummaryScheduler } from "@/lib/notifications";
+import { runDailyNotificationScheduler, runWeeklySummaryScheduler, runPartnerReminderScheduler, runGroupWeeklySummaryScheduler } from "@/lib/notifications";
 import { checkNotificationDeliveryRate } from "@/lib/businessMetrics";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
@@ -87,6 +87,35 @@ export async function GET(req: NextRequest) {
       } catch (weeklyErr: any) {
         log.warn("Weekly summary run failed (non-fatal to daily scheduler)", {
           run_id: runId, error: weeklyErr.message ?? String(weeklyErr),
+        });
+      }
+    }
+
+    // Sprint 22, Phase 11: quiet-partnership reminders. Runs on every
+    // invocation (not gated to Monday) — see runPartnerReminderScheduler's
+    // own doc comment for why a partnership going quiet is worth catching
+    // sooner than a week later. Own try/catch, same reasoning as every
+    // other piggybacked job on this cron: a failure here must never fail
+    // the (already-successful) daily scheduler run.
+    try {
+      const partnerResult = await runPartnerReminderScheduler();
+      log.info("Partner reminder run complete", { run_id: runId, ...partnerResult });
+    } catch (partnerErr: any) {
+      log.warn("Partner reminder run failed (non-fatal to daily scheduler)", {
+        run_id: runId, error: partnerErr.message ?? String(partnerErr),
+      });
+    }
+
+    // Sprint 22, Phase 11: group weekly digest. Same Monday gate and same
+    // "reuse the existing cron slot" reasoning as the personal weekly
+    // summary above.
+    if (new Date().getUTCDay() === 1 /* Monday */) {
+      try {
+        const groupWeeklyResult = await runGroupWeeklySummaryScheduler();
+        log.info("Group weekly summary run complete", { run_id: runId, ...groupWeeklyResult });
+      } catch (groupWeeklyErr: any) {
+        log.warn("Group weekly summary run failed (non-fatal to daily scheduler)", {
+          run_id: runId, error: groupWeeklyErr.message ?? String(groupWeeklyErr),
         });
       }
     }

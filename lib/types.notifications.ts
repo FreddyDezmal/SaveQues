@@ -13,7 +13,30 @@ export type NotificationType =
   // engineering audit for why those two are scoped out of this pass.
   | "achievement_unlocked"
   | "milestone_celebration"
-  | "weekly_summary";
+  | "weekly_summary"
+  // Sprint 22, Phase 4: accountability partners. No dedicated
+  // notification_preferences category exists for these yet (that's Phase
+  // 11 scope, same honesty-note pattern as 039_notification_preferences.sql)
+  // — for now they're gated only by profiles.notifications_enabled, the
+  // same global switch canSendNotificationToUser() falls back to for any
+  // type without a specific category. Documented here so that isn't a
+  // surprise later.
+  | "partner_request"
+  | "partner_accepted"
+  | "partner_nudge"
+  // Sprint 22, Phase 11 continuation. group_quest_completed covers both
+  // the brief's "Group achievement" and "Quest completion" bullets — on
+  // reflection those describe the same underlying event (a group quest
+  // finishing) from two angles, and firing two near-identical pushes for
+  // one event would just be spam. Consolidated into one, documented here
+  // rather than fabricating a second type to tick a box literally.
+  | "friend_request"
+  | "friend_accepted"
+  | "group_invite"
+  | "goal_invitation"
+  | "group_quest_completed"
+  | "partner_reminder"
+  | "group_weekly_summary";
 
 export interface PushSubscriptionRow {
   id: string;

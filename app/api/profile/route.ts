@@ -50,6 +50,8 @@ const log = createLogger("profile.update");
 
 const MAX_DISPLAY_NAME_LEN = 60;
 const VALID_CURRENCY_CODES = SUPPORTED_CURRENCIES.map(c => c.code);
+const VALID_PROFILE_VISIBILITY = ["private", "friends", "public"];
+const VALID_ACTIVITY_VISIBILITY = ["private", "friends", "groups", "public"];
 
 // Mirrors AVATAR_OPTIONS in app/(app)/profile/ProfileClient.tsx — kept as
 // an explicit allowlist here rather than imported, because ProfileClient
@@ -67,14 +69,17 @@ export async function PATCH(req: NextRequest) {
 
   setSentryUser(user.id);
 
-  let body: { display_name?: string; avatar_emoji?: string; currency_code?: string };
+  let body: {
+    display_name?: string; avatar_emoji?: string; currency_code?: string;
+    profile_visibility?: string; activity_visibility?: string;
+  };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { display_name, avatar_emoji, currency_code } = body;
+  const { display_name, avatar_emoji, currency_code, profile_visibility, activity_visibility } = body;
 
   // ── Validation ────────────────────────────────────────────────────────────
   const validationErrors: string[] = [];
@@ -95,6 +100,17 @@ export async function PATCH(req: NextRequest) {
     validationErrors.push(`currency_code must be one of: ${VALID_CURRENCY_CODES.join(", ")}`);
   }
 
+  // Sprint 22, Phase 12. Mirrors the CHECK constraints added in
+  // 045_social_foundation.sql exactly — profile_visibility has no
+  // 'groups' option (there's no natural "groups" reading for "can
+  // strangers find my profile at all"), activity_visibility does.
+  if (profile_visibility !== undefined && !VALID_PROFILE_VISIBILITY.includes(profile_visibility)) {
+    validationErrors.push(`profile_visibility must be one of: ${VALID_PROFILE_VISIBILITY.join(", ")}`);
+  }
+  if (activity_visibility !== undefined && !VALID_ACTIVITY_VISIBILITY.includes(activity_visibility)) {
+    validationErrors.push(`activity_visibility must be one of: ${VALID_ACTIVITY_VISIBILITY.join(", ")}`);
+  }
+
   if (validationErrors.length > 0) {
     log.warn("Profile update rejected — validation failed", {
       user_id: user.id, request_id: requestId, errors: validationErrors.join("; "),
@@ -111,6 +127,8 @@ export async function PATCH(req: NextRequest) {
     const selected = SUPPORTED_CURRENCIES.find(c => c.code === currency_code);
     if (selected?.locale) updates.locale = selected.locale;
   }
+  if (profile_visibility !== undefined) updates.profile_visibility = profile_visibility;
+  if (activity_visibility !== undefined) updates.activity_visibility = activity_visibility;
 
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
