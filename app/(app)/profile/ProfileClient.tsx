@@ -443,6 +443,20 @@ export default function ProfileClient({ profile, levelInfo, earnedIds, earnedAch
         </a>
       </div>
 
+      {/* Social link — Sprint 22 */}
+      <div className="mb-4">
+        <a href="/social" className="card p-4 flex items-center justify-between hover:border-white/10 transition-colors">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">🤝</span>
+            <div>
+              <p className="text-sm font-medium text-white">Social</p>
+              <p className="text-xs text-white/40 mt-0.5">Friends, groups, shared goals, leaderboards</p>
+            </div>
+          </div>
+          <ChevronRight size={16} className="text-white/20" />
+        </a>
+      </div>
+
       {/* Admin link */}
       {profile.is_admin && (
         <div className="mb-6">
