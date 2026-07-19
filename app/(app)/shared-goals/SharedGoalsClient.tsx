@@ -73,7 +73,7 @@ export default function SharedGoalsClient({ eligibleGoals }: { eligibleGoals: El
                   type="button"
                   onClick={() => respondInvite(inv.member_id, "accept")}
                   aria-label={`Accept invitation to contribute to ${inv.goal_title}`}
-                  className="p-2 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
                 >
                   <Check size={16} />
                 </button>
@@ -81,7 +81,7 @@ export default function SharedGoalsClient({ eligibleGoals }: { eligibleGoals: El
                   type="button"
                   onClick={() => respondInvite(inv.member_id, "decline")}
                   aria-label={`Decline invitation to contribute to ${inv.goal_title}`}
-                  className="p-2 rounded-lg bg-white/5 text-white/50 hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-white/5 text-white/50 hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
                 >
                   <X size={16} />
                 </button>

@@ -77,7 +77,7 @@ export default function ActivityFeedCard({ item, isOwn, onHide }: ActivityFeedCa
           onClick={async () => { setHiding(true); await onHide(item.id); }}
           disabled={hiding}
           aria-label="Hide this post from your activity feed"
-          className="p-1.5 -m-1 rounded-lg text-white/20 hover:text-white/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 shrink-0"
+          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-white/20 hover:text-white/50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 shrink-0 -m-2.5"
         >
           <X size={14} />
         </button>

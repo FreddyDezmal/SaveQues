@@ -96,7 +96,7 @@ export default function UserSearchPicker({ onSelect, placeholder = "Search by us
       {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
 
       {results.length > 0 && (
-        <ul className="mt-3 max-h-64 overflow-y-auto space-y-1" role="list">
+        <ul className="mt-3 max-h-64 overflow-y-auto space-y-1">
           {results.map((user) => (
             <li key={user.id}>
               <button

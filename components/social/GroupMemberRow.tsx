@@ -57,7 +57,7 @@ export default function GroupMemberRow({ member, canManage, onChangeRole, onRemo
               type="button"
               onClick={() => onChangeRole(member.member_id, member.role === "admin" ? "member" : "admin")}
               aria-label={member.role === "admin" ? `Remove admin from ${name}` : `Make ${name} an admin`}
-              className="p-2 rounded-lg text-white/40 hover:text-white/70 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-white/40 hover:text-white/70 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
             >
               <Shield size={15} />
             </button>
@@ -66,7 +66,7 @@ export default function GroupMemberRow({ member, canManage, onChangeRole, onRemo
             type="button"
             onClick={() => setConfirmRemove(true)}
             aria-label={`Remove ${name} from the group`}
-            className="p-2 rounded-lg text-white/40 hover:text-red-400 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-white/40 hover:text-red-400 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
           >
             <UserMinus size={15} />
           </button>

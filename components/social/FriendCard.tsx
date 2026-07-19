@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MoreVertical, Flame } from "lucide-react";
 import UserAvatar, { UserName } from "./UserAvatar";
 import ConfirmationModal from "@/components/ui/ConfirmationModal";
@@ -36,6 +36,38 @@ export default function FriendCard({ friend, onRemove, onBlock }: FriendCardProp
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<"remove" | "block" | null>(null);
   const name = friend.display_name || "Saver";
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Real Escape-to-close and click-outside-to-close — the previous
+  // onMouseLeave-only version never worked for keyboard users at all.
+  // No role="menu"/"menuitem" here on purpose: that role obligates the
+  // full ARIA Authoring Practices menu pattern (arrow-key roving
+  // tabindex, Home/End, typeahead) which this component never
+  // implemented — jsx-a11y/interactive-supports-focus caught that gap.
+  // This is the simpler, fully-correct WAI-ARIA "disclosure" pattern
+  // instead: a plain toggleable panel of ordinary buttons, each already
+  // reachable by Tab, needing no special role at all.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node) && e.target !== triggerRef.current) {
+        setMenuOpen(false);
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuOpen]);
 
   async function handleConfirm() {
     if (confirmAction === "remove") await onRemove(friend.friendship_id);
@@ -59,24 +91,21 @@ export default function FriendCard({ friend, onRemove, onBlock }: FriendCardProp
 
       <div className="relative">
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => setMenuOpen((v) => !v)}
-          aria-haspopup="menu"
           aria-expanded={menuOpen}
           aria-label={`More actions for ${name}`}
-          className="p-2 rounded-lg text-white/40 hover:text-white/70 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+          className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-white/40 hover:text-white/70 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
         >
           <MoreVertical size={16} />
         </button>
         {menuOpen && (
           <div
-            role="menu"
-            aria-label={`Actions for ${name}`}
+            ref={menuRef}
             className="absolute right-0 top-full mt-1 w-40 card p-1 z-10 shadow-xl"
-            onMouseLeave={() => setMenuOpen(false)}
           >
             <button
-              role="menuitem"
               type="button"
               onClick={() => { setMenuOpen(false); setConfirmAction("remove"); }}
               className="w-full text-left text-sm text-white/70 hover:bg-surface-elevated rounded-lg px-3 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
@@ -84,7 +113,6 @@ export default function FriendCard({ friend, onRemove, onBlock }: FriendCardProp
               Remove friend
             </button>
             <button
-              role="menuitem"
               type="button"
               onClick={() => { setMenuOpen(false); setConfirmAction("block"); }}
               className="w-full text-left text-sm text-red-400 hover:bg-surface-elevated rounded-lg px-3 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"

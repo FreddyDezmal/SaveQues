@@ -56,7 +56,7 @@ export default function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="text-white/40 hover:text-white/70 p-1 -m-1 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center text-white/40 hover:text-white/70 -m-2.5 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
           >
             <X size={18} />
           </button>

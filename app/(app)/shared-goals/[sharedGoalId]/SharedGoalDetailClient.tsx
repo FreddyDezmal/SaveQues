@@ -168,7 +168,7 @@ export default function SharedGoalDetailClient({ sharedGoalId }: { sharedGoalId:
                   type="button"
                   onClick={() => setRemoveTarget(m)}
                   aria-label={`Remove ${m.display_name || "this contributor"} from ${detail.title}`}
-                  className="p-1.5 rounded-lg text-white/30 hover:text-red-400 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-white/30 hover:text-red-400 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 -m-1.5"
                 >
                   <UserMinus size={14} />
                 </button>

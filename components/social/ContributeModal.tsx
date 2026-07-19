@@ -66,7 +66,7 @@ export default function ContributeModal({ open, onClose, sharedGoalId, goalTitle
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label htmlFor={amountId} className="block text-sm text-white/70 mb-1.5">Amount</label>
-          <input id={amountId} type="number" min={0.01} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required className="input-field" autoFocus />
+          <input id={amountId} type="number" min={0.01} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required className="input-field" />
         </div>
         <div>
           <label htmlFor={noteId} className="block text-sm text-white/70 mb-1.5">Note <span className="text-white/30">(optional)</span></label>

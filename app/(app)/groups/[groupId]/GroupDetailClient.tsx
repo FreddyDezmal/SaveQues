@@ -131,7 +131,7 @@ export default function GroupDetailClient({ groupId }: { groupId: string }) {
               type="button"
               onClick={() => setSettingsOpen(true)}
               aria-label="Group settings"
-              className="p-2 rounded-lg text-white/40 hover:text-white/70 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg text-white/40 hover:text-white/70 hover:bg-surface-elevated transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
             >
               <Settings size={18} />
             </button>
@@ -150,7 +150,7 @@ export default function GroupDetailClient({ groupId }: { groupId: string }) {
                   type="button"
                   onClick={() => respondJoinRequest(m.member_id, "approve")}
                   aria-label={`Approve ${m.display_name || "this user"}'s request to join ${group.name}`}
-                  className="p-2 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
                 >
                   <Check size={16} />
                 </button>
@@ -158,7 +158,7 @@ export default function GroupDetailClient({ groupId }: { groupId: string }) {
                   type="button"
                   onClick={() => respondJoinRequest(m.member_id, "decline")}
                   aria-label={`Decline ${m.display_name || "this user"}'s request to join ${group.name}`}
-                  className="p-2 rounded-lg bg-white/5 text-white/50 hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                  className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-white/5 text-white/50 hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
                 >
                   <X size={16} />
                 </button>
