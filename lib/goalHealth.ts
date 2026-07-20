@@ -149,11 +149,11 @@ export function computeGoalHealth(
   }
 
   const factors: GoalHealthFactor[] = [
-    { name: "Recent activity", points: round1(activityPoints), maxPoints: round1(activityMax), explanation: activityExplanation },
-    { name: "Deposit frequency", points: round1(frequencyPoints), maxPoints: round1(frequencyMax), explanation: frequencyExplanation },
-    { name: "Progress velocity", points: round1(velocityPoints), maxPoints: round1(velocityMax), explanation: velocityExplanation },
-    { name: "Consistency", points: round1(consistencyPoints), maxPoints: round1(consistencyMax), explanation: consistencyExplanation },
-    { name: "Deadline pressure", points: round1(deadlinePoints), maxPoints: round1(deadlineMax), explanation: deadlineExplanation },
+    { name: "Recent activity", points: round1(activityPoints), maxPoints: activityMax, explanation: activityExplanation },
+    { name: "Deposit frequency", points: round1(frequencyPoints), maxPoints: frequencyMax, explanation: frequencyExplanation },
+    { name: "Progress velocity", points: round1(velocityPoints), maxPoints: velocityMax, explanation: velocityExplanation },
+    { name: "Consistency", points: round1(consistencyPoints), maxPoints: consistencyMax, explanation: consistencyExplanation },
+    { name: "Deadline pressure", points: round1(deadlinePoints), maxPoints: deadlineMax, explanation: deadlineExplanation },
   ];
 
   const score = Math.round(factors.reduce((s, f) => s + f.points, 0));
