@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { trackEvent, identifyUser, AnalyticsEvents } from "@/lib/analytics";
+import { getPendingInviteCookie } from "@/lib/pendingInvite";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -42,12 +43,26 @@ export default function SignupPage() {
 
     console.log("[signup] attempting signUp for:", email);
 
+    // Sprint 22.5: if the visitor arrived here from /invite/{token}, thread
+    // it through the ALREADY-EXISTING `next` param that /auth/callback
+    // reads (see that file's own header) — this covers the email-
+    // confirmation-required path. See lib/pendingInvite.ts for why a
+    // cookie carries this rather than the URL: this page doesn't receive
+    // its own query params from /invite/{token} today, and adding that
+    // would mean threading a param through every intermediate step of
+    // this 3-step wizard — a cookie is the smaller, existing-pattern-
+    // compatible change.
+    const pendingInviteToken = getPendingInviteCookie();
+    const emailRedirectTo = pendingInviteToken
+      ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(`/invite/${pendingInviteToken}`)}`
+      : `${window.location.origin}/auth/callback`;
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: { display_name: displayName, saving_for: savingFor },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo,
       },
     });
 
@@ -88,9 +103,12 @@ export default function SignupPage() {
     // If Supabase email confirmation is ON:
     //   data.session will be null — route to verify-email.
     // If email confirmation is OFF:
-    //   data.session is set — route straight to dashboard.
+    //   data.session is set — route straight to dashboard, or Sprint 22.5:
+    //   back to the pending invite if there is one (this path never
+    //   touches /auth/callback, so its `next` param can't reach here —
+    //   this is the direct client-side equivalent).
     if (data.session) {
-      router.push("/dashboard");
+      router.push(pendingInviteToken ? `/invite/${pendingInviteToken}` : "/dashboard");
       router.refresh();
     } else {
       router.push(`/auth/verify-email?email=${encodeURIComponent(email)}`);

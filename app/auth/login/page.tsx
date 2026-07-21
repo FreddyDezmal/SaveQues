@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { trackEvent, identifyUser, AnalyticsEvents } from "@/lib/analytics";
+import { getPendingInviteCookie } from "@/lib/pendingInvite";
 
 function LoginForm() {
   const router = useRouter();
@@ -50,7 +51,12 @@ function LoginForm() {
         identifyUser(data.user.id);
         trackEvent(AnalyticsEvents.LOGIN_SUCCESS);
       }
-      router.push("/dashboard");
+      // Sprint 22.5: password login never touches /auth/callback (no
+      // server round trip), so its `next` param can't help here — this
+      // is the direct client-side equivalent, reading the same cookie
+      // /invite/{token} set before sending the visitor here.
+      const pendingInviteToken = getPendingInviteCookie();
+      router.push(pendingInviteToken ? `/invite/${pendingInviteToken}` : "/dashboard");
       router.refresh();
     }
   }

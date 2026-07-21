@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextRequest, NextResponse } from "next/server";
 import { createLogger } from "@/lib/logger";
 import { captureError } from "@/lib/monitoring";
+import { PENDING_INVITE_COOKIE_NAME } from "@/lib/pendingInvite";
 
 const log = createLogger("auth.callback");
 
@@ -9,7 +10,16 @@ export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
 
-  const rawNext = searchParams.get("next") ?? "/dashboard";
+  const rawNext = searchParams.get("next")
+    // Sprint 22.5: robustness fallback for any path that reaches this
+    // route without an explicit `next` (e.g. a resent confirmation
+    // email) — reuses the same pending-invite cookie /invite/{token}
+    // sets before sending a visitor to sign up/log in (lib/pendingInvite.ts).
+    // The primary path (signup requiring email confirmation) already
+    // sets `next` explicitly in signup/page.tsx; this is only a fallback.
+    ?? (request.cookies.get(PENDING_INVITE_COOKIE_NAME)?.value
+        ? `/invite/${request.cookies.get(PENDING_INVITE_COOKIE_NAME)!.value}`
+        : "/dashboard");
   const next = rawNext.startsWith("/") && !rawNext.startsWith("//")
     ? rawNext
     : "/dashboard";
@@ -27,6 +37,10 @@ export async function GET(request: NextRequest) {
   // /dashboard with no session cookie and getUser() returned null.
   const redirectTo  = new URL(next, origin);
   const response    = NextResponse.redirect(redirectTo);
+  // Defense in depth (Phase 7): /invite/{token} already clears this
+  // cookie unconditionally on mount, but clearing it here too means a
+  // stale token can't linger even if that client-side code never runs.
+  response.cookies.set(PENDING_INVITE_COOKIE_NAME, "", { path: "/", maxAge: 0 });
 
   // Create a Supabase client that reads cookies from the request and writes
   // them directly onto our redirect response.
