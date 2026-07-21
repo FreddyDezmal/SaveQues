@@ -22,9 +22,13 @@ interface Props {
   /** Context tag for analytics only, e.g. "goal_completion" | "streak" | "achievement" */
   shareContext: string;
   className?: string;
+  /** Sprint 22, Phase 18: the URL to share. Defaults to the app's own
+   *  homepage (the original, pre-Sprint-22 behavior) — invite links pass
+   *  their actual token URL here instead. */
+  url?: string;
 }
 
-export default function ShareButton({ title, text, shareContext, className }: Props) {
+export default function ShareButton({ title, text, shareContext, className, url = "https://savequest.app" }: Props) {
   const [copied, setCopied] = useState(false);
   const { vibrate } = useHaptics();
 
@@ -33,7 +37,7 @@ export default function ShareButton({ title, text, shareContext, className }: Pr
 
     if (typeof navigator !== "undefined" && "share" in navigator) {
       try {
-        await navigator.share({ title, text, url: "https://savequest.app" });
+        await navigator.share({ title, text, url });
         trackEvent(AnalyticsEvents.SHARE_COMPLETED, { context: shareContext, method: "native" });
         vibrate("light");
         return;
@@ -50,7 +54,7 @@ export default function ShareButton({ title, text, shareContext, className }: Pr
 
     // Fallback: desktop browsers without navigator.share, or native share failed.
     try {
-      await navigator.clipboard.writeText(`${text} https://savequest.app`);
+      await navigator.clipboard.writeText(`${text} ${url}`);
       setCopied(true);
       trackEvent(AnalyticsEvents.SHARE_FALLBACK_COPY, { context: shareContext });
       setTimeout(() => setCopied(false), 2000);

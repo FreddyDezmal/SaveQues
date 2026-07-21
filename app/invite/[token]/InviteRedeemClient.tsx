@@ -111,7 +111,7 @@ export default function InviteRedeemClient({ token }: { token: string }) {
     return (
       <div className="card p-6 text-center">
         <p className="text-4xl mb-3" aria-hidden="true">🔗</p>
-        <h1 className="font-display text-lg font-bold text-white mb-2">This invite link isn't valid</h1>
+        <h1 className="font-display text-lg font-bold text-white mb-2">This invite link isn&apos;t valid</h1>
         <p className="text-sm text-white/50 mb-5">
           It may have expired or already been used. You can still join SaveQuest on your own.
         </p>
@@ -156,7 +156,7 @@ export default function InviteRedeemClient({ token }: { token: string }) {
     return (
       <div className="card p-6 text-center">
         <p className="text-4xl mb-3" aria-hidden="true">⚠️</p>
-        <h1 className="font-display text-lg font-bold text-white mb-2">Couldn't claim this invite</h1>
+        <h1 className="font-display text-lg font-bold text-white mb-2">Couldn&apos;t claim this invite</h1>
         <p className="text-sm text-white/50 mb-5" role="alert">{redeemError}</p>
         <Link href="/dashboard" className="btn-primary w-full text-sm inline-block">Go to dashboard</Link>
       </div>
@@ -169,10 +169,10 @@ export default function InviteRedeemClient({ token }: { token: string }) {
       <p className="text-4xl mb-3" aria-hidden="true">🎉</p>
       <h1 className="font-display text-lg font-bold text-white mb-2">Welcome to SaveQuest!</h1>
       <p className="text-sm text-white/60 mb-1">
-        You earned <span className="text-brand-400 font-semibold">{result?.invitee_xp} XP</span> for joining via {inviterName}'s invite.
+        You earned <span className="text-brand-400 font-semibold">{result?.invitee_xp} XP</span> for joining via {inviterName}&apos;s invite.
       </p>
       {result?.joined_group_id && preview?.group && (
-        <p className="text-sm text-white/60 mb-4">You're now a member of <span className="text-white/80 font-medium">{preview.group.emoji} {preview.group.name}</span>.</p>
+        <p className="text-sm text-white/60 mb-4">You&apos;re now a member of <span className="text-white/80 font-medium">{preview.group.emoji} {preview.group.name}</span>.</p>
       )}
       <Link
         href={result?.joined_group_id ? `/groups/${result.joined_group_id}` : "/dashboard"}
