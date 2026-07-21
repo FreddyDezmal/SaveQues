@@ -46,7 +46,15 @@ export async function middleware(request: NextRequest) {
   const isErrorPage  = pathname === "/error";
   const isSettingUp  = pathname === "/auth/setting-up";
   const isVerifyPage = pathname === "/auth/verify-email";
-  const isPublicPage = pathname === "/" || isAuthPage || isApiRoute || isErrorPage;
+  // Sprint 22, Phase 18: /invite/{token} must be reachable by a signed-out
+  // visitor — GET /api/invitations/preview's own file header documents it
+  // as "deliberately does NOT require authentication ... this is what a
+  // brand new visitor hits before they've signed up." Adding this one path
+  // to the existing allowlist is the minimal change that makes that
+  // already-built, already-public API actually reachable; it doesn't
+  // change any auth decision for any other route.
+  const isInvitePage = pathname.startsWith("/invite/");
+  const isPublicPage = pathname === "/" || isAuthPage || isApiRoute || isErrorPage || isInvitePage;
 
   // Unauthenticated users can't access protected routes
   if (!user && !isPublicPage) {

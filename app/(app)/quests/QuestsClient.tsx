@@ -260,9 +260,14 @@ export default function QuestsClient({
         <div className="mb-5">
           <div className="flex items-center justify-between">
             <h1 className="font-display text-2xl font-bold text-white">Quests</h1>
-            <Link href="/chains" className="text-brand-400 text-xs hover:text-brand-300 transition-colors flex items-center gap-1">
-              🔗 Quest Chains
-            </Link>
+            <div className="flex items-center gap-3">
+              <Link href="/quests/groups" className="text-brand-400 text-xs hover:text-brand-300 transition-colors flex items-center gap-1">
+                👥 Group Quests
+              </Link>
+              <Link href="/chains" className="text-brand-400 text-xs hover:text-brand-300 transition-colors flex items-center gap-1">
+                🔗 Quest Chains
+              </Link>
+            </div>
           </div>
           <p className="text-white/40 text-sm mt-0.5">
             {profile.daily_quests_completed} daily · {profile.weekly_quests_completed} weekly completed

@@ -1,14 +1,16 @@
 import Link from "next/link";
-import { Users, Users2, Target, Handshake, Trophy, Newspaper, Award, ShieldCheck, ChevronRight } from "lucide-react";
+import { Users, Users2, Target, Handshake, Trophy, Newspaper, Award, ShieldCheck, ChevronRight, Swords, Mail } from "lucide-react";
 
 const DESTINATIONS = [
   { href: "/friends", icon: Users, title: "Friends", subtitle: "Requests, search, and your friends list" },
   { href: "/groups", icon: Users2, title: "Groups", subtitle: "Savings groups, quests, and members" },
   { href: "/shared-goals", icon: Target, title: "Shared Goals", subtitle: "Save together toward a goal" },
   { href: "/partner", icon: Handshake, title: "Accountability Partner", subtitle: "Your one-on-one savings partner" },
+  { href: "/quests/groups", icon: Swords, title: "Group Quests", subtitle: "Challenges across all your groups" },
   { href: "/leaderboards", icon: Trophy, title: "Leaderboards", subtitle: "See how you rank among friends and groups" },
   { href: "/feed", icon: Newspaper, title: "Activity Feed", subtitle: "Milestones from you and your friends" },
   { href: "/achievements", icon: Award, title: "Achievements", subtitle: "Your badges and who can see them" },
+  { href: "/invites", icon: Mail, title: "Invite Friends", subtitle: "Share your link and earn referral rewards" },
   { href: "/social/privacy", icon: ShieldCheck, title: "Privacy", subtitle: "Control who can find and see you" },
 ] as const;
 
