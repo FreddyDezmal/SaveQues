@@ -58,13 +58,24 @@ const nextConfig = {
   //   us.i.posthog.com        — PostHog client SDK (matches providers/posthog.ts api_host)
   //   *.ingest.sentry.io      — Sentry error reporting (DSN host varies by org)
   //   *.ingest.us.sentry.io   — Sentry's newer US-region ingest host
+  //   fonts.googleapis.com /
+  //   fonts.gstatic.com       — already allowed under style-src/font-src for the page's own
+  //                             <link>/@font-face loads, but app/sw.ts's Serwist defaultCache
+  //                             also intercepts and re-fetches these from inside the service
+  //                             worker's own script — a fetch() call, which CSP evaluates
+  //                             against connect-src regardless of what resource type it's
+  //                             fetching. Without this, the SW's font-caching strategy throws
+  //                             a CSP violation + an uncaught "no-response" rejection on every
+  //                             page load (visible in the browser console) even though the
+  //                             fonts themselves still rendered fine via the page's own,
+  //                             already-allowed style-src/font-src request.
   const csp = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://us.i.posthog.com https://us-assets.i.posthog.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: blob: https://*.supabase.co",
     "font-src 'self' data: https://fonts.gstatic.com",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://us.i.posthog.com https://us-assets.i.posthog.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://us.i.posthog.com https://us-assets.i.posthog.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://fonts.googleapis.com https://fonts.gstatic.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
