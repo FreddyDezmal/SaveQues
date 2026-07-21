@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SUPPORTED_CURRENCIES } from "@/lib/currency";
 import { ArrowLeft, ChevronRight, Trash2 } from "lucide-react";
 import Link from "next/link";
 import NotificationSettings from "@/components/notifications/NotificationSettings";
 import VersionInfo from "@/components/settings/VersionInfo";
+import { isValidUsernameFormat } from "@/lib/username";
 
 interface Props {
   profile: any;
@@ -22,6 +23,56 @@ export default function SettingsClient({ profile, email }: Props) {
   const [saveError, setSaveError] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteInput, setDeleteInput] = useState("");
+
+  // ── Username — its own self-contained editor, not part of the shared
+  // "Save changes" flow below. It needs a different UX (live typeahead
+  // availability, distinct 409-taken error) than the free-text fields
+  // PATCH /api/profile already handles, so it uses its own dedicated
+  // POST /api/profile/username route instead.
+  const [username, setUsername] = useState(profile.username ?? "");
+  const originalUsername = profile.username ?? "";
+  const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid">("idle");
+  const [usernameSaving, setUsernameSaving] = useState(false);
+  const [usernameSaved, setUsernameSaved] = useState(false);
+  const [usernameError, setUsernameError] = useState("");
+
+  useEffect(() => {
+    if (username === originalUsername) { setUsernameStatus("idle"); return; }
+    if (!username) { setUsernameStatus("idle"); return; }
+    if (!isValidUsernameFormat(username)) { setUsernameStatus("invalid"); return; }
+
+    setUsernameStatus("checking");
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/profile/username-available?username=${encodeURIComponent(username)}`);
+        const body = await res.json();
+        setUsernameStatus(body.available ? "available" : "taken");
+      } catch {
+        setUsernameStatus("idle");
+      }
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [username, originalUsername]);
+
+  async function handleSaveUsername() {
+    setUsernameSaving(true);
+    setUsernameError("");
+    const res = await fetch("/api/profile/username", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ username }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setUsernameError(data.error ?? "Couldn't save that username.");
+      setUsernameSaving(false);
+      return;
+    }
+    setUsernameSaving(false);
+    setUsernameSaved(true);
+    setTimeout(() => setUsernameSaved(false), 2000);
+    router.refresh();
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -101,6 +152,43 @@ export default function SettingsClient({ profile, email }: Props) {
               placeholder="Your name"
               maxLength={60}
             />
+          </div>
+          <div>
+            <label htmlFor="settings-username" className="block text-sm text-white/60 mb-1.5">
+              Username <span className="text-white/30">— how friends find you</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30 text-sm pointer-events-none">@</span>
+              <input
+                id="settings-username"
+                className="input-field pl-7"
+                value={username}
+                onChange={e => { setUsername(e.target.value.trim()); setUsernameError(""); }}
+                placeholder="username"
+                maxLength={20}
+                aria-describedby="settings-username-status"
+                aria-invalid={usernameStatus === "taken" || usernameStatus === "invalid"}
+              />
+            </div>
+            <div id="settings-username-status" className="flex items-center justify-between mt-1.5 min-h-[20px]" role="status">
+              <p className="text-xs">
+                {usernameStatus === "checking" && <span className="text-white/40">Checking…</span>}
+                {usernameStatus === "available" && <span className="text-emerald-400">✓ Available</span>}
+                {usernameStatus === "taken" && <span className="text-red-400">Already taken</span>}
+                {usernameStatus === "invalid" && <span className="text-red-400">3-20 characters: letters, numbers, underscores only</span>}
+              </p>
+              {username !== originalUsername && usernameStatus === "available" && (
+                <button
+                  type="button"
+                  onClick={handleSaveUsername}
+                  disabled={usernameSaving}
+                  className="text-xs font-medium text-brand-400 hover:text-brand-300 transition-colors disabled:opacity-40"
+                >
+                  {usernameSaving ? "Saving…" : usernameSaved ? "✓ Saved" : "Save username"}
+                </button>
+              )}
+            </div>
+            {usernameError && <p className="text-red-400 text-xs mt-1">{usernameError}</p>}
           </div>
           <div>
             <label className="block text-sm text-white/60 mb-1.5">Email</label>

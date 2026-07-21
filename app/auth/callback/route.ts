@@ -77,6 +77,7 @@ export async function GET(request: NextRequest) {
 
   // ── Starter goal creation ─────────────────────────────────────────────────
   const savingFor = sessionData?.user?.user_metadata?.saving_for ?? "custom";
+  const username   = sessionData?.user?.user_metadata?.username;
   const userId    = sessionData?.user?.id;
 
   if (userId) {
@@ -111,6 +112,30 @@ export async function GET(request: NextRequest) {
           saving_for: savingFor,
           status:     starterRes.status,
         });
+      }
+
+      // ── Username (only the email-confirmation-required signup path ever
+      // reaches here with one pending — see signup/page.tsx's own comment
+      // on why the immediate-session path applies it directly instead).
+      // Non-fatal if it fails (e.g. lost a race for the name in the time
+      // since the person confirmed their email): the account still exists,
+      // and username can be set later from Settings.
+      if (username) {
+        try {
+          const usernameRes = await fetch(new URL("/api/profile/username", origin).toString(), {
+            method:  "POST",
+            headers: { "Content-Type": "application/json", "Cookie": sessionCookies },
+            body:    JSON.stringify({ username }),
+          });
+          if (!usernameRes.ok) {
+            const body = await usernameRes.text().catch(() => "");
+            log.warn("Username application returned non-OK status", {
+              user_id: userId, status: usernameRes.status, body: body.slice(0, 200),
+            });
+          }
+        } catch (err: any) {
+          log.warn("Username application threw", { user_id: userId, error: err.message ?? String(err) });
+        }
       }
     } catch (err: any) {
       log.error("Starter goal creation threw", {
