@@ -167,15 +167,31 @@ async function sendToUser(
     .eq("user_id", userId)
     .eq("is_active", true);
 
+  // ── One notification_logs row per EVENT, not per subscription ──────────
+  // Bug found investigating a user report: they saw the same "streak at
+  // risk" notification 3-4 times in the in-app Notification Center for a
+  // single day. Root cause: this function used to create a
+  // notification_logs row INSIDE the per-subscription loop below — a user
+  // with N active push_subscriptions rows (multiple devices, or a stale
+  // subscription pushsubscriptionchange swapped out but never explicitly
+  // deactivated server-side) got N identical rows for one logical event.
+  // GET /api/notifications/list has no dedup of its own — it just displays
+  // notification_logs directly — so N rows meant N visible "notifications"
+  // for something that happened once.
+  //
+  // Also fixes a related gap: previously this row was only created if the
+  // user had at least one active subscription (the early return below).
+  // A user who never enabled push (declined the permission prompt, or
+  // hasn't gotten to it yet) got NO in-app record either — even though the
+  // Notification Center is a real, independent piece of UI that shouldn't
+  // require push opt-in to be useful.
+  const logId = await createPendingLog(userId, null, type, title, body);
+
   if (!subs || subs.length === 0) return { sent: 0, errors: 0 };
 
   let sent = 0, errors = 0;
 
   for (const sub of subs as PushSubscriptionRow[]) {
-    // Create the log row first so we can embed its id in the payload —
-    // the service worker reports delivered/clicked back using this id.
-    const logId = await createPendingLog(userId, sub.id, type, title, body);
-
     const payload: PushPayload = {
       title,
       body,
@@ -192,8 +208,6 @@ async function sendToUser(
       payload
     );
 
-    await updateLogResult(logId, result);
-
     if (result.ok) {
       sent++;
     } else {
@@ -202,6 +216,16 @@ async function sendToUser(
         await deactivateSubscription(sub.endpoint);
       }
     }
+  }
+
+  // Record delivery failure for observability (support/debugging can see
+  // it via `error`), but only when EVERY device failed — and deliberately
+  // don't use this to hide the row from the in-app list. The event itself
+  // (streak at risk, friend accepted, etc.) genuinely happened regardless
+  // of whether push delivery succeeded; in-app history should stay a
+  // reliable record of that even on days push infra has a bad day.
+  if (sent === 0 && errors > 0) {
+    await updateLogResult(logId, { ok: false, error: "All active subscriptions failed to receive this push" });
   }
 
   return { sent, errors };

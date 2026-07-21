@@ -54,6 +54,28 @@ describe("Notification cron delivery", () => {
   );
 
   it.todo(
+    "a user notified across multiple active push subscriptions (multi-device, or a stale subscription not " +
+      "yet pruned) gets exactly ONE notification_logs row for the event, not one per subscription — the bug " +
+      "behind a real user report of seeing the same streak alert 3-4 times in the in-app Notification Center. " +
+      "SEED: profiles{streak_days:5, last_notification_sent_date:null}, THREE active push_subscriptions rows " +
+      "for the same user (distinct endpoints, simulating 3 devices/stale registrations), all reachable. " +
+      "ACTION: invoke sendStreakAtRisk(userId, 5) directly (or the cron route, once). " +
+      "ASSERT: sendWebPush is attempted 3 times (once per subscription — real device push still reaches all " +
+      "3, unchanged); exactly ONE new notification_logs row exists for this event; GET /api/notifications/list " +
+      "as that user returns that event exactly once, not three times."
+  );
+
+  it.todo(
+    "a user with ZERO active push subscriptions still gets an in-app notification_logs row for the event " +
+      "(previously they got nothing at all, in-app or otherwise, since the log row used to be created only " +
+      "inside the per-subscription send loop). " +
+      "SEED: profiles{streak_days:5, last_notification_sent_date:null}, NO push_subscriptions row for this user. " +
+      "ACTION: invoke sendStreakAtRisk(userId, 5) directly. " +
+      "ASSERT: return value is {sent:0, errors:0} (no push attempted — nothing to send to); exactly ONE " +
+      "notification_logs row exists for this event, error IS NULL; it appears in GET /api/notifications/list."
+  );
+
+  it.todo(
     "business-outcome monitoring catches a synthetic delivery-rate failure. " +
       "SEED: 10 active push_subscriptions, but only 2 notification_logs rows for 'today' (simulating a scheduler " +
       "that ran but skipped almost everyone). " +
