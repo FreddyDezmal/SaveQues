@@ -6,7 +6,7 @@
 import { createServiceClient } from "./supabase/server";
 import { sendWebPush, type SendResult } from "./webpush";
 import type { NotificationType, PushPayload, PushSubscriptionRow } from "./types.notifications";
-import { getDaysRemainingInWeek } from "./weeklyQuests";
+import { getDaysRemainingInWeek, getWeekStart } from "./weeklyQuests";
 import { formatAmount } from "./currency";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -618,15 +618,6 @@ export async function runDailyNotificationScheduler(): Promise<SchedulerResult> 
   }
 
   return { processed, notifications_sent, errors };
-}
-
-function getWeekStart(): string {
-  const d   = new Date();
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  const monday = new Date(d);
-  monday.setDate(diff);
-  return monday.toISOString().split("T")[0];
 }
 
 // ── Sprint 22, Phase 4: accountability partners ─────────────────────────────

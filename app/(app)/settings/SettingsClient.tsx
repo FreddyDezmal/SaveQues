@@ -155,7 +155,7 @@ export default function SettingsClient({ profile, email }: Props) {
           </div>
           <div>
             <label htmlFor="settings-username" className="block text-sm text-white/60 mb-1.5">
-              Username <span className="text-white/30">— how friends find you</span>
+              Username. <span className="text-white/30"> How friends find you, must be lowercase</span>
             </label>
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/30 text-sm pointer-events-none">@</span>

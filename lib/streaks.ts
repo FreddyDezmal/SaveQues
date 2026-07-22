@@ -1,123 +1,43 @@
-import { differenceInCalendarDays, format, addDays } from "date-fns";
+/**
+ * lib/streaks.ts
+ * ─────────────────────────────────────────────────────────────
+ * Code review fix: this file used to contain a second, unused
+ * implementation of streak state transitions (evaluateStreak,
+ * getStreakCalendar, STREAK_MILESTONES, streak-shield constants).
+ * The real, authoritative streak logic lives entirely in the
+ * update_streak() Postgres RPC (supabase/migrations/021_m2_server_side_streak.sql),
+ * which runs server-side with row locking and an ownership guard.
+ *
+ * The removed TS functions were never called by any route or
+ * component — grep confirms zero call sites for evaluateStreak()
+ * and getStreakCalendar() outside this file and its own tests.
+ * Worse, they had drifted from the SQL version they claimed to
+ * mirror: they compared `new Date(lastActiveDateStr)` (parsed as
+ * UTC midnight) against `new Date()` (local server time), a
+ * mixed-timezone comparison that the SQL version avoids by doing
+ * pure DATE arithmetic in Postgres. Keeping dead code that both
+ * duplicates and disagrees with production behavior is worse than
+ * having no TS copy at all, so it's been deleted rather than fixed
+ * in place — see migration 021 for the real implementation.
+ *
+ * Only the two functions below are actually used (by
+ * app/(app)/dashboard/page.tsx and DashboardClient.tsx) and have
+ * been kept, with isStreakPaused() switched to the same UTC-date
+ * convention as the rest of the app (lib/dateUtils.ts) instead of
+ * local server time, for consistency with update_streak()'s use of
+ * Postgres CURRENT_DATE (UTC) and with getMomentumState()'s UTC
+ * day convention.
+ */
 
-export interface StreakEvalResult {
-  newStreak: number;
-  broken: boolean;
-  graceDayUsed: boolean;
-  paused: boolean;
-  message: string;
-  milestoneHit?: number;
-}
+import { getUTCDateString } from "./dateUtils";
 
-export const STREAK_PAUSE_DAYS = 7;
-export const GRACE_DAY_LABEL = "grace day";
-
-export function getPauseExpiryDate(pauseStartedAt: string): string {
-  return format(addDays(new Date(pauseStartedAt), STREAK_PAUSE_DAYS), "yyyy-MM-dd");
-}
-
+/**
+ * True while a user's streak is on a deliberate pause (e.g. a vacation
+ * hold) — mirrors the `streak_paused_until` check inside update_streak().
+ */
 export function isStreakPaused(streakPausedUntil: string | null | undefined): boolean {
   if (!streakPausedUntil) return false;
-  const today = format(new Date(), "yyyy-MM-dd");
-  return streakPausedUntil >= today;
-}
-
-export const STREAK_MILESTONES = [3, 7, 14, 21, 30, 45, 66, 90, 100, 180, 365];
-
-export function evaluateStreak(
-  lastActiveDateStr: string | null,
-  streakDays: number,
-  streakShields: number,
-  streakPausedUntil?: string | null
-): StreakEvalResult {
-  const today = new Date();
-
-  if (isStreakPaused(streakPausedUntil)) {
-    return {
-      newStreak: streakDays,
-      broken: false,
-      graceDayUsed: false,
-      paused: true,
-      message: `Streak paused — resumes ${streakPausedUntil}`,
-    };
-  }
-
-  if (!lastActiveDateStr) {
-    return { newStreak: 1, broken: false, graceDayUsed: false, paused: false, message: "Streak started! Day 1 🔥" };
-  }
-
-  const lastDate = new Date(lastActiveDateStr);
-  const diff = differenceInCalendarDays(today, lastDate);
-
-  if (diff === 0) {
-    return { newStreak: streakDays, broken: false, graceDayUsed: false, paused: false, message: "" };
-  }
-
-  if (diff === 1) {
-    const newStreak = streakDays + 1;
-    const milestoneHit = STREAK_MILESTONES.includes(newStreak) ? newStreak : undefined;
-    const messages: Record<number, string> = {
-      3:   "3-day streak! You're building something 🔥",
-      7:   "7 days straight! Week Warrior unlocked 🏆",
-      14:  "14 days! Fortnight Force achieved ⚡",
-      21:  "21 days — habits are forming! 💎",
-      30:  "30-DAY STREAK! Monthly Master! 🎉",
-      45:  "45 days! Relentless! 🛡️",
-      66:  "66 DAYS! Science says it's a habit now 🧠",
-      90:  "90 days! Quarter Century reached! 🌟",
-      100: "100 DAYS! Century Saver! You're legendary 👑",
-    };
-    return {
-      newStreak,
-      broken: false,
-      graceDayUsed: false,
-      paused: false,
-      milestoneHit,
-      message: messages[newStreak] ?? `Day ${newStreak} streak! Keep going 🔥`,
-    };
-  }
-
-  if (diff === 2 && streakShields > 0) {
-    const newStreak = streakDays + 1;
-    return {
-      newStreak,
-      broken: false,
-      graceDayUsed: true,
-      paused: false,
-      message: `Grace day used — your ${streakDays}-day streak continues 🛡️`,
-    };
-  }
-
-  return {
-    newStreak: 1,
-    broken: true,
-    graceDayUsed: false,
-    paused: false,
-    message: "Day 1 again. You know what to do. 💪",
-  };
-}
-
-export function formatStreakDisplay(days: number): string {
-  if (days >= 100) return `${days} 👑`;
-  if (days >= 66)  return `${days} 🧠`;
-  if (days >= 30)  return `${days} 🏆`;
-  if (days >= 7)   return `${days} 🔥`;
-  return `${days}`;
-}
-
-export function getStreakCalendar(
-  activities: string[],
-  days = 30
-): { date: string; active: boolean; label: string }[] {
-  const activitySet = new Set(activities);
-  const result = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const dateStr = format(d, "yyyy-MM-dd");
-    result.push({ date: dateStr, active: activitySet.has(dateStr), label: format(d, "MMM d") });
-  }
-  return result;
+  return streakPausedUntil >= getUTCDateString();
 }
 
 export function getStreakMessage(days: number, isPaused = false): string {

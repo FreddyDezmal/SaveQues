@@ -105,8 +105,21 @@ export function computeAccountHealth(inputs: AccountHealthInputs): AccountHealth
   let forecastPoints = 7.5; // neutral default with nothing to measure
   let forecastExplanation = "No active goals with a target date to measure forecast reliability against.";
   if (activeGoalsWithTarget.length > 0) {
+    // Perf fix (code review): this used to re-filter the user's entire
+    // transaction list once per goal (O(goals × transactions)). For a
+    // power user with many goals and years of history that's a lot of
+    // repeated scanning for something a single grouping pass already
+    // gives us. Group once, then look each goal's transactions up by id.
+    const transactionsByGoalId = new Map<string, Transaction[]>();
+    for (const t of inputs.transactions) {
+      if (!t.goal_id) continue;
+      const bucket = transactionsByGoalId.get(t.goal_id);
+      if (bucket) bucket.push(t);
+      else transactionsByGoalId.set(t.goal_id, [t]);
+    }
+
     const onTrackCount = activeGoalsWithTarget.filter((g) => {
-      const f = forecastGoal(g, inputs.transactions.filter((t) => t.goal_id === g.id), now);
+      const f = forecastGoal(g, transactionsByGoalId.get(g.id) ?? [], now);
       return f.paceStatus === "on_track" || f.paceStatus === "ahead";
     }).length;
     const ratio = onTrackCount / activeGoalsWithTarget.length;

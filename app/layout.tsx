@@ -3,6 +3,7 @@ import type { Viewport } from "next";
 import "./globals.css";
 import { createClient } from "@/lib/supabase/server";
 import AnalyticsProvider from "@/components/AnalyticsProvider";
+import FeatureFlagsProvider from "@/components/FeatureFlagsProvider";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import UpdateToast from "@/components/pwa/UpdateToast";
 import { UndoSnackbarProvider } from "@/components/ui/UndoSnackbar";
@@ -91,6 +92,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         */}
         <AnalyticsProvider userId={user?.id}>
           {/*
+            Sprint 24: evaluated feature flags for this user, fetched once
+            from GET /api/feature-flags. Nested inside AnalyticsProvider
+            (not the other way around) because it depends on the same
+            user?.id but has no bearing on analytics initialisation order.
+          */}
+          <FeatureFlagsProvider userId={user?.id}>
+          {/*
             Sprint 14: registers /sw.js unconditionally on every load.
             Previously the SW was only registered inside the push-notification
             opt-in flow (lib/hooks/useNotifications.ts), so most users never
@@ -103,6 +111,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <UpdateToast />
           <InstallSuccessCelebration />
           <UndoSnackbarProvider>{children}</UndoSnackbarProvider>
+          </FeatureFlagsProvider>
         </AnalyticsProvider>
       </body>
     </html>

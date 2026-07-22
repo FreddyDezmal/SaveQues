@@ -51,7 +51,9 @@ export type AuditEntityType =
   | "weekly_quest"
   | "quest_chain"
   | "challenge"
-  | "event";
+  | "event"
+  | "feature_flag"
+  | "feature_flag_override";
 
 const ADMIN_RATE_LIMIT = {
   windowMinutes: 10,

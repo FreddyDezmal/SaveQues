@@ -1,3 +1,5 @@
+// lib/momentum.ts
+
 // ── Momentum States ────────────────────────────────────────────
 // States are more emotionally resonant than scores.
 // A user can't game a state — they can only live it.
@@ -19,13 +21,25 @@ export interface MomentumInfo {
 /**
  * Calculate momentum state from the last 14 days of activity.
  *
- * Thresholds (based on 14-day window):
- *   Building     — 1–4  active days  (showing up but not yet consistent)
- *   Consistent   — 5–8  active days  (more than half the time)
- *   On Fire      — 9–11 active days  (strong consistency)
- *   Unstoppable  — 12+  active days  (elite territory)
+ * This is NOT a flat day-count: each active day in the last 14 is
+ * scored, but the most recent 7 days count double the older 7, then
+ * normalised against the max possible weighted score (21). So the
+ * state someone lands in depends on *when* they were active, not just
+ * how many days — e.g. 4 active days that are all in the last week
+ * (weighted 4×2=8, normalised 0.38) already crosses into "Consistent,"
+ * not "Building," while 4 active days spread across the older week
+ * only (weighted 4×1=4, normalised 0.19) stays "Building."
  *
- * Also weights recent days more than older days (last 7 > first 7).
+ * Code review fix: this docstring previously listed flat thresholds
+ * ("Building = 1–4 active days" etc.) that ignored the recency
+ * weighting below and didn't match the code — anyone writing UI copy
+ * like "3 more days to next level!" from that table would have gotten
+ * it wrong. Approximate all-recent-or-all-old ranges, for intuition
+ * only (exact boundary depends on which specific days were active):
+ *   Building     — normalised score < 0.38
+ *   Consistent   — 0.38 ≤ score < 0.62
+ *   On Fire      — 0.62 ≤ score < 0.85
+ *   Unstoppable  — score ≥ 0.85
  *
  * IMPORTANT: "day" here means UTC calendar day, matching how
  * activity_log.activity_date is written (see lib/dateUtils.ts).

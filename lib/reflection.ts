@@ -1,3 +1,5 @@
+/// lib/reflection.ts
+
 // ── Weekly Reflection System ───────────────────────────────────
 // Closes the loop between daily actions and long-term outcomes.
 // Fires every Sunday evening. One of the highest-retention features.
@@ -108,12 +110,10 @@ export function shouldShowReflection(lastViewedAt: string | null): boolean {
 }
 
 /**
- * Get the start of the current week (Monday).
+ * Get the start of the current week (Monday, UTC).
+ *
+ * Bug fix (code review): re-exported from lib/weeklyQuests.ts instead of
+ * keeping a second local-time implementation here — see the comment on
+ * getWeekStart() in that file for why the duplication was a problem.
  */
-export function getWeekStart(): string {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  d.setDate(diff);
-  return d.toISOString().split("T")[0];
-}
+export { getWeekStart } from "./weeklyQuests";

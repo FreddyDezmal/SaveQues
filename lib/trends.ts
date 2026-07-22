@@ -10,7 +10,7 @@
  */
 
 import { getDeposits, type Deposit } from "@/lib/analyticsEngine";
-import { utcDaysBetween } from "@/lib/dateUtils";
+import { utcDaysBetween, getUTCWeekStartString } from "@/lib/dateUtils";
 import type { Transaction } from "@/lib/types";
 
 export interface PeriodComparison {
@@ -106,14 +106,26 @@ export function strongestMonth(
  * "you're saving more consistently than last week" family of insights.
  * Requires deposits in both weeks to avoid a misleading comparison against
  * zero — returns null otherwise.
+ *
+ * Bug fix (code review): this used to compare a rolling last-7-days window
+ * against the 7 days before that, anchored to `now` — not the Monday-start
+ * UTC calendar week that the rest of the app (getUTCWeekStartString,
+ * analyticsEngine.weeklySavingStreak, the weekly quest system) treats as
+ * "this week." Because lib/insights.ts surfaces this as the literal claim
+ * "You're saving more consistently than last week," a rolling window could
+ * disagree with what the weekly quest widget calls "this week" on the same
+ * day (e.g. any day that isn't Sunday). Now uses real calendar weeks so
+ * "this week" means the same thing everywhere in the app.
  */
 export function weekOverWeekConsistency(
   transactions: Transaction[],
   now: Date = new Date()
 ): { thisWeekCount: number; lastWeekCount: number; improved: boolean } | null {
   const deposits = getDeposits(transactions);
-  const thisWeekStart = new Date(now.getTime() - 7 * 86400000);
-  const lastWeekStart = new Date(now.getTime() - 14 * 86400000);
+
+  const thisWeekStartStr = getUTCWeekStartString(now);
+  const thisWeekStart = new Date(thisWeekStartStr + "T00:00:00Z");
+  const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 86400000);
 
   const thisWeek = inWindow(deposits, thisWeekStart, now);
   const lastWeek = inWindow(deposits, lastWeekStart, thisWeekStart);

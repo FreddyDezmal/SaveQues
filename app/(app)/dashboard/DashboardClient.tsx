@@ -1,3 +1,5 @@
+// app/(app)/dashboard/DashboardClient.tsx
+
 "use client";
 
 import { useState, useEffect } from "react";
@@ -24,12 +26,14 @@ import TimelineEventRow from "@/components/timeline/TimelineEventRow";
 import type { SaveQuestEvent, EventWindow } from "@/lib/events";
 import type { TimelineEventGroup } from "@/lib/types";
 import IntelligencePanel from "@/components/insights/IntelligencePanel";
+import CategoryIntelligenceCard from "@/components/insights/CategoryIntelligenceCard";
 import BehaviorInsights from "@/components/behavior/BehaviorInsights";
 import type { Insight } from "@/lib/insights";
 import type { WeeklyReview } from "@/lib/weeklyReview";
 import type { HabitProfile } from "@/lib/habits";
 import type { BehaviorProfile } from "@/lib/behaviorProfile";
 import type { BehavioralRisk } from "@/lib/riskEngine";
+import type { CategoryIntelligence } from "@/lib/categoryIntelligence";
 import type { Intervention } from "@/lib/interventions";
 
 interface Props {
@@ -63,6 +67,8 @@ interface Props {
     insights: Insight[];
     weeklyReview: WeeklyReview | null;
     topCoachingMessage: string | null;
+    /** Sprint 24 — Phase 8: per-goal-category savings breakdown, null when there isn't enough activity to compute one yet. */
+    categoryIntelligence: CategoryIntelligence | null;
   };
   /** Sprint 20 — Phase 4: which of insights/coaching/weekly-review leads inside IntelligencePanel, personalized by journey stage. */
   intelligenceSectionOrder?: import("@/lib/dashboardPersonalization").DashboardSection[];
@@ -269,6 +275,14 @@ export default function DashboardClient({
           topCoachingMessage={intelligence.topCoachingMessage}
           formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
           sectionOrder={intelligenceSectionOrder}
+        />
+      )}
+
+      {/* ── Sprint 24: Phase 8 — Category Intelligence ── */}
+      {userStage !== "new" && intelligence && (
+        <CategoryIntelligenceCard
+          data={intelligence.categoryIntelligence}
+          formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
         />
       )}
 

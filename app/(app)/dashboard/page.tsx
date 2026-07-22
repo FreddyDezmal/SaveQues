@@ -1,3 +1,5 @@
+// app/(app)/dashboard/page.tsx
+
 import { createClient }        from "@/lib/supabase/server";
 import { redirect }            from "next/navigation";
 import { getLevelFromXP }      from "@/lib/xp";
@@ -16,6 +18,7 @@ import { computeBehaviorProfile } from "@/lib/behaviorProfile";
 import { computeBehavioralRisk } from "@/lib/riskEngine";
 import { generateInterventions } from "@/lib/interventions";
 import { computeAccountHealth } from "@/lib/accountHealth";
+import { computeCategoryIntelligence } from "@/lib/categoryIntelligence";
 import type { Transaction }    from "@/lib/types";
 
 // Sprint 12 audit fix: measure server-side render time so the dashboard
@@ -141,6 +144,7 @@ export default async function DashboardPage() {
   let behaviorProfile: ReturnType<typeof computeBehaviorProfile> | null = null;
   let behavioralRisk: ReturnType<typeof computeBehavioralRisk> | null = null;
   let interventions: ReturnType<typeof generateInterventions> = [];
+  let categoryIntelligence: ReturnType<typeof computeCategoryIntelligence> | null = null;
 
   if (hasDeposit && userStage !== "new") {
     const { data: txData, error: txError } = await supabase
@@ -223,6 +227,14 @@ export default async function DashboardPage() {
         accountHealth: accountHealthForInterventions,
         coachingMessages,
       });
+
+      // ── Sprint 24: Phase 8 — Category Intelligence ─────────────────────
+      // Reuses the same `goals`/`transactions` already loaded above for
+      // insights/coaching — no separate fetch. Gated behind the same
+      // hasDeposit/userStage check as the rest of the intelligence layer
+      // for consistency, since a brand-new user has no per-category
+      // savings behaviour to report yet.
+      categoryIntelligence = computeCategoryIntelligence(goals, transactions);
     }
   }
 
@@ -317,7 +329,7 @@ export default async function DashboardPage() {
       timelinePreview={timelinePreview}
       hasDeposit={hasDeposit}
       notificationPromptDismissed={!!(profile as any).notification_prompt_dismissed}
-      intelligence={{ insights, weeklyReview, topCoachingMessage }}
+      intelligence={{ insights, weeklyReview, topCoachingMessage, categoryIntelligence }}
       intelligenceSectionOrder={intelligenceSectionOrder}
       behavior={habitProfile && behaviorProfile && behavioralRisk ? { habits: habitProfile, behaviorProfile, risk: behavioralRisk, interventions } : null}
     />

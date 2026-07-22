@@ -1,6 +1,9 @@
+// lib/timeline.ts
+
 import { format, isToday, isYesterday } from "date-fns";
 import { ACHIEVEMENTS } from "@/lib/achievements";
 import { getCategoryById } from "@/lib/utils";
+import { getGoalCompletionTimestamp } from "@/lib/analyticsEngine";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TimelineEvent, TimelineEventGroup } from "@/lib/types";
 
@@ -160,9 +163,12 @@ export async function fetchTimelineEvents(
   // ── 6. Goal completed events ──────────────────────────────────────────────
   for (const goal of goals.filter((g: any) => g.is_complete)) {
     const cat = getCategoryById(goal.category);
-    const goalTxs = allTransactions.filter((tx: any) => tx.goal_id === goal.id);
-    const latestTx = goalTxs[0]; // already sorted descending
-    const timestamp = latestTx ? latestTx.created_at : goal.created_at;
+    // Sprint 24 code-review refactor: this used to inline-compute "latest
+    // transaction on this goal, or created_at if none" here directly.
+    // Extracted to lib/analyticsEngine.ts's getGoalCompletionTimestamp()
+    // so lib/categoryIntelligence.ts (Phase 8) uses the exact same
+    // completion-date proxy instead of a second copy of this logic.
+    const timestamp = getGoalCompletionTimestamp(goal, allTransactions);
 
     events.push({
       id: `goal_completed_${goal.id}`,
