@@ -53,7 +53,9 @@ export type AuditEntityType =
   | "challenge"
   | "event"
   | "feature_flag"
-  | "feature_flag_override";
+  | "feature_flag_override"
+  | "experiment"
+  | "dev_console_action";
 
 const ADMIN_RATE_LIMIT = {
   windowMinutes: 10,

@@ -35,25 +35,27 @@ export type Deposit = Transaction & { transaction_type: "deposit" };
 // ─── Goal-level helpers ─────────────────────────────────────────────────────
 
 /**
- * The schema has no `completed_at` column on savings_goals (only the
- * `is_complete` boolean — see lib/types.ts). This approximates a
- * completion date as the timestamp of the most recent transaction on
- * that goal, which is the same proxy lib/timeline.ts already used
- * inline for its "goal completed" journey events.
+ * The DB trigger update_goal_amount() (migration 014) sets
+ * savings_goals.completed_at the moment a goal completes — that's the
+ * real, authoritative timestamp and is used first.
  *
- * Extracted here (Sprint 24, Phase 8 — Category Intelligence) so
- * timeline.ts and lib/categoryIntelligence.ts share one definition
- * instead of two copies quietly drifting apart, per the "one source of
- * truth for every financial metric" rule this file already follows.
- *
- * Returns the goal's created_at if it has no transactions at all (should
- * be rare — a goal can't legitimately be `is_complete` with zero
- * deposits — but pure functions here never assume the impossible away).
+ * Code review correction: this function originally proxied off "most
+ * recent transaction on this goal" ONLY, because the hand-maintained
+ * SavingsGoal type in lib/types.ts was missing completed_at (fixed in
+ * the same change as this comment) even though the column has existed
+ * in the schema since migration 014 and lib/timeline.ts had been
+ * inline-duplicating the same now-unnecessary proxy. The transaction
+ * proxy is kept as a fallback for is_complete=true rows where
+ * completed_at is somehow still null (shouldn't happen for any goal
+ * completed after migration 014, but costs nothing to guard against —
+ * a null completed_at should never crash a caller doing date math).
  */
 export function getGoalCompletionTimestamp(
-  goal: { id: string; created_at: string },
+  goal: { id: string; created_at: string; completed_at?: string | null },
   transactions: Transaction[]
 ): string {
+  if (goal.completed_at) return goal.completed_at;
+
   const goalTxs = transactions
     .filter((t) => t.goal_id === goal.id)
     .slice()

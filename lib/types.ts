@@ -37,6 +37,20 @@ export interface Database {
           current_amount: number;
           target_date: string | null;
           is_complete: boolean;
+          // Code review fix: these four columns exist in the DB (migration
+          // 014_consolidated_schema.sql) but were missing from this
+          // hand-maintained type — is_active/goal_status are set but never
+          // transitioned away from their defaults anywhere in the app (no
+          // pause/archive feature exists yet, confirmed by grep), so they're
+          // typed here for completeness but not yet meaningful signals.
+          // completed_at IS meaningful: it's set by update_goal_amount()'s
+          // trigger the moment a goal completes, and is what
+          // lib/analyticsEngine.ts's getGoalCompletionTimestamp() now reads
+          // first instead of proxying off the latest transaction.
+          is_primary: boolean;
+          is_active: boolean;
+          goal_status: "active" | "paused" | "completed" | "archived";
+          completed_at: string | null;
           created_at: string;
         };
         Insert: Omit<Database["public"]["Tables"]["savings_goals"]["Row"], "id" | "created_at">;

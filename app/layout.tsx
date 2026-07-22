@@ -4,6 +4,7 @@ import "./globals.css";
 import { createClient } from "@/lib/supabase/server";
 import AnalyticsProvider from "@/components/AnalyticsProvider";
 import FeatureFlagsProvider from "@/components/FeatureFlagsProvider";
+import ExperimentsProvider from "@/components/ExperimentsProvider";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import UpdateToast from "@/components/pwa/UpdateToast";
 import { UndoSnackbarProvider } from "@/components/ui/UndoSnackbar";
@@ -98,6 +99,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             user?.id but has no bearing on analytics initialisation order.
           */}
           <FeatureFlagsProvider userId={user?.id}>
+          <ExperimentsProvider userId={user?.id}>
           {/*
             Sprint 14: registers /sw.js unconditionally on every load.
             Previously the SW was only registered inside the push-notification
@@ -111,6 +113,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <UpdateToast />
           <InstallSuccessCelebration />
           <UndoSnackbarProvider>{children}</UndoSnackbarProvider>
+          </ExperimentsProvider>
           </FeatureFlagsProvider>
         </AnalyticsProvider>
       </body>
