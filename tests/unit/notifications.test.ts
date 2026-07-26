@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { shouldNotifyUserNow, todayInTZ, currentHourInTZ } from "@/lib/notifications";
+import { shouldNotifyUserNow, todayInTZ, currentHourInTZ, groupUserIdsByLocalToday } from "@/lib/notifications";
 
 describe("shouldNotifyUserNow", () => {
   it("skips a user already notified today (their local date)", () => {
@@ -135,5 +135,48 @@ describe("currentHourInTZ", () => {
 
   it("does not throw on an invalid timezone string", () => {
     expect(() => currentHourInTZ("Not/A/Real/Timezone")).not.toThrow();
+  });
+});
+
+describe("groupUserIdsByLocalToday", () => {
+  it("returns an empty map for no users", () => {
+    expect(groupUserIdsByLocalToday([]).size).toBe(0);
+  });
+
+  it("groups users sharing the same timezone into one bucket", () => {
+    const grouped = groupUserIdsByLocalToday([
+      { userId: "a", timezone: "UTC" },
+      { userId: "b", timezone: "UTC" },
+    ]);
+    expect(grouped.size).toBe(1);
+    expect(Array.from(grouped.values())[0].sort()).toEqual(["a", "b"]);
+  });
+
+  it("puts every user into the group matching their own timezone's local date", () => {
+    const grouped = groupUserIdsByLocalToday([{ userId: "a", timezone: "UTC" }]);
+    const [today] = Array.from(grouped.keys());
+    expect(today).toBe(todayInTZ("UTC"));
+  });
+
+  it("separates users into different buckets when their timezones' local dates differ", () => {
+    // Not every pair of timezones is guaranteed to differ in date at
+    // every possible instant this test runs, so this asserts the
+    // relationship rather than hardcoding specific zone names: whatever
+    // buckets result, every userId from the input appears in exactly
+    // one of them, and the bucket key always matches todayInTZ() for
+    // that user's own timezone.
+    const users = [
+      { userId: "a", timezone: "UTC" },
+      { userId: "b", timezone: "Pacific/Kiritimati" }, // UTC+14, often a different date than UTC
+    ];
+    const grouped = groupUserIdsByLocalToday(users);
+    const allIds = Array.from(grouped.values()).flat();
+    expect(allIds.sort()).toEqual(["a", "b"]);
+    for (const [date, ids] of Array.from(grouped.entries())) {
+      for (const id of ids) {
+        const user = users.find((u) => u.userId === id)!;
+        expect(date).toBe(todayInTZ(user.timezone));
+      }
+    }
   });
 });

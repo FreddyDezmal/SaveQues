@@ -223,6 +223,50 @@ export async function sendWebPush(
   }
 }
 
+// ── Sprint 27, Phase 8: retries ──────────────────────────────────────────────
+//
+// No queue/job infrastructure exists in this codebase (confirmed during
+// the Phase 1 audit) — this is a bounded in-process retry, not a durable
+// retry queue. That's a deliberate, honest scope call: an unbounded or
+// long-backoff retry here would risk this app's serverless function
+// timeout (the daily scheduler already processes many users sequentially
+// in one request — see runDailyNotificationScheduler's own docs), so this
+// is 1 retry, short fixed delay, and ONLY for failures that are plausibly
+// transient. A true durable retry queue (persist failed sends, retry them
+// on a later cron run) is flagged as future work, not built here.
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const RETRY_DELAY_MS = 300;
+
+export function isRetryable(result: SendResult): boolean {
+  if (result.gone) return false; // 410/404 — permanent, retrying is pointless
+  if (result.ok) return false;
+  if (result.status && !RETRYABLE_STATUS.has(result.status)) return false; // e.g. 400/401/403 — also permanent
+  return true; // network/fetch-level error (no status), or a retryable status code
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Same as sendWebPush(), but retries once (short fixed delay) on failures
+ * that are plausibly transient — see the block comment above for exactly
+ * why this is bounded the way it is. This is what lib/notifications.ts's
+ * sendToUser() calls; sendWebPush() itself stays retry-free so callers
+ * that want a single attempt (e.g. a test asserting exact call count)
+ * still have that option.
+ */
+export async function sendWebPushWithRetry(
+  subscription: WebPushSubscription,
+  payload: PushPayload
+): Promise<SendResult> {
+  const first = await sendWebPush(subscription, payload);
+  if (!isRetryable(first)) return first;
+
+  await sleep(RETRY_DELAY_MS);
+  return sendWebPush(subscription, payload);
+}
+
 export async function generateVapidKeys(): Promise<{ publicKey: string; privateKey: string }> {
   const keyPair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },

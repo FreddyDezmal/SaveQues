@@ -13,13 +13,16 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { X, Flame, Target, Trophy, Clock, Bell, CheckCheck, ChevronDown, PartyPopper, BarChart3 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { X, CheckCheck, ChevronDown, Archive, Trash2 } from "lucide-react";
 import { trackEvent, AnalyticsEvents } from "@/lib/analytics";
 import { groupNotifications, type NotificationGroup } from "@/lib/notificationGrouping";
 import { timeAgo } from "@/lib/utils";
 import { useUndoSnackbar } from "@/components/ui/UndoSnackbar";
 import EmptyState from "@/components/ui/EmptyState";
 import { useHaptics } from "@/lib/hooks/useHaptics";
+import { resolveNotificationHref, getNotificationActionLabel } from "@/lib/notificationActions";
+import { getNotificationIcon } from "@/lib/notificationIcons";
 
 interface NotificationRow {
   id: string;
@@ -29,6 +32,7 @@ interface NotificationRow {
   sent_at: string;
   clicked_at: string | null;
   read_at: string | null;
+  deep_link: string | null;
 }
 
 interface Props {
@@ -36,26 +40,20 @@ interface Props {
   onUnreadCountChange: (count: number) => void;
 }
 
-const TYPE_ICON: Record<string, React.ReactNode> = {
-  streak_at_risk: <Flame size={16} className="text-orange-400" />,
-  daily_quest: <Target size={16} className="text-brand-400" />,
-  weekly_expiry: <Clock size={16} className="text-amber-400" />,
-  seasonal_expiry: <Trophy size={16} className="text-purple-400" />,
-  inactive: <Bell size={16} className="text-white/40" />,
-  // Sprint 17: the three notification categories completed this sprint —
-  // previously these would have silently fallen back to the generic Bell
-  // icon (by design, per Sprint 16's comment on TYPE_ICON's fallback), but
-  // now that they're real, sent notifications, they get their own icons.
-  achievement_unlocked: <Trophy size={16} className="text-purple-400" />,
-  milestone_celebration: <PartyPopper size={16} className="text-emerald-400" />,
-  weekly_summary: <BarChart3 size={16} className="text-blue-400" />,
-};
-
 
 
 export default function NotificationCenter({ onClose, onUnreadCountChange }: Props) {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<NotificationRow[] | null>(null);
   const [error, setError] = useState(false);
+  // Sprint 27, Phase 12: separate from `notifications`/`error` above —
+  // those mutate on every mark-read/archive/delete (already correctly
+  // announced to screen readers via UndoSnackbar's role="status"), but
+  // this component's INITIAL load transition (spinner → loaded list, or
+  // → error message) had no screen-reader announcement at all. This
+  // state exists only to drive that one announcement, once, rather than
+  // re-firing on every later list mutation.
+  const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const { showUndo } = useUndoSnackbar();
   const { vibrate } = useHaptics();
@@ -133,8 +131,12 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
       .then((data) => {
         setNotifications(data.notifications ?? []);
         onUnreadCountChange(data.unreadCount ?? 0);
+        setLoadStatus("loaded");
       })
-      .catch(() => setError(true));
+      .catch(() => {
+        setError(true);
+        setLoadStatus("error");
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -245,6 +247,95 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
   }
 
 
+  function commitArchive(id: string, archive: boolean) {
+    fetch("/api/notifications/archive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, archive }),
+    }).catch(() => {});
+  }
+
+  function commitDelete(id: string) {
+    fetch("/api/notifications/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).catch(() => {});
+  }
+
+  /** Archiving removes it from THIS list immediately (the panel only shows the active inbox, never archived) — unlike mark-read, there's no "leave it visible but styled differently" state, so undo has to restore the row's position, not just a field. */
+  function handleArchive(id: string) {
+    if (!notifications) return;
+    const index = notifications.findIndex((n) => n.id === id);
+    if (index === -1) return;
+    const removed = notifications[index];
+
+    setNotifications(notifications.filter((n) => n.id !== id));
+    if (!removed.read_at) onUnreadCountChange(Math.max(0, (notifications.filter((n) => !n.read_at).length) - 1));
+    trackEvent(AnalyticsEvents.NOTIFICATION_ARCHIVED);
+    vibrate("light");
+
+    const timeoutId = setTimeout(() => {
+      commitArchive(id, true);
+      pendingCommits.current.delete(`archive:${id}`);
+    }, AUTO_DISMISS_MS);
+    pendingCommits.current.set(`archive:${id}`, timeoutId);
+
+    showUndo("Notification archived", () => {
+      const t = pendingCommits.current.get(`archive:${id}`);
+      if (t) clearTimeout(t);
+      pendingCommits.current.delete(`archive:${id}`);
+      setNotifications((prev) => {
+        if (!prev) return prev;
+        const next = [...prev];
+        next.splice(index, 0, removed);
+        return next;
+      });
+      if (!removed.read_at) onUnreadCountChange((notifications.filter((n) => !n.read_at).length));
+    });
+  }
+
+  function handleDelete(id: string) {
+    if (!notifications) return;
+    const index = notifications.findIndex((n) => n.id === id);
+    if (index === -1) return;
+    const removed = notifications[index];
+
+    setNotifications(notifications.filter((n) => n.id !== id));
+    if (!removed.read_at) onUnreadCountChange(Math.max(0, (notifications.filter((n) => !n.read_at).length) - 1));
+    trackEvent(AnalyticsEvents.NOTIFICATION_DELETED);
+    vibrate("light");
+
+    const timeoutId = setTimeout(() => {
+      commitDelete(id);
+      pendingCommits.current.delete(`delete:${id}`);
+    }, AUTO_DISMISS_MS);
+    pendingCommits.current.set(`delete:${id}`, timeoutId);
+
+    showUndo("Notification deleted", () => {
+      const t = pendingCommits.current.get(`delete:${id}`);
+      if (t) clearTimeout(t);
+      pendingCommits.current.delete(`delete:${id}`);
+      setNotifications((prev) => {
+        if (!prev) return prev;
+        const next = [...prev];
+        next.splice(index, 0, removed);
+        return next;
+      });
+      if (!removed.read_at) onUnreadCountChange((notifications.filter((n) => !n.read_at).length));
+    });
+  }
+
+  /** Sprint 27, Phase 2: notifications are now navigable, not just markable-read — marks read (existing behavior, unchanged) AND closes the panel while routing to the notification's real destination (deep_link, falling back to a category page — see lib/notificationActions.ts — never /dashboard by default). */
+  function handleOpen(n: NotificationRow) {
+    if (!n.read_at) handleMarkOneRead(n.id);
+    trackEvent(AnalyticsEvents.NOTIFICATION_CLICKED, { type: n.notification_type });
+    const href = resolveNotificationHref(n.notification_type as any, n.deep_link);
+    onClose();
+    router.push(href);
+  }
+
+
   function toggleGroup(type: string) {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
@@ -254,7 +345,7 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
     });
   }
 
-  const groups: NotificationGroup[] = notifications ? groupNotifications(notifications) : [];
+  const groups: NotificationGroup<NotificationRow>[] = notifications ? groupNotifications(notifications) : [];
 
   const hasUnread = (notifications ?? []).some((n) => !n.read_at);
 
@@ -271,6 +362,14 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
           <h2 className="text-sm font-semibold text-white">Notifications</h2>
+          {/* Sprint 27, Phase 12: announces the load outcome once — see
+              the loadStatus state comment above for why this is separate
+              from the mark-read/archive/delete announcements, which
+              already happen via UndoSnackbar's role="status". */}
+          <div aria-live="polite" className="sr-only">
+            {loadStatus === "loaded" && `${(notifications ?? []).length} notification${(notifications ?? []).length === 1 ? "" : "s"} loaded`}
+            {loadStatus === "error" && "Couldn't load notifications"}
+          </div>
           <div className="flex items-center gap-1">
             {hasUnread && (
               <button
@@ -282,7 +381,7 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
             )}
             <button
               onClick={onClose}
-              className="text-white/40 hover:text-white/70 p-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 rounded-lg"
+              className="text-white/40 hover:text-white/70 p-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 rounded-lg"
               aria-label="Close notifications"
             >
               <X size={16} />
@@ -292,7 +391,7 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
 
         <div className="max-h-[60vh] overflow-y-auto">
           {error && (
-            <p className="text-xs text-white/40 text-center py-8 px-4">
+            <p className="text-xs text-white/50 text-center py-8 px-4">
               Couldn&apos;t load notifications — check your connection and try again.
             </p>
           )}
@@ -317,21 +416,47 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
               if (g.kind === "single") {
                 const n = g.notification;
                 return (
-                  <button
+                  <div
                     key={n.id}
-                    onClick={() => handleMarkOneRead(n.id)}
-                    className={`w-full text-left px-4 py-3 flex items-start gap-3 border-b border-surface-border last:border-b-0 transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:bg-white/5 ${
+                    className={`group relative w-full flex items-start gap-3 border-b border-surface-border last:border-b-0 transition-colors hover:bg-white/5 ${
                       !n.read_at ? "bg-brand-500/[0.04]" : ""
                     }`}
                   >
-                    <div className="mt-0.5 flex-shrink-0">{TYPE_ICON[n.notification_type] ?? <Bell size={16} className="text-white/40" />}</div>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm ${!n.read_at ? "font-semibold text-white" : "text-white/70"}`}>{n.title}</p>
-                      <p className="text-xs text-white/40 mt-0.5 line-clamp-2">{n.body}</p>
-                      <p className="text-[11px] text-white/30 mt-1">{timeAgo(n.sent_at)}</p>
+                    <button
+                      onClick={() => handleOpen(n)}
+                      className="flex-1 min-w-0 text-left px-4 py-3 flex items-start gap-3 focus-visible:outline-none focus-visible:bg-white/5"
+                    >
+                      <div className="mt-0.5 flex-shrink-0">{getNotificationIcon(n.notification_type)}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm ${!n.read_at ? "font-semibold text-white" : "text-white/70"}`}>{n.title}</p>
+                        <p className="text-xs text-white/50 mt-0.5 line-clamp-2">{n.body}</p>
+                        <p className="text-[11px] text-white/50 mt-1">{timeAgo(n.sent_at)}</p>
+                      </div>
+                      {!n.read_at && <span className="w-2 h-2 rounded-full bg-brand-400 flex-shrink-0 mt-1.5" aria-label="Unread" />}
+                    </button>
+                    {/* Sprint 27, Phase 2: archive/delete — opacity-0 by default so the
+                        compact panel doesn't look cluttered; visible on hover/focus,
+                        and always visible on touch (no hover state) via the group-focus
+                        fallback below is intentionally skipped here — touch users can
+                        still reach these via the full inbox page, which shows them
+                        unconditionally. This panel stays a quick-glance surface. */}
+                    <div className="flex-shrink-0 flex items-center gap-0.5 pr-2 pt-3 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleArchive(n.id)}
+                        className="p-1.5 text-white/40 hover:text-white/70 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                        aria-label="Archive notification"
+                      >
+                        <Archive size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(n.id)}
+                        className="p-1.5 text-white/40 hover:text-red-400 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                        aria-label="Delete notification"
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                    {!n.read_at && <span className="w-2 h-2 rounded-full bg-brand-400 flex-shrink-0 mt-1.5" aria-label="Unread" />}
-                  </button>
+                  </div>
                 );
               }
 
@@ -350,17 +475,17 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
                       aria-expanded={isExpanded}
                     >
                       <div className="mt-0.5 flex-shrink-0">
-                        {TYPE_ICON[g.notification_type] ?? <Bell size={16} className="text-white/40" />}
+                        {getNotificationIcon(g.notification_type)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm ${unreadIds.length > 0 ? "font-semibold text-white" : "text-white/70"}`}>
                           {g.label}
                         </p>
-                        <p className="text-[11px] text-white/30 mt-1">{timeAgo(g.notifications[0].sent_at)}</p>
+                        <p className="text-[11px] text-white/50 mt-1">{timeAgo(g.notifications[0].sent_at)}</p>
                       </div>
                       <ChevronDown
                         size={15}
-                        className={`text-white/30 flex-shrink-0 mt-0.5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                        className={`text-white/40 flex-shrink-0 mt-0.5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
                       />
                     </button>
                     {unreadIds.length > 0 && (
@@ -383,7 +508,7 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
                         >
                           <div className="flex-1 min-w-0">
                             <p className={`text-xs ${!n.read_at ? "font-medium text-white/90" : "text-white/50"}`}>{n.title}</p>
-                            <p className="text-[11px] text-white/30 mt-0.5">{timeAgo(n.sent_at)}</p>
+                            <p className="text-[11px] text-white/50 mt-0.5">{timeAgo(n.sent_at)}</p>
                           </div>
                           {!n.read_at && <span className="w-1.5 h-1.5 rounded-full bg-brand-400 flex-shrink-0 mt-1" aria-label="Unread" />}
                         </button>
@@ -394,6 +519,18 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
               );
             })}
         </div>
+
+        {!error && notifications !== null && notifications.length > 0 && (
+          <div className="border-t border-surface-border px-4 py-2.5 text-center">
+            <a
+              href="/notifications"
+              onClick={onClose}
+              className="text-xs text-brand-400 hover:text-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 rounded px-1"
+            >
+              View all notifications
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

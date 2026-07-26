@@ -179,6 +179,10 @@ export const AnalyticsEvents = {
   NOTIFICATION_CENTER_OPENED:   "notification_center_opened",
   NOTIFICATION_MARKED_READ:     "notification_marked_read",
   NOTIFICATION_MARK_ALL_READ:   "notification_mark_all_read",
+  // Sprint 27, Phase 2: Notification Center → full inbox.
+  NOTIFICATION_ARCHIVED:        "notification_archived",
+  NOTIFICATION_DELETED:         "notification_deleted",
+  NOTIFICATION_CLICKED:         "notification_clicked",
   BADGE_SET:                    "badge_set",
   BADGE_CLEARED:                "badge_cleared",
 } as const;

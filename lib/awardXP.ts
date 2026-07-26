@@ -132,7 +132,7 @@ export async function checkAndAwardAchievements(
       // "not awaited" safe — without it, an unhandled promise rejection
       // here would surface as an unhandled rejection warning/crash risk
       // at the process level even though nothing is awaiting it.
-      sendAchievementUnlocked(userId, achievement.title, achievement.icon).catch((err) => {
+      sendAchievementUnlocked(userId, achievement.title, achievement.icon, achievement.id).catch((err) => {
         console.error("[checkAndAwardAchievements] Failed to send achievement notification:", err);
       });
     }
@@ -193,7 +193,7 @@ export async function awardGoalCompleteXP(params: {
   // FIRST completion of this goal (primary.alreadyAwarded false), so
   // re-triggering this endpoint idempotently never double-celebrates.
   if (!primary.alreadyAwarded && params.goalTitle) {
-    sendMilestoneCelebration(params.userId, params.goalTitle).catch((err) => {
+    sendMilestoneCelebration(params.userId, params.goalTitle, params.goalId).catch((err) => {
       console.error("[awardGoalCompleteXP] Failed to send milestone notification:", err);
     });
   }

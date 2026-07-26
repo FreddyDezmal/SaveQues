@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 /**
- * Called by the service worker when a push is received or clicked.
- * The notification ID is stored in the push payload and passed here.
+ * Called by the service worker when a push is received, clicked, or
+ * dismissed. The notification ID is stored in the push payload and
+ * passed here.
+ *
+ * Sprint 27, Phase 11: added "dismissed" — previously the service
+ * worker's dismiss action button closed the notification but never
+ * reported it, so dismissed_at was always null for every notification
+ * ever sent. See public/sw.js's own comments for the full fix.
  *
  * Security (H2 fix):
  *  • Requires authentication — unauthenticated requests are rejected with 401.
@@ -25,14 +31,14 @@ export async function POST(req: NextRequest) {
 
     const { notificationId, event } = await req.json() as {
       notificationId: string;
-      event: "delivered" | "clicked";
+      event: "delivered" | "clicked" | "dismissed";
     };
 
-    if (!notificationId || !["delivered", "clicked"].includes(event)) {
+    if (!notificationId || !["delivered", "clicked", "dismissed"].includes(event)) {
       return NextResponse.json({ error: "Invalid params" }, { status: 400 });
     }
 
-    const column = event === "delivered" ? "delivered_at" : "clicked_at";
+    const column = event === "delivered" ? "delivered_at" : event === "clicked" ? "clicked_at" : "dismissed_at";
 
     // H2 fix: scope update by BOTH notification id AND authenticated user_id
     await supabase

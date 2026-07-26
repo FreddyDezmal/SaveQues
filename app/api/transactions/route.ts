@@ -28,6 +28,7 @@
  */
 
 import { createClient } from "@/lib/supabase/server";
+import { attributeConversion, DEPOSIT_ATTRIBUTABLE_TYPES } from "@/lib/notificationAttribution";
 import { NextRequest, NextResponse } from "next/server";
 import { getXPForAction } from "@/lib/xp";
 import { checkAchievements } from "@/lib/achievements";
@@ -218,6 +219,17 @@ async function handlePOST(req: NextRequest) {
     captureError(txError, { route: "POST /api/transactions", user_id: user.id, request_id: requestId, goal_id });
     return NextResponse.json({ error: txError.message }, { status: 500 });
   }
+
+  // ── Sprint 27, Phase 11: conversion attribution ──────────────────────
+  // Fire-and-forget, same pattern every notification send in this
+  // codebase already uses (lib/notifications.ts's senders) — a failure
+  // here must never affect this deposit, which has already succeeded by
+  // this point. Not awaited, so it adds zero latency to the response.
+  attributeConversion(user.id, DEPOSIT_ATTRIBUTABLE_TYPES).catch((err) => {
+    log.error("attributeConversion failed (non-fatal)", {
+      user_id: user.id, request_id: requestId, transaction_id: tx.id, error: err.message,
+    });
+  });
 
   // ── 3. FETCH CONTEXT FOR XP + ACHIEVEMENT CHECKS ─────────────
   const today = getUTCDateString();

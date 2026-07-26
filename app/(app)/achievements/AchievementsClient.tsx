@@ -12,7 +12,8 @@
  * correct, existing place to resolve it, not something to duplicate.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { ACHIEVEMENTS } from "@/lib/achievements";
 import PrivacySelector from "@/components/ui/PrivacySelector";
@@ -28,6 +29,16 @@ export default function AchievementsClient() {
   const [visibilityOverrides, setVisibilityOverrides] = useState<Record<string, VisibilityLevel>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+
+  // Sprint 27, Phase 6: there's no /achievements/[id] detail route — this
+  // list IS the detail view, one card per earned achievement — so the
+  // deep link an achievement_unlocked notification needs is "this list,
+  // scrolled to and highlighting the specific badge" rather than a
+  // separate page. Driven by ?highlight=<achievement_id>, set by
+  // sendAchievementUnlocked() in lib/notifications.ts.
+  const searchParams = useSearchParams();
+  const highlightId = searchParams.get("highlight");
+  const highlightedRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     setError(false);
@@ -60,6 +71,22 @@ export default function AchievementsClient() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (!loading && highlightId && highlightedRef.current) {
+      // Sprint 27, Phase 12: previously this only called scrollIntoView,
+      // which moves the visual viewport but does nothing for a screen
+      // reader user — their reading position and keyboard focus stay
+      // wherever they were. tabIndex={-1} makes the card programmatically
+      // focusable (without adding it to the normal Tab order), and
+      // .focus() actually moves both keyboard focus AND the screen
+      // reader's position to it, so arriving here via an achievement_
+      // unlocked notification's deep link works the same way for
+      // keyboard/SR users as it already did for sighted mouse users.
+      highlightedRef.current.focus();
+      highlightedRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [loading, highlightId]);
+
   async function setVisibility(achievementId: string, visibility: VisibilityLevel) {
     setVisibilityOverrides((prev) => ({ ...prev, [achievementId]: visibility }));
     await fetch("/api/achievements/visibility", {
@@ -80,15 +107,22 @@ export default function AchievementsClient() {
       {achievements.map((earned) => {
         const catalogEntry = ACHIEVEMENTS.find((a) => a.id === earned.achievement_id);
         const current = visibilityOverrides[earned.achievement_id] ?? earned.visibility ?? "friends";
+        const isHighlighted = earned.achievement_id === highlightId;
         return (
-          <div key={earned.achievement_id} className="card p-4">
+          <div
+            key={earned.achievement_id}
+            ref={isHighlighted ? highlightedRef : undefined}
+            tabIndex={isHighlighted ? -1 : undefined}
+            aria-label={isHighlighted ? `${catalogEntry?.title || earned.achievement_id} — just earned` : undefined}
+            className={`card p-4 transition-shadow focus:outline-none ${isHighlighted ? "ring-2 ring-brand-500/60" : ""}`}
+          >
             <div className="flex items-center gap-3 mb-3">
               <div className="w-11 h-11 rounded-xl bg-brand-500/10 flex items-center justify-center text-xl shrink-0" aria-hidden="true">
                 {catalogEntry?.icon || "🏅"}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-white truncate">{catalogEntry?.title || earned.achievement_id}</p>
-                {catalogEntry?.description && <p className="text-xs text-white/40 truncate">{catalogEntry.description}</p>}
+                {catalogEntry?.description && <p className="text-xs text-white/50 truncate">{catalogEntry.description}</p>}
               </div>
             </div>
             <PrivacySelector

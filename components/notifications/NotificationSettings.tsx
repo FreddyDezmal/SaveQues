@@ -4,17 +4,14 @@ import { useState } from "react";
 import { Bell, BellOff, BellRing, Loader2, CheckCircle, AlertTriangle, ExternalLink } from "lucide-react";
 import { useNotifications } from "@/lib/hooks/useNotifications";
 import { createClient } from "@/lib/supabase/client";
+import { HOUR_OPTIONS } from "@/lib/hourOptions";
+import Toggle from "@/components/ui/Toggle";
 
 interface Props {
   profileId:            string;
   currentHour:          number | null;
   notificationsEnabled: boolean;
 }
-
-const HOURS = Array.from({ length: 24 }, (_, i) => ({
-  value: i,
-  label: i === 0 ? "12:00 AM" : i < 12 ? `${i}:00 AM` : i === 12 ? "12:00 PM" : `${i - 12}:00 PM`,
-}));
 
 const ERROR_MESSAGES: Record<string, { title: string; help: string; showBrowserTip?: boolean }> = {
   permission_denied: {
@@ -102,7 +99,7 @@ export default function NotificationSettings({ profileId, currentHour, notificat
 
   return (
     <div className="mb-6">
-      <p className="text-xs text-white/40 uppercase tracking-wider font-medium mb-3">Notifications</p>
+      <p className="text-xs text-white/50 uppercase tracking-wider font-medium mb-3">Notifications</p>
 
       <div className="card p-4 space-y-5">
 
@@ -112,28 +109,20 @@ export default function NotificationSettings({ profileId, currentHour, notificat
             <StatusIcon size={16} className={`shrink-0 ${statusColor}`} />
             <div className="min-w-0">
               <p className="text-sm font-medium text-white">Push notifications</p>
-              <p className="text-xs text-white/40 mt-0.5">{statusLabel}</p>
+              <p className="text-xs text-white/50 mt-0.5">{statusLabel}</p>
             </div>
           </div>
 
-          <button
-            onClick={handleToggle}
-            disabled={isLoading || permission === "denied" || permission === "unsupported"}
-            className={`relative shrink-0 w-12 h-6 rounded-full transition-colors focus:outline-none disabled:opacity-40 ml-3 ${
-              isSubscribed ? "bg-brand-500" : "bg-surface-border"
-            }`}
-            aria-label={isSubscribed ? "Disable notifications" : "Enable notifications"}
-          >
-            {isLoading ? (
-              <Loader2 size={12} className="absolute inset-0 m-auto animate-spin text-white" />
-            ) : (
-              <span
-                className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
-                  isSubscribed ? "translate-x-6" : "translate-x-0"
-                }`}
-              />
-            )}
-          </button>
+          <div className="flex items-center gap-2 shrink-0 ml-3">
+            {isLoading && <Loader2 size={14} className="animate-spin text-white/40" aria-hidden="true" />}
+            <Toggle
+              checked={isSubscribed}
+              onChange={handleToggle}
+              disabled={isLoading || permission === "denied" || permission === "unsupported"}
+              label="Push notifications"
+              srLabel={isSubscribed ? "Disable notifications" : "Enable notifications"}
+            />
+          </div>
         </div>
 
         {/* Error display */}
@@ -153,14 +142,15 @@ export default function NotificationSettings({ profileId, currentHour, notificat
         {/* Reminder hour — only when subscribed */}
         {isSubscribed && (
           <div>
-            <label className="block text-sm text-white/60 mb-1.5">Daily reminder time</label>
+            <label htmlFor="daily-reminder-hour" className="block text-sm text-white/60 mb-1.5">Daily reminder time</label>
             <div className="flex gap-2 items-center">
               <select
+                id="daily-reminder-hour"
                 className="input-field flex-1"
                 value={notifHour}
                 onChange={(e) => setNotifHour(Number(e.target.value))}
               >
-                {HOURS.map((h) => (
+                {HOUR_OPTIONS.map((h) => (
                   <option key={h.value} value={h.value}>{h.label}</option>
                 ))}
               </select>
@@ -174,7 +164,7 @@ export default function NotificationSettings({ profileId, currentHour, notificat
               </button>
             </div>
             {saveError && <p className="text-xs text-red-400 mt-1.5">{saveError}</p>}
-            <p className="text-xs text-white/30 mt-1.5">
+            <p className="text-xs text-white/50 mt-1.5">
               Reminders are sent in your local timezone at this hour each day.
             </p>
           </div>
@@ -183,7 +173,7 @@ export default function NotificationSettings({ profileId, currentHour, notificat
         {/* What you'll be notified about */}
         {isSubscribed && (
           <div>
-            <p className="text-xs text-white/40 mb-2">You&apos;ll be reminded when:</p>
+            <p className="text-xs text-white/50 mb-2">You&apos;ll be reminded when:</p>
             <ul className="space-y-1.5 text-xs text-white/50">
               <li className="flex items-center gap-2"><span>🔥</span> Your streak is at risk of breaking</li>
               <li className="flex items-center gap-2"><span>📋</span> You haven&apos;t completed today&apos;s quest</li>
@@ -198,13 +188,13 @@ export default function NotificationSettings({ profileId, currentHour, notificat
         {permission === "denied" && (
           <div className="p-3 rounded-xl bg-surface-border/50 space-y-1">
             <p className="text-xs text-white/50 font-medium">How to unblock:</p>
-            <p className="text-xs text-white/30">
+            <p className="text-xs text-white/50">
               Chrome/Edge: click the 🔒 in the address bar → Site settings → Notifications → Allow
             </p>
-            <p className="text-xs text-white/30">
+            <p className="text-xs text-white/50">
               Firefox: click the 🔒 → More information → Permissions → Send notifications → Allow
             </p>
-            <p className="text-xs text-white/30">
+            <p className="text-xs text-white/50">
               Safari: Settings → Websites → Notifications → find this site → Allow
             </p>
           </div>

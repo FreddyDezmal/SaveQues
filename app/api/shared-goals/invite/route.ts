@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
   const { data: goal } = sg
     ? await supabase.from("savings_goals").select("title").eq("id", sg.goal_id).single()
     : { data: null };
-  sendGoalInvitation(targetUserId, inviterProfile?.display_name || "Someone", goal?.title || "a shared goal").catch((err) =>
+  sendGoalInvitation(targetUserId, inviterProfile?.display_name || "Someone", goal?.title || "a shared goal", sharedGoalId).catch((err) =>
     log.error("sendGoalInvitation failed", { error: err.message })
   );
 

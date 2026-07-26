@@ -4,11 +4,13 @@
  * Sprint 22 — Phase 16. Tests lib/invites.ts.
  *
  * generateInviteToken() and buildInviteUrl() are pure. sendInviteEmail()
- * is a deliberate, documented stub (see lib/invites.ts's file header —
- * no email provider is configured anywhere in this codebase); these tests
- * pin down its documented contract (never throws, always reports
- * sent:false/no_provider_configured, logs a warning naming the recipient)
- * rather than pretending it sends anything.
+ * routes through the Sprint 27 Phase 9 email provider abstraction
+ * (lib/email/) — since no provider is configured anywhere in this
+ * codebase, that abstraction resolves to its null provider, so these
+ * tests pin down the same observable contract as before Phase 9 (never
+ * throws, always reports sent:false/no_provider_configured, logs a
+ * warning naming the recipient and a preview of the message) rather
+ * than pretending anything sends.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { generateInviteToken, buildInviteUrl, sendInviteEmail } from "@/lib/invites";

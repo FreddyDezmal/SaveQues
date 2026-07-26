@@ -83,14 +83,14 @@ export async function POST(req: NextRequest) {
     // already-successful completion response either way.
     const { data: quest } = await serviceClient
       .from("group_quests")
-      .select("title, groups(name)")
+      .select("group_id, title, groups(name)")
       .eq("id", groupQuestId)
       .single();
     const groupName = (quest as any)?.groups?.name || "Your group";
     const questTitle = quest?.title || "a group quest";
 
     for (const memberId of data.members_awarded as string[]) {
-      sendGroupQuestCompleted(memberId, groupName, questTitle).catch((err) =>
+      sendGroupQuestCompleted(memberId, quest?.group_id, groupName, questTitle).catch((err) =>
         log.error("sendGroupQuestCompleted failed", { member_id: memberId, error: err.message })
       );
     }

@@ -5,16 +5,22 @@
  *
  * Extracted from the inline switch markup in
  * components/notifications/NotificationSettings.tsx (Sprint 13) — that
- * component had one hand-rolled toggle; this sprint's Notification
- * Preferences page needs six. Rather than copy-pasting the same button six
- * times (or worse, having two slightly-different toggle implementations
- * drift apart), this factors out the existing visual design exactly as-is
- * into a single reusable component. NotificationSettings.tsx itself is
- * intentionally left using its own inline markup rather than retroactively
- * refactored to use this — that would be an unnecessary risk to a working,
- * shipped component for a purely cosmetic-equivalence gain, which the
- * sprint brief's "avoid cosmetic changes without measurable benefit"
- * principle argues against.
+ * component had one hand-rolled toggle; the Notification Preferences
+ * page (Sprint 16) needed six. Rather than copy-pasting the same button
+ * six times (or worse, having two slightly-different toggle
+ * implementations drift apart), this factors out the existing visual
+ * design exactly as-is into a single reusable component.
+ *
+ * Sprint 27, Phase 12 update: NotificationSettings.tsx was originally
+ * left on its own inline markup rather than migrated here, on the
+ * reasoning that a purely cosmetic-equivalence change wasn't worth the
+ * risk to a working, shipped component. That reasoning held until this
+ * phase's accessibility audit found the inline version was missing
+ * role="switch"/aria-checked entirely — not cosmetic, a real WCAG gap
+ * (a screen reader announces it as a plain unlabeled-state button, not
+ * a switch with an on/off state). That's the "measurable benefit" the
+ * original comment was waiting for; NotificationSettings.tsx now uses
+ * this component too. See that file's own comment for specifics.
  */
 
 interface ToggleProps {

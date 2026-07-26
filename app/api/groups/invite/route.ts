@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
     supabase.from("profiles").select("display_name").eq("id", user.id).single(),
     supabase.from("groups").select("name").eq("id", groupId).single(),
   ]);
-  sendGroupInvite(targetUserId, inviterProfile?.display_name || "Someone", group?.name || "a group").catch((err) =>
+  sendGroupInvite(targetUserId, inviterProfile?.display_name || "Someone", group?.name || "a group", groupId).catch((err) =>
     log.error("sendGroupInvite failed", { error: err.message })
   );
 

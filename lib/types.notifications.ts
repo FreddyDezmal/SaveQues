@@ -36,7 +36,24 @@ export type NotificationType =
   | "goal_invitation"
   | "group_quest_completed"
   | "partner_reminder"
-  | "group_weekly_summary";
+  | "group_weekly_summary"
+  // Sprint 27, Phase 3: Smart Reminder Engine. goal_almost_complete /
+  // goal_deadline_approaching / missed_weekly_deposit are gated by the
+  // existing "goal_reminders" category, fired from the per-user daily
+  // loop in runDailyNotificationScheduler. group_quest_ending is
+  // group-scoped rather than user-scoped, fired from its own scheduler —
+  // gated by the "groups" category added in Phase 4 below (was
+  // global-switch-only for the few days between Phase 3 and Phase 4
+  // shipping; updated once the category existed).
+  | "goal_almost_complete"
+  | "goal_deadline_approaching"
+  | "missed_weekly_deposit"
+  | "group_quest_ending"
+  // Sprint 27, Phase 5: Digest System. Makes the "monthly_summaries"
+  // notification_preferences category (added in Phase 4, not-live until
+  // now) live — gated the same way weekly_summary is, via
+  // canSendNotificationToUser(userId, "monthly_summaries").
+  | "monthly_summary";
 
 export interface PushSubscriptionRow {
   id: string;
@@ -70,11 +87,27 @@ export interface NotificationMetrics {
   total_clicked: number;
   delivery_rate: string;
   click_rate: string;
+  // Sprint 27, Phase 11: full engagement breakdown. total_delivered/
+  // total_clicked/delivery_rate/click_rate above are kept for backward
+  // compatibility with any existing reader of this type — the new
+  // fields below are additive, not a replacement.
+  total_opened: number;
+  total_dismissed: number;
+  total_converted: number;
+  total_ignored: number;
+  open_rate: string;
+  dismiss_rate: string;
+  conversion_rate: string;
+  ignored_rate: string;
   by_type: {
     type: NotificationType;
     sent: number;
     delivered: number;
     clicked: number;
+    opened: number;
+    dismissed: number;
+    converted: number;
+    ignored: number;
   }[];
 }
 

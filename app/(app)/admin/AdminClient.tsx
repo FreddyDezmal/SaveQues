@@ -1733,6 +1733,26 @@ export default function AdminClient({
                     <div className="text-xs text-white/50 mt-0.5">Click-through rate</div>
                     <div className="text-[10px] text-white/30">{m.total_clicked} clicked</div>
                   </div>
+                  <div className="card p-4">
+                    <div className="font-display font-bold text-blue-400 text-2xl">{m.open_rate}%</div>
+                    <div className="text-xs text-white/50 mt-0.5">Open rate</div>
+                    <div className="text-[10px] text-white/30">{m.total_opened} opened in inbox</div>
+                  </div>
+                  <div className="card p-4">
+                    <div className="font-display font-bold text-purple-400 text-2xl">{m.conversion_rate}%</div>
+                    <div className="text-xs text-white/50 mt-0.5">Conversion rate</div>
+                    <div className="text-[10px] text-white/30">{m.total_converted} converted (of clicks)</div>
+                  </div>
+                  <div className="card p-4">
+                    <div className="font-display font-bold text-white/60 text-2xl">{m.dismiss_rate}%</div>
+                    <div className="text-xs text-white/50 mt-0.5">Dismiss rate</div>
+                    <div className="text-[10px] text-white/30">{m.total_dismissed} dismissed</div>
+                  </div>
+                  <div className="card p-4">
+                    <div className="font-display font-bold text-white/40 text-2xl">{m.ignored_rate}%</div>
+                    <div className="text-xs text-white/50 mt-0.5">Ignored rate</div>
+                    <div className="text-[10px] text-white/30">{m.total_ignored} delivered, no action</div>
+                  </div>
                 </div>
 
                 <div>
@@ -1749,6 +1769,7 @@ export default function AdminClient({
                         <div className="text-right shrink-0">
                           <div className="text-xs text-emerald-400">{t.sent > 0 ? ((t.delivered / t.sent) * 100).toFixed(0) : 0}% delivered</div>
                           <div className="text-xs text-brand-400">{t.delivered > 0 ? ((t.clicked / t.delivered) * 100).toFixed(0) : 0}% clicked</div>
+                          <div className="text-xs text-purple-400">{t.clicked > 0 ? ((t.converted / t.clicked) * 100).toFixed(0) : 0}% converted</div>
                         </div>
                       </div>
                     ))}

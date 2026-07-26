@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runDailyNotificationScheduler, runWeeklySummaryScheduler, runPartnerReminderScheduler, runGroupWeeklySummaryScheduler } from "@/lib/notifications";
+import { runDailyNotificationScheduler, runWeeklySummaryScheduler, runPartnerReminderScheduler, runGroupWeeklySummaryScheduler, runGroupQuestEndingReminderScheduler, runMonthlyDigestScheduler, runNotificationLogsCleanupScheduler } from "@/lib/notifications";
 import { checkNotificationDeliveryRate } from "@/lib/businessMetrics";
 import { createLogger } from "@/lib/logger";
 import { captureError, setSentryUser } from "@/lib/monitoring";
@@ -116,6 +116,48 @@ export async function GET(req: NextRequest) {
       } catch (groupWeeklyErr: any) {
         log.warn("Group weekly summary run failed (non-fatal to daily scheduler)", {
           run_id: runId, error: groupWeeklyErr.message ?? String(groupWeeklyErr),
+        });
+      }
+    }
+
+    // Sprint 27, Phase 3: group quest ending soon. Runs on every
+    // invocation (not gated to Monday) — a group quest's 2-day-out
+    // deadline can land on any day of the week, unlike the weekly/monthly
+    // digests above. Own try/catch, same non-fatal reasoning as every
+    // other piggybacked job on this cron.
+    try {
+      const groupQuestEndingResult = await runGroupQuestEndingReminderScheduler();
+      log.info("Group quest ending reminder run complete", { run_id: runId, ...groupQuestEndingResult });
+    } catch (groupQuestEndingErr: any) {
+      log.warn("Group quest ending reminder run failed (non-fatal to daily scheduler)", {
+        run_id: runId, error: groupQuestEndingErr.message ?? String(groupQuestEndingErr),
+      });
+    }
+
+    // Sprint 27, Phase 5: monthly digest. Gated to the 1st of the calendar
+    // month, same "no new Vercel Cron slot, no-op most days" reasoning as
+    // the Monday-gated weekly jobs above.
+    if (new Date().getUTCDate() === 1) {
+      try {
+        const monthlyResult = await runMonthlyDigestScheduler();
+        log.info("Monthly digest run complete", { run_id: runId, ...monthlyResult });
+      } catch (monthlyErr: any) {
+        log.warn("Monthly digest run failed (non-fatal to daily scheduler)", {
+          run_id: runId, error: monthlyErr.message ?? String(monthlyErr),
+        });
+      }
+    }
+
+    // Sprint 27, Phase 13: notification_logs retention cleanup. Gated to
+    // Sundays — housekeeping, not time-sensitive, and a DELETE across a
+    // potentially large table doesn't need to run daily.
+    if (new Date().getUTCDay() === 0) {
+      try {
+        const cleanupResult = await runNotificationLogsCleanupScheduler();
+        log.info("Notification logs cleanup run complete", { run_id: runId, ...cleanupResult });
+      } catch (cleanupErr: any) {
+        log.warn("Notification logs cleanup run failed (non-fatal to daily scheduler)", {
+          run_id: runId, error: cleanupErr.message ?? String(cleanupErr),
         });
       }
     }

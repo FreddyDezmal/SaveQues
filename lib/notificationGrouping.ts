@@ -24,9 +24,9 @@ export interface GroupableNotification {
   read_at: string | null;
 }
 
-export type NotificationGroup =
-  | { kind: "single"; notification: GroupableNotification }
-  | { kind: "group"; notification_type: string; label: string; notifications: GroupableNotification[] };
+export type NotificationGroup<T extends GroupableNotification = GroupableNotification> =
+  | { kind: "single"; notification: T }
+  | { kind: "group"; notification_type: string; label: string; notifications: T[] };
 
 // Friendly plural labels for known types. Deliberately NOT exhaustive over
 // every possible future type — see FALLBACK_LABEL below for what happens
@@ -65,8 +65,21 @@ function labelFor(type: string): string {
  * as a "group of 1" — grouping only kicks in where it actually saves the
  * user screen space and cognitive load.
  */
-export function groupNotifications(notifications: GroupableNotification[]): NotificationGroup[] {
-  const groups: NotificationGroup[] = [];
+/**
+ * Code review fix (Sprint 27): this used to be non-generic
+ * (`notifications: GroupableNotification[]` fixed), which meant any
+ * caller whose rows have MORE fields than GroupableNotification's
+ * minimal shape (e.g. NotificationCenter.tsx's NotificationRow, which
+ * added deep_link this sprint) got that extra field silently narrowed
+ * away on the OUTPUT of this function — TypeScript allows passing a
+ * wider object where a narrower type is expected (structural typing),
+ * but the return value was still typed as the narrow GroupableNotification,
+ * so `n.deep_link` on a grouped/singled notification failed to compile.
+ * Generic over T preserves whatever shape the caller actually passed in,
+ * all the way through.
+ */
+export function groupNotifications<T extends GroupableNotification>(notifications: T[]): NotificationGroup<T>[] {
+  const groups: NotificationGroup<T>[] = [];
   let i = 0;
 
   while (i < notifications.length) {

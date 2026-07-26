@@ -6,21 +6,23 @@
  * Token generation (no new dependency — Node's built-in crypto covers
  * this) and the email-sending integration point.
  *
- * ── Email is a stub, on purpose ───────────────────────────────────────
- * See 053_invitations.sql's file header: this codebase has no email
- * provider configured anywhere (checked package.json and grepped lib/
- * and app/ — nothing). Picking one (Resend vs SendGrid vs Postmark, API
- * keys, templates) is a real infrastructure decision for whoever runs
- * this project, not something to bake in silently. sendInviteEmail()
- * below is the integration point: it validates input and returns a clear
- * { sent: false, reason: "no_provider_configured" } result rather than
- * throwing or pretending to succeed. The invite itself is fully
- * functional either way — /api/invitations/create always returns the
- * shareable link, which works completely without email (copy/paste,
- * message it, or render it as a QR code client-side).
+ * ── Email delivery ───────────────────────────────────────────────────
+ * Sprint 27, Phase 9 built a real email provider abstraction
+ * (lib/email/) — this function now routes through it instead of being
+ * its own bespoke stub. Nothing observable changes today: no provider
+ * is configured anywhere in this project, so sendEmail() still resolves
+ * through the null provider and this still returns exactly
+ * { sent: false, reason: "no_provider_configured" }. The difference is
+ * what happens the moment someone DOES configure EMAIL_PROVIDER (see
+ * lib/email/index.ts) — this function starts actually sending, with no
+ * further changes needed here. The invite itself is fully functional
+ * either way — /api/invitations/create always returns the shareable
+ * link, which works completely without email (copy/paste, message it,
+ * or render it as a QR code client-side).
  */
 
 import { randomBytes } from "crypto";
+import { sendEmail } from "./email";
 
 /** URL-safe, 22 characters, ~131 bits of entropy — short enough to sit
  *  comfortably in a QR code, long enough that guessing a token isn't a
@@ -35,7 +37,7 @@ export function buildInviteUrl(baseUrl: string, token: string): string {
 
 export interface SendInviteEmailResult {
   sent: boolean;
-  reason?: "no_provider_configured";
+  reason?: string;
 }
 
 export async function sendInviteEmail(params: {
@@ -44,13 +46,13 @@ export async function sendInviteEmail(params: {
   inviteUrl: string;
   groupName?: string | null;
 }): Promise<SendInviteEmailResult> {
-  // Intentionally not implemented — see file header. Left as a named,
-  // clearly-flagged stub rather than a silent no-op so it's obvious in a
-  // code search (grep "no_provider_configured") exactly what's missing
-  // and why, rather than a dead function nobody remembers exists.
-  console.warn(
-    `[invites] sendInviteEmail stub — no email provider configured. ` +
-    `Would have sent to ${params.toEmail}: "${params.inviterDisplayName} invited you to SaveQuest" -> ${params.inviteUrl}`
-  );
-  return { sent: false, reason: "no_provider_configured" };
+  const subject = params.groupName
+    ? `${params.inviterDisplayName} invited you to join ${params.groupName} on SaveQuest`
+    : `${params.inviterDisplayName} invited you to SaveQuest`;
+  const text = params.groupName
+    ? `${params.inviterDisplayName} invited you to join their group "${params.groupName}" on SaveQuest, a savings app that makes building better money habits feel like a game.\n\nJoin here: ${params.inviteUrl}`
+    : `${params.inviterDisplayName} invited you to SaveQuest, a savings app that makes building better money habits feel like a game.\n\nJoin here: ${params.inviteUrl}`;
+
+  const result = await sendEmail({ to: params.toEmail, subject, text });
+  return { sent: result.sent, reason: result.reason };
 }

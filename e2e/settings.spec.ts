@@ -56,8 +56,14 @@ test.describe("Notification Preferences", () => {
     await page.getByRole("switch", { name: "Daily streak reminders" }).click();
   });
 
-  test("achievements, goal reminders, and weekly summaries are all live (no 'Coming soon' label) — Sprint 17 regression check", async ({ page }) => {
+  test("product_announcements, xp, referrals, and monthly_summaries are the only 'Coming soon' categories — Sprint 27 Phase 4 regression check", async ({ page }) => {
     await page.goto("/settings/notifications");
-    await expect(page.getByText("Coming soon", { exact: false })).toHaveCount(1); // only product_announcements remains
+    // 4 category rows without a live send path (see the Phase 4 migration's
+    // honesty note) + digest frequency's own "(coming soon)" option labels
+    // aren't counted here since those live inside a <select>, not as
+    // separate "Coming soon" text nodes — this assertion is scoped to the
+    // category list specifically, same scope the original Sprint 17 check had.
+    await expect(page.locator("text=Coming soon").first()).toBeVisible();
+    await expect(page.getByText("Coming soon", { exact: false })).toHaveCount(4);
   });
 });

@@ -71,12 +71,18 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
   const { url, notificationId } = event.notification.data || {};
-  const targetUrl = event.action === "dismiss" ? null : (url || "/dashboard");
+  const isDismiss = event.action === "dismiss";
+  const targetUrl = isDismiss ? null : (url || "/dashboard");
 
   event.waitUntil(
     (async () => {
-      if (notificationId && event.action !== "dismiss") {
-        trackEvent(notificationId, "clicked").catch(() => {});
+      // Sprint 27, Phase 11: the dismiss action used to just close the
+      // notification and return here — never reported, so dismissed_at
+      // was always null for every notification ever sent regardless of
+      // how many times someone tapped "Dismiss." Fixed: track it like
+      // every other outcome.
+      if (notificationId) {
+        trackEvent(notificationId, isDismiss ? "dismissed" : "clicked").catch(() => {});
       }
       if (!targetUrl) return;
 
@@ -91,6 +97,31 @@ self.addEventListener("notificationclick", (event) => {
       await self.clients.openWindow(targetUrl);
     })()
   );
+});
+
+// ── Notification close (swipe-away / native "X", not the in-notification
+//    "Dismiss" action button above) ─────────────────────────────────────────
+//
+// Sprint 27, Phase 11: the other half of "Dismissed" tracking. The
+// `notificationclose` event fires when a notification goes away WITHOUT
+// notificationclick firing at all — e.g. swiped away on mobile, closed via
+// the OS notification center's own controls, not tapped. Browser support
+// for this event is real but inconsistent (notably: it does not fire for
+// notifications closed automatically when the tag is reused via
+// `renotify`, and some platforms don't fire it for auto-expired
+// notifications at all) — documented honestly in
+// docs/SPRINT27_PHASE11_NOTIFICATION_ANALYTICS.md rather than assumed to
+// catch every dismiss. It's a real, additive signal, not a complete one.
+//
+// This DOES also fire after the "Dismiss" action button above calls
+// event.notification.close() — harmless double-tracking, not a bug:
+// /api/notifications/track's write is idempotent (`.is(column, null)`),
+// so the second "dismissed" report for the same notification is a no-op.
+self.addEventListener("notificationclose", (event) => {
+  const { notificationId } = event.notification.data || {};
+  if (notificationId) {
+    event.waitUntil(trackEvent(notificationId, "dismissed").catch(() => {}));
+  }
 });
 
 // ── Push subscription change ──────────────────────────────────────────────────
