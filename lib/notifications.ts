@@ -311,6 +311,21 @@ async function sendToUser(
 ): Promise<{ sent: number; errors: number }> {
   if (await isUserOnVacation(userId)) return { sent: 0, errors: 0 };
 
+  // Sprint 27, Phase 14: master switch, checked here for the exact same
+  // reason the vacation-mode check right above it exists (Phase 4's own
+  // words: "single choke point ... guaranteed complete coverage, no
+  // risk of a future sender forgetting to check it"). Every current
+  // caller already checks notificationsGloballyEnabled()/
+  // canSendNotificationToUser()/getPref() before ever reaching this
+  // function — this is pure defense-in-depth, zero behavior change for
+  // any correctly-behaving caller today. It only does anything if some
+  // future sender has a bug and calls sendToUser() without checking
+  // preferences first; before this fix, that bug would have silently
+  // bypassed the master "notifications off" switch entirely, including
+  // still creating an in-app inbox log row for a user who turned
+  // notifications off — not just an unwanted push.
+  if (!(await notificationsGloballyEnabled(userId))) return { sent: 0, errors: 0 };
+
   const supabase = createServiceClient();
 
   const { data: subs } = await supabase
@@ -500,6 +515,49 @@ export async function sendInactiveReminder(userId: string, daysSinceActive: numb
 // Centralized here so both new send functions share one check rather than
 // each re-implementing it slightly differently.
 
+/**
+ * Sprint 27, Phase 17 (final audit pass): batched version of
+ * canSendNotificationToUser() for schedulers checking the SAME category
+ * for many users in a loop. This is a real N+1 that Phase 8's and Phase
+ * 13's own N+1 audits never caught — canSendNotificationToUser() does
+ * two queries (profiles.notifications_enabled, then the specific
+ * notification_preferences column) *inside itself*, so calling it once
+ * per user inside a loop doesn't look like an N+1 at the call site the
+ * way the daily scheduler's now-fixed per-user daily_quest_logs query
+ * did. Found by explicitly re-auditing every canSendNotificationToUser()
+ * call site for this phase's final pass, the same "the pattern is
+ * hiding inside a function, not visible at the loop" lesson Sprint 22's
+ * own security audit named for its own recurring bug shape.
+ */
+export async function getUsersAllowedCategory(
+  userIds: string[],
+  category: "achievements" | "milestone_celebrations" | "weekly_summaries" | "groups" | "partners" | "monthly_summaries"
+): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const supabase = createServiceClient();
+
+  const [{ data: profiles }, { data: prefs }] = await Promise.all([
+    supabase.from("profiles").select("id, notifications_enabled").in("id", userIds),
+    supabase.from("notification_preferences").select(`user_id, ${category}`).in("user_id", userIds),
+  ]);
+
+  const globallyEnabled = new Set(
+    ((profiles ?? []) as any[]).filter((p) => p.notifications_enabled).map((p) => p.id)
+  );
+  const prefsByUser = new Map(((prefs ?? []) as any[]).map((r) => [r.user_id, r[category]]));
+
+  const allowed = new Set<string>();
+  for (const userId of userIds) {
+    if (!globallyEnabled.has(userId)) continue;
+    // No preferences row yet (user never opened the preferences page) →
+    // same "sensible default" behavior as canSendNotificationToUser()
+    // itself: default to true, not false.
+    const value = prefsByUser.has(userId) ? prefsByUser.get(userId) : true;
+    if (value !== false) allowed.add(userId);
+  }
+  return allowed;
+}
+
 async function canSendNotificationToUser(
   userId: string,
   category: "achievements" | "milestone_celebrations" | "weekly_summaries" | "groups" | "partners" | "monthly_summaries"
@@ -645,11 +703,16 @@ export async function runWeeklySummaryScheduler(): Promise<{ processed: number; 
   const alreadyNotifiedThisPeriod = await getRecentlyNotifiedUserIds(
     allUserIds, "weekly_summary", oneWeekAgo.toISOString()
   );
+  // Sprint 27, Phase 17 (final audit pass): batched instead of one
+  // canSendNotificationToUser() call per user in the loop below — see
+  // getUsersAllowedCategory()'s own comment for why this was a real,
+  // previously-uncaught N+1 across this app's entire active-notifications
+  // user base, not just a per-group-sized one.
+  const allowedWeeklySummary = await getUsersAllowedCategory(allUserIds, "weekly_summaries");
 
   for (const { id: userId, currency_code, xp_total, streak_days } of profiles as any[]) {
     if (alreadyNotifiedThisPeriod.has(userId)) continue;
-    const allowed = await canSendNotificationToUser(userId, "weekly_summaries");
-    if (!allowed) continue;
+    if (!allowedWeeklySummary.has(userId)) continue;
 
     // Sprint 27, Phase 8: per-user try/catch, same reasoning as
     // runDailyNotificationScheduler()'s own — a query failure or thrown
@@ -772,11 +835,13 @@ export async function runMonthlyDigestScheduler(): Promise<{ processed: number; 
   const alreadyNotifiedThisPeriod = await getRecentlyNotifiedUserIds(
     allUserIds, "monthly_summary", `${periodStart}T00:00:00.000Z`
   );
+  // Sprint 27, Phase 17 (final audit pass): batched, same reasoning as
+  // runWeeklySummaryScheduler()'s identical fix above.
+  const allowedMonthlySummary = await getUsersAllowedCategory(allUserIds, "monthly_summaries");
 
   for (const { id: userId, currency_code } of profiles as any[]) {
     if (alreadyNotifiedThisPeriod.has(userId)) continue;
-    const allowed = await canSendNotificationToUser(userId, "monthly_summaries");
-    if (!allowed) continue;
+    if (!allowedMonthlySummary.has(userId)) continue;
 
     // Sprint 27, Phase 8: per-user try/catch, same reasoning as
     // runDailyNotificationScheduler() and runWeeklySummaryScheduler()
@@ -1631,6 +1696,12 @@ export async function runGroupQuestEndingReminderScheduler(): Promise<{ processe
   const allMemberIds = Array.from(new Set((allMembers ?? []).map((m: any) => m.user_id)));
   const startOfToday = new Date(`${today}T00:00:00.000Z`).toISOString();
   const alreadyNotifiedToday = await getRecentlyNotifiedUserIds(allMemberIds, "group_quest_ending", startOfToday);
+  // Sprint 27, Phase 17 (final audit pass): batched, same reasoning as
+  // the weekly/monthly scheduler fixes above — smaller blast radius here
+  // (bounded by total membership across active-ending group quests
+  // rather than this app's whole user base) but the same real N+1
+  // regardless, and cheap to fix consistently now that the helper exists.
+  const allowedGroups = await getUsersAllowedCategory(allMemberIds, "groups");
 
   let notifications_sent = 0, errors = 0;
 
@@ -1645,9 +1716,8 @@ export async function runGroupQuestEndingReminderScheduler(): Promise<{ processe
 
     for (const userId of memberIds) {
       if (alreadyNotifiedToday.has(userId)) continue;
+      if (!allowedGroups.has(userId)) continue;
       try {
-        const allowed = await canSendNotificationToUser(userId, "groups");
-        if (!allowed) continue;
         const r = await sendGroupQuestEnding(userId, quest.group_id, quest.groups.name, quest.title, daysLeft);
         notifications_sent += r.sent;
         errors += r.errors;

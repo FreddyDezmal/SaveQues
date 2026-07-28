@@ -15,9 +15,15 @@ import { createClient } from "@/lib/supabase/server";
  *  • Requires authentication — unauthenticated requests are rejected with 401.
  *  • Scopes the update to BOTH notification id AND the authenticated user_id,
  *    preventing a user from updating another user's notification log entry.
- *  • RLS on notification_logs only has a SELECT policy (read own); UPDATE/DELETE
- *    are not permitted via RLS at all, so this route is the only write path and
- *    the user_id scope here is the sole ownership enforcement for writes.
+ *  • Sprint 27, Phase 14 correction: an earlier version of this comment
+ *    claimed notification_logs has no UPDATE RLS policy at all. That was
+ *    inaccurate — notification_logs_update_own_read_state (migration 038)
+ *    already enforces `auth.uid() = user_id` for UPDATE via RLS, using the
+ *    same RLS-respecting client this route already uses (createClient(),
+ *    not createServiceClient()). The explicit .eq("user_id", user.id) below
+ *    is correct regardless — it's defense-in-depth alongside RLS, not the
+ *    sole enforcement — but the ownership boundary was never resting on
+ *    this route alone the way the old comment implied.
  */
 export async function POST(req: NextRequest) {
   try {

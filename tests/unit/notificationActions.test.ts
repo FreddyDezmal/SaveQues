@@ -58,3 +58,31 @@ describe("getNotificationActionLabel", () => {
     expect(getNotificationActionLabel("group_weekly_summary")).toBeNull();
   });
 });
+
+describe("resolveNotificationHref — Sprint 27 Phase 14 deep-link validation", () => {
+  it("rejects an absolute URL and falls back to the category page instead", () => {
+    const result = resolveNotificationHref("friend_request", "https://evil.example.com/phish");
+    expect(result).not.toContain("evil.example.com");
+    expect(result).toBe("/friends"); // the social category's fallback
+  });
+
+  it("rejects a protocol-relative URL (//host/path), not just http(s):// ones", () => {
+    const result = resolveNotificationHref("friend_request", "//evil.example.com/phish");
+    expect(result).not.toContain("evil.example.com");
+  });
+
+  it("rejects a javascript: pseudo-URL", () => {
+    const result = resolveNotificationHref("friend_request", "javascript:alert(1)");
+    expect(result).not.toContain("javascript:");
+  });
+
+  it("still accepts a normal same-origin relative path", () => {
+    expect(resolveNotificationHref("streak_at_risk", "/goals/abc123")).toBe("/goals/abc123");
+  });
+
+  it("accepts a relative path with a query string", () => {
+    expect(resolveNotificationHref("achievement_unlocked", "/achievements?highlight=streak_7")).toBe(
+      "/achievements?highlight=streak_7"
+    );
+  });
+});

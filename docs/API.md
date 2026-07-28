@@ -35,9 +35,17 @@ All routes are under `app/api/`. Unless noted, authentication is via the Supabas
 |---|---|---|
 | `/api/notifications/list` | GET | Returns recent `notification_logs` rows + unread count. Powers the Notification Center. |
 | `/api/notifications/mark-read` | POST | Body: `{ id }`, `{ ids: string[] }` (Sprint 16, group mark-read), or `{ all: true }`. |
-| `/api/notifications/preferences` | GET / PATCH | Sprint 16. GET creates a default-all-true row on first access. PATCH whitelists exact field names/types. |
+| `/api/notifications/archive` | POST | Sprint 17. Soft-archives a notification (`archived_at`), user-scoped + RLS. |
+| `/api/notifications/delete` | POST | Sprint 17. Soft-deletes a notification (`deleted_at`), same scoping. |
+| `/api/notifications/preferences` | GET / PATCH | Sprint 16, expanded Sprint 27 Phase 4 (11 categories, quiet hours, vacation mode, digest frequency). GET creates a default-all-true row on first access. PATCH whitelists exact field names/types individually, including the non-boolean fields. |
 | `/api/notifications/subscribe` / `/unsubscribe` | POST | Web Push subscription lifecycle. |
-| `/api/notifications/track` | POST | Delivery/click tracking. |
+| `/api/notifications/track` | POST | Delivery/click/dismiss tracking (Sprint 27 Phase 11 added "dismissed"). Auth required, ownership-scoped, idempotent writes. |
+| `/api/admin/notifications` | GET | Sprint 27 Phase 11/13. Admin-only engagement metrics (delivered/opened/clicked/dismissed/converted/ignored, overall + by type). Accepts `?days=` (default 90, max 365) since Phase 13 bounded what was previously an unconditional full-table query. |
+
+Digests (Sprint 27 Phase 5) have no separate API route — `/digest/[id]`
+is a server component that fetches directly via Supabase (RLS + an
+explicit ownership filter), the same pattern `/goals/[id]` already
+established, rather than a parallel `/api/digests/*` convention.
 
 ## Events
 
@@ -74,7 +82,7 @@ All routes are under `app/api/`. Unless noted, authentication is via the Supabas
 
 | Route | Auth | Notes |
 |---|---|---|
-| `/api/cron/notifications` | `CRON_SECRET` header | Daily scheduler + (Mondays only) weekly summary. |
+| `/api/cron/notifications` | `CRON_SECRET` header | Single entry point orchestrating all notification schedulers (Sprint 27) — see `docs/ARCHITECTURE.md`'s Scheduler flow for the full table. Runs daily; each scheduler internally gates its own cadence (Mondays for weekly summaries, 1st-of-month for monthly digests, Sundays for retention cleanup, every run for partner reminders/group-quest-ending). |
 | `/api/cron/business-metrics` | `CRON_SECRET` header | |
 
 ## Admin (`/api/admin/*`)

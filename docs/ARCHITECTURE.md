@@ -32,13 +32,163 @@ Deposits/withdrawals go through `app/api/transactions/route.ts`, never a direct 
 
 ## Notification architecture
 
-Two layers, easy to conflate but distinct:
-- **`notification_logs`** — the actual push-delivery table. Every send (streak reminder, quest reminder, achievement unlock, milestone, weekly summary) writes a row here. Extended in Sprint 16 with `read_at` for in-app read state, making this table double as the Notification Center's data source rather than needing a second table.
-- **`notification_preferences`** — one row per user, six category booleans (Sprint 16). `lib/notifications.ts`'s `canSendNotificationToUser()` checks both the master `profiles.notifications_enabled` switch and the specific category before any immediate-trigger send (achievement/milestone). The daily cron scheduler pre-filters on the master switch in its initial query and checks per-category preferences per-user inside the loop.
+**Sprint 27 rebuilt and substantially expanded this system across 16
+phases.** This section is the current-state summary; each phase's own
+doc (`docs/SPRINT27_PHASE{3-15}_*.md`) has the full reasoning, audit
+findings, and honest limitations behind each piece — read those for
+*why*, this section for *what exists now and how it fits together*.
 
-Delivery paths:
-- **Daily cron** (`app/api/cron/notifications/route.ts`, Vercel Cron, 08:00 UTC) — streak-at-risk, quest reminders, inactivity nudges. Also triggers the weekly summary scheduler, but only on Mondays (reuses this same cron slot rather than requesting a second one).
-- **Immediate, request-time** (`lib/awardXP.ts`) — achievement unlocked, goal-completion milestone. Fire-and-forget from inside the transaction/goal-completion API routes.
+### Notification flow
+
+A notification's life: **triggered** (a scheduler decides it's due, or
+an action fires one immediately) → **templated** (title/body rendered
+from `lib/notificationTemplates.ts`) → **logged** (`notification_logs`
+row created — this happens even if the user has zero active push
+subscriptions, so the in-app inbox always has a record) →
+**delivered** (push, via whichever provider is configured) →
+**engaged with** (delivered/opened/clicked/dismissed/converted, all
+tracked — see Testing strategy below for what "opened" actually means).
+
+Two trigger paths:
+- **Scheduled** — see Scheduler flow below.
+- **Immediate, request-time** — achievement unlocked, goal-completion
+  milestone, partner/friend/group social actions. Fire-and-forget from
+  inside the relevant API route (same principle as the pre-Sprint-27
+  transaction flow above: a slow/failed notification send must never
+  add latency to or fail the action that triggered it).
+
+Every notification deep-links somewhere specific — `/goals/{id}`,
+`/groups/{id}`, `/digest/{id}`, `/achievements?highlight={id}` — not a
+generic list page, audited deliberately in Phase 6. `deep_link` values
+are validated as same-origin relative paths before being used for
+navigation (Phase 14 defense-in-depth — see Push/Email architecture's
+security note).
+
+### Scheduler flow
+
+All schedulers live in `lib/notifications.ts`, orchestrated from one
+cron entry point (`app/api/cron/notifications/route.ts`, Vercel Cron,
+once daily) rather than requesting a new Vercel Cron slot per feature —
+each scheduler internally gates on which day it should actually do
+anything:
+
+| Scheduler | Cadence | Covers |
+|---|---|---|
+| `runDailyNotificationScheduler` | Every run | Streak-at-risk, quest reminders, inactivity, and the Phase 3 "smart reminders" (goal-almost-complete, goal-deadline-approaching, missed-weekly-deposit) — 8 checks per eligible user, batched (goals/deposits/quest-logs) rather than queried per-user where the underlying data allows it. |
+| `runWeeklySummaryScheduler` | Mondays | Personal weekly digest — persists a `user_digests` row, links the push to `/digest/[id]`. |
+| `runMonthlyDigestScheduler` | 1st of month | Personal monthly digest — savings/XP graphs, achievements, best/worst week, momentum score. |
+| `runPartnerReminderScheduler` | Every run | Accountability partner check-in nudges, cooldown-gated. |
+| `runGroupWeeklySummaryScheduler` | Mondays | Group-scoped weekly digest. |
+| `runGroupQuestEndingReminderScheduler` | Every run | Group quest deadline approaching. |
+| `runNotificationLogsCleanupScheduler` | Sundays | Retention purge — see Database note below. |
+
+**Idempotency and concurrency safety** (Phase 8): the daily scheduler
+uses an atomic conditional claim (`tryClaimDailyNotificationSlot`) — the
+database UPDATE's row-count *is* the send decision, not a separate
+read-then-write, closing a real race where two overlapping cron
+invocations could otherwise both send. The weekly/monthly/group
+schedulers use a shared `getRecentlyNotifiedUserIds()` dedup check
+against `notification_logs` for the same reason. Every scheduler's
+per-user loop is wrapped in a `try`/`catch` so one bad row can't abort
+processing for everyone after it in that run.
+
+### Preference system
+
+`notification_preferences` — one row per user, **eleven** category
+booleans as of Phase 4 (`achievements`, `goal_reminders`,
+`streak_reminders`, `weekly_summaries`, `milestone_celebrations`,
+`product_announcements`, `groups`, `partners`, `xp`, `referrals`,
+`monthly_summaries` — not all eleven gate a real send yet; see that
+phase's doc for exactly which), plus **quiet hours**
+(`quiet_hours_enabled`/`_start`/`_end`, timezone-aware, overnight-wrap
+handled), **vacation mode** (`vacation_mode`/`vacation_until`,
+auto-expiring), and **digest frequency** (persisted, but only
+`"immediate"` currently changes behavior — `"hourly"`/`"daily"`/
+`"weekly"` batching is Phase 5-and-later scope, not built).
+
+Enforcement has two choke points, deliberately not left to every
+individual sender to remember correctly:
+- `sendToUser()` (the function every single notification path funnels
+  through) checks vacation mode AND the master `notifications_enabled`
+  switch as the last line of defense (Phase 4, hardened in Phase 14) —
+  even if a future sender forgot its own category check, these two
+  can't be bypassed.
+- Category-specific checks (`canSendNotificationToUser()` for
+  request-time sends, `getPref()` for the batched scheduler) happen
+  before that, per notification type.
+
+### Email architecture
+
+`lib/email/` (Phase 9) — an `EmailProvider` interface with adapters for
+Resend, SendGrid, Postmark, and Mailgun (all real, request shapes
+verified against each provider's current docs) plus a documented stub
+for SES (AWS SigV4 signing is deliberately not hand-rolled — see that
+phase's doc for why). **Inactive by default**: `EMAIL_PROVIDER` is unset
+everywhere in this project, so `selectEmailProvider()` always resolves
+to a no-op provider that logs what it would have sent. `lib/invites.ts`
+is the one real caller today.
+
+### Push architecture
+
+`lib/push/` (Phase 10) — same shape, one deliberate difference: the
+default provider isn't a no-op, it's the **existing, already-live**
+standards-based Web Push implementation (`lib/webpush.ts`, VAPID) —
+defaulting to "send nothing" would have been a regression, not a safe
+default. Adapters exist for Expo, OneSignal, and Firebase (FCM's full
+OAuth2 service-account JWT flow, genuinely implemented — mechanically
+identical to the ES256 signing this app already does correctly for
+VAPID). APNs' JWT auth-token builder is real and cryptographically
+verified in tests; its `send()` is a documented stub, because APNs
+hard-requires HTTP/2, which Node's `fetch` cannot do — a transport
+blocker, not a complexity judgment call.
+
+`sendToUser()` routes push through `sendPush()` (the selector) and
+retries once, briefly, for plausibly-transient failures only
+(`sendWebPushWithRetry`, Phase 8) — never for permanent ones (410/404
+Gone).
+
+### Future provider integration
+
+Both provider layers are structured so adding a real provider later
+touches exactly one file (a new/enabled adapter) and one env var
+(`EMAIL_PROVIDER`/`PUSH_PROVIDER`) — zero changes to `lib/notifications.ts`
+or any sender. See `.env.local.example` for the full (commented-out)
+configuration surface for every adapter.
+
+### Testing strategy
+
+Three tiers (see `docs/DEVELOPMENT.md`), same split as the rest of the
+app. Notification-specific: extensive pure-logic unit coverage
+(`reminderEngine`, `digest`, `notificationTemplates`,
+`notificationAnalytics`, provider request-builders — 160+ tests), real
+scheduler-level tests for the one scheduler simple enough to mock
+Supabase for accurately (`notificationCleanupScheduler.test.ts`, Phase
+15), and an honestly-incomplete integration-test TODO list
+(`tests/integration/notification-delivery.test.ts`) for everything that
+genuinely needs a live database or real provider credentials this
+environment doesn't have — each scenario specified precisely enough to
+implement directly, not vague placeholders.
+
+### Analytics
+
+`notification_logs` tracks delivered/clicked/dismissed/converted
+directly; "opened" reuses the in-app inbox's existing `read_at`
+(Sprint 15) rather than a duplicate column; "ignored" is a computed
+reporting category (delivered, nothing else happened), not tracked
+state. `lib/notificationAnalytics.ts` is the shared computation module
+behind `/api/admin/notifications` — rates are computed against the
+denominator that makes each one meaningful (click rate against
+*delivered*, conversion rate against *clicked*), not uniformly against
+*sent*. Conversion attribution (`lib/notificationAttribution.ts`) is
+wired into deposit creation specifically — the app's single most
+valuable, unambiguous conversion signal — not fabricated across every
+notification type.
+
+### Data retention
+
+`notification_logs` and stale `push_subscriptions` both have retention
+policies (Phase 13) — neither did before Sprint 27, and both grew
+unboundedly. See Database doc for the exact windows.
 
 ## Offline architecture
 
@@ -60,3 +210,4 @@ Deposits and withdrawals are never queued for later — see `lib/hooks/useOnline
 - **Rate limiting**: Postgres-COUNT-based (`lib/rateLimit.ts`), explicitly self-documented as needing a Redis migration at 10k+ users.
 - **RLS**: 50 policies across 28 tables (see `docs/DATABASE.md`). Every user-facing table scopes reads/writes to `auth.uid()`.
 - **Audit logging**: `audit_logs` table, written from financial mutation paths.
+- **Notification-specific hardening** (Sprint 27, Phase 14): deep-link values are validated as same-origin relative paths (rejecting absolute/protocol-relative/`javascript:` URLs) before client-side navigation, on both the in-app router and the service worker — defense-in-depth, since `deep_link` is exclusively server-constructed today. `sendToUser()` re-checks the master notification switch as a final safety net, mirroring how vacation mode was already handled.

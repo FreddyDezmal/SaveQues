@@ -83,4 +83,71 @@ describe("Notification cron delivery", () => {
       "ASSERT: result.alerted===true (2/10=20%, below the 50% threshold); a Sentry captureWarning fires " +
       "(spy/mock captureWarning rather than depending on a real Sentry project for this assertion)."
   );
+
+  // ── Sprint 27, Phase 15: gaps from Phases 8-14 that had no placeholder ──
+  // at all until now — added here rather than left silently uncovered,
+  // per this phase's own "document honest TODOs" requirement. Each one
+  // genuinely needs live infrastructure (a real test Supabase project,
+  // and for the provider ones, real API credentials) this sandbox
+  // doesn't have, consistent with every scenario above.
+
+  it.todo(
+    "Phase 8: a truly CONCURRENT double-invocation of the daily cron (not just a sequential retry) does not " +
+      "double-send for any user — the exact race tryClaimDailyNotificationSlot() was built to close. " +
+      "SEED: one eligible user, due for a notification right now. " +
+      "ACTION: invoke the cron route handler twice with Promise.all (genuinely concurrent, not sequential) " +
+      "rather than awaiting the first before starting the second. " +
+      "ASSERT: exactly one notification_logs row exists for this user for today; the loser of the race " +
+      "returns normally (no thrown error, no duplicate send) — this specifically requires two real overlapping " +
+      "database transactions racing on the same row, which no amount of mocking can substitute for."
+  );
+
+  it.todo(
+    "Phase 8: the weekly/monthly/group-weekly-summary schedulers' period-scoped dedup " +
+      "(getRecentlyNotifiedUserIds) actually prevents a double-send when the same scheduler function is " +
+      "invoked twice in the same period. " +
+      "SEED: a user eligible for a weekly summary, with $0 already-existing notification_logs history. " +
+      "ACTION: call runWeeklySummaryScheduler() twice in immediate succession. " +
+      "ASSERT: exactly one weekly_summary notification_logs row and one user_digests row exist after both calls."
+  );
+
+  it.todo(
+    "Phase 9: an email actually sent through a real configured provider (Resend, in a dedicated test-only " +
+      "project with a disposable API key) round-trips successfully — the one thing tests/unit/emailProvider.test.ts " +
+      "cannot verify, since it only tests request-BUILDING, never real network delivery. " +
+      "ACTION: configure EMAIL_PROVIDER=resend with real test credentials pointing at a disposable test inbox " +
+      "(e.g. Resend's own test-mode addresses), call sendEmail() for real. " +
+      "ASSERT: EmailSendResult.sent === true; the message actually arrives (checked via the provider's own " +
+      "delivery-log API or a test-inbox webhook, not by mocking anything)."
+  );
+
+  it.todo(
+    "Phase 10: a push notification actually sent through a real configured non-webpush provider (Expo, " +
+      "the simplest of the four — no OAuth flow, no HTTP/2 requirement) round-trips successfully. " +
+      "ACTION: configure PUSH_PROVIDER=expo with a real test device's Expo push token, call sendPush() for real. " +
+      "ASSERT: PushSendResult.ok === true; the push is actually observed arriving on a real test device — " +
+      "no amount of mocking the fetch() call substitutes for confirming the token/payload shape genuinely " +
+      "works against Expo's real infrastructure, not just this codebase's understanding of their docs."
+  );
+
+  it.todo(
+    "Phase 11: attributeConversion() correctly marks converted_at on a real deposit following a real click, " +
+      "and does NOT mark it for a deposit with no preceding relevant click. " +
+      "SEED: a user with a clicked (but not yet converted) streak_at_risk notification_logs row from 2 hours ago. " +
+      "ACTION: POST a real deposit via /api/transactions as that user. " +
+      "ASSERT: that notification_logs row's converted_at is now set; a SECOND deposit shortly after does NOT " +
+      "mark any additional row (already-converted rows are excluded — is('converted_at', null) in the query)."
+  );
+
+  it.todo(
+    "Phase 4/14: a user with a notification category explicitly disabled (e.g. goal_reminders: false) " +
+      "genuinely never receives that notification type via a live send, even though every unit test for " +
+      "canSendNotificationToUser()/getPref() is necessarily indirect (those functions aren't exported, and " +
+      "mocking the full sendToUser() dependency chain accurately enough to trust the result was judged, this " +
+      "phase, to carry more risk of a subtly-wrong mock than value — see SPRINT27_PHASE15_TESTING.md). " +
+      "SEED: a user with notification_preferences.goal_reminders = false, otherwise eligible for a " +
+      "goal_deadline_approaching notification today. " +
+      "ACTION: invoke the cron route handler. " +
+      "ASSERT: zero notification_logs rows of type goal_deadline_approaching exist for this user afterward."
+  );
 });

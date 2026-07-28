@@ -67,12 +67,24 @@ self.addEventListener("push", (event) => {
 
 // ── Notification click ────────────────────────────────────────────────────────
 
+// Sprint 27, Phase 14: same-origin relative path check, mirroring
+// lib/notificationActions.ts's isSafeRelativePath() — this is a
+// separate navigation surface (the service worker's own
+// client.navigate()/openWindow() calls) with the identical
+// unvalidated-trust gap: targetUrl is server-constructed today (never
+// raw user input), but nothing here was actually checking that before
+// this phase. Defense-in-depth, not a fix for a known live exploit.
+function isSafeRelativePath(url) {
+  return typeof url === "string" && url.startsWith("/") && !url.startsWith("//");
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
   const { url, notificationId } = event.notification.data || {};
   const isDismiss = event.action === "dismiss";
-  const targetUrl = isDismiss ? null : (url || "/dashboard");
+  const requestedUrl = isDismiss ? null : (url || "/dashboard");
+  const targetUrl = requestedUrl && isSafeRelativePath(requestedUrl) ? requestedUrl : (isDismiss ? null : "/dashboard");
 
   event.waitUntil(
     (async () => {

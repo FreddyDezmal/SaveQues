@@ -40,8 +40,22 @@ const CATEGORY_FALLBACK_HREF: Record<NotificationCategory, string> = {
   system: "/dashboard", // system-level notifications (streak, inactivity, weekly summary) genuinely are dashboard-relevant, not a fallback-of-last-resort here
 };
 
+/**
+ * True for a same-origin relative path this app's own router can safely
+ * navigate to. Rejects:
+ *   - Absolute URLs ("https://evil.com/...") — an open-redirect vector
+ *     if ever passed to router.push()/client.navigate().
+ *   - Protocol-relative URLs ("//evil.com/...") — browsers resolve
+ *     these against the CURRENT protocol but an ATTACKER-CHOSEN host,
+ *     the same open-redirect risk with a sneakier prefix.
+ *   - Anything not starting with "/" at all.
+ */
+function isSafeRelativePath(url: string): boolean {
+  return url.startsWith("/") && !url.startsWith("//");
+}
+
 export function resolveNotificationHref(type: NotificationType, deepLink: string | null): string {
-  if (deepLink) return deepLink;
+  if (deepLink && isSafeRelativePath(deepLink)) return deepLink;
   const { category } = getNotificationTaxonomy(type);
   return CATEGORY_FALLBACK_HREF[category];
 }

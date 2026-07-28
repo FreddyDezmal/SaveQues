@@ -18,7 +18,9 @@ pnpm run dev                        # http://localhost:3000
 | `NEXT_PUBLIC_POSTHOG_KEY` / `POSTHOG_KEY` | No | Leave blank to disable analytics locally. |
 | `NEXT_PUBLIC_POSTHOG_HOST` / `POSTHOG_HOST` | No | |
 | `CRON_SECRET` | Yes (prod) | Bearer token Vercel Cron sends to `/api/cron/*`. |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Yes | Web Push keys. |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | Yes | Web Push keys — the default, active push provider (see below). |
+| `EMAIL_PROVIDER` | No | Sprint 27 Phase 9. Unset (the default everywhere in this project) → no-op. One of `resend`/`sendgrid`/`postmark`/`mailgun`; see `.env.local.example` for each provider's required companion vars. |
+| `PUSH_PROVIDER` | No | Sprint 27 Phase 10. Unset (or `webpush`, the default) → the existing live Web Push implementation above. One of `firebase`/`onesignal`/`expo`; see `.env.local.example` for each provider's required companion vars. |
 
 Build fails fast in production if any required var is missing — see `next.config.js`'s validation block.
 
@@ -45,6 +47,7 @@ Requires a **dedicated Supabase test project** — never point these at producti
 ### Writing new tests
 
 - Pure logic (`lib/*.ts`) → `tests/unit/`, node environment, no DOM.
+- Scheduler/orchestration logic that depends on Supabase but has no live test database available → mock the client itself rather than skipping coverage entirely, if the function's query shape is simple enough that the mock can't silently diverge from real behavior (see `tests/unit/businessMetrics.test.ts` and `tests/unit/notificationCleanupScheduler.test.ts`, Sprint 27 Phase 15, for the pattern and its stated limits). For anything with a larger/branchier query surface, an honest `it.todo()` in `tests/integration/` is safer than a mock that might not accurately represent real Postgres/PostgREST behavior.
 - Components → `tests/component/`, jsdom + RTL. Mock external hooks/modules at the boundary the component actually depends on (see `OfflineBanner.test.tsx` for mocking `lib/analytics`, `InstallSaveQuestCard.test.tsx` for mocking a hook entirely).
 - Browser journeys spanning multiple pages/real network → `e2e/`.
 

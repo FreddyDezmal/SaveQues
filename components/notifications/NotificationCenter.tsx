@@ -350,15 +350,30 @@ export default function NotificationCenter({ onClose, onUnreadCountChange }: Pro
   const hasUnread = (notifications ?? []).some((n) => !n.read_at);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 px-4 bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 px-4">
+      {/* Sprint 27, Phase 17: restructured to match components/ui/Modal.tsx's
+          established backdrop pattern (Sprint 22) — a separate aria-hidden
+          div carries the click-to-close behavior, rather than the single
+          wrapping div this used to be. jsx-a11y/strict (run against this
+          file for the first time this phase, as real tooling rather than
+          manual reading) correctly flagged the old shape:
+          click-events-have-key-events + no-static-element-interactions,
+          since a non-interactive element with an onClick and no keyboard
+          equivalent is a real gap for switch-access/voice-control users,
+          even though Escape (already supported) covers keyboard users.
+          Marking the backdrop aria-hidden removes it from the interaction
+          model AT users navigate through entirely — mouse/touch users can
+          still tap it to close, keyboard users have Escape, and neither
+          path requires the backdrop itself to be a focusable, labeled
+          interactive element. */}
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
       <div
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Notifications"
         tabIndex={-1}
-        className="w-full max-w-sm rounded-2xl bg-surface-elevated border border-surface-border shadow-xl overflow-hidden outline-none animate-fade-in"
-        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-sm rounded-2xl bg-surface-elevated border border-surface-border shadow-xl overflow-hidden outline-none animate-fade-in"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-surface-border">
           <h2 className="text-sm font-semibold text-white">Notifications</h2>
