@@ -37,15 +37,21 @@ export interface GoalForecast {
   insufficientDataReason: string | null;
 }
 
-const PACE_WINDOW_WEEKS = 8;
+export const PACE_WINDOW_WEEKS = 8;
 
 /**
- * Average weekly pace over the most recent `PACE_WINDOW_WEEKS` weeks of the
- * goal's own deposit history. Uses actual elapsed weeks of history (capped
- * at the window) so a goal that's only 2 weeks old isn't diluted by 6 empty
- * weeks it hasn't had a chance to exist in yet.
+ * Average weekly pace over the most recent `PACE_WINDOW_WEEKS` weeks of a
+ * deposit list's own history. Uses actual elapsed weeks of history (capped
+ * at the window) so a deposit history that's only 2 weeks old isn't
+ * diluted by 6 empty weeks it hasn't had a chance to exist in yet.
+ *
+ * Exported (Sprint 28 — Phase 10, Cash Flow Intelligence): the formula is
+ * scope-agnostic — it was always "pace of whatever deposit list you hand
+ * it," originally only ever called with one goal's deposits. Rather than
+ * copy this formula into lib/cashFlowProjection.ts for portfolio-wide (all
+ * goals') deposits, that module imports and reuses this directly.
  */
-function recentWeeklyPace(deposits: ReturnType<typeof getDeposits>, now: Date): number | null {
+export function recentWeeklyPace(deposits: ReturnType<typeof getDeposits>, now: Date): number | null {
   if (deposits.length === 0) return null;
   const windowStart = new Date(now.getTime() - PACE_WINDOW_WEEKS * 7 * 86400000);
   const firstDepositDate = new Date(deposits[0].created_at);
