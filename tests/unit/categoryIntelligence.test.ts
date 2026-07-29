@@ -30,6 +30,10 @@ function goal(overrides: Partial<SavingsGoal>): SavingsGoal {
     current_amount: 0,
     target_date: null,
     is_complete: false,
+    is_primary: false,
+    is_active: true,
+    goal_status: "active",
+    completed_at: null,
     created_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };

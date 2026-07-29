@@ -19,6 +19,8 @@ import { computeBehavioralRisk } from "@/lib/riskEngine";
 import { generateInterventions } from "@/lib/interventions";
 import { computeAccountHealth } from "@/lib/accountHealth";
 import { computeCategoryIntelligence } from "@/lib/categoryIntelligence";
+import { computeFinancialHealthScore } from "@/lib/financialHealthScore";
+import { projectCashFlow } from "@/lib/cashFlowProjection";
 import type { Transaction }    from "@/lib/types";
 
 // Sprint 12 audit fix: measure server-side render time so the dashboard
@@ -145,6 +147,11 @@ export default async function DashboardPage() {
   let behavioralRisk: ReturnType<typeof computeBehavioralRisk> | null = null;
   let interventions: ReturnType<typeof generateInterventions> = [];
   let categoryIntelligence: ReturnType<typeof computeCategoryIntelligence> | null = null;
+  // Sprint 28 — Phase 5/10: reuses the same `transactions`/`goals` already
+  // fetched below for the rest of the intelligence layer — no additional
+  // query, same hasDeposit/userStage gate as everything else here.
+  let financialHealthScore: ReturnType<typeof computeFinancialHealthScore> | null = null;
+  let cashFlow: ReturnType<typeof projectCashFlow> | null = null;
 
   if (hasDeposit && userStage !== "new") {
     const { data: txData, error: txError } = await supabase
@@ -235,6 +242,29 @@ export default async function DashboardPage() {
       // for consistency, since a brand-new user has no per-category
       // savings behaviour to report yet.
       categoryIntelligence = computeCategoryIntelligence(goals, transactions);
+
+      // ── Sprint 28: Phase 5/10 — Financial Health Score + Cash Flow ─────
+      // Reuses the exact same `transactions`, `goals`, and `activityLog`
+      // already loaded above — no separate fetch. See
+      // lib/financialHealthScore.ts for why this doesn't touch/replace
+      // computeAccountHealth (accountHealthForInterventions, above),
+      // which lib/interventions.ts still depends on unchanged.
+      financialHealthScore = computeFinancialHealthScore({
+        transactions,
+        goals: goals.map((g: any) => ({
+          id: g.id,
+          category: g.category,
+          target_amount: g.target_amount,
+          current_amount: g.current_amount,
+          target_date: g.target_date,
+          is_complete: g.is_complete,
+        })),
+        activityLog: activityLogForBehavior,
+      });
+      cashFlow = projectCashFlow(
+        transactions,
+        goals.map((g: any) => ({ id: g.id, target_amount: g.target_amount, current_amount: g.current_amount, is_complete: g.is_complete }))
+      );
     }
   }
 
@@ -332,6 +362,7 @@ export default async function DashboardPage() {
       intelligence={{ insights, weeklyReview, topCoachingMessage, categoryIntelligence }}
       intelligenceSectionOrder={intelligenceSectionOrder}
       behavior={habitProfile && behaviorProfile && behavioralRisk ? { habits: habitProfile, behaviorProfile, risk: behavioralRisk, interventions } : null}
+      financialHealth={financialHealthScore && cashFlow ? { score: financialHealthScore, cashFlow } : null}
     />
   );
 }

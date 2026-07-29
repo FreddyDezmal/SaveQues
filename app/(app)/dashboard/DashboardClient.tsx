@@ -27,6 +27,7 @@ import type { SaveQuestEvent, EventWindow } from "@/lib/events";
 import type { TimelineEventGroup } from "@/lib/types";
 import IntelligencePanel from "@/components/insights/IntelligencePanel";
 import CategoryIntelligenceCard from "@/components/insights/CategoryIntelligenceCard";
+import FinancialHealthCard from "@/components/insights/FinancialHealthCard";
 import BehaviorInsights from "@/components/behavior/BehaviorInsights";
 import type { Insight } from "@/lib/insights";
 import type { WeeklyReview } from "@/lib/weeklyReview";
@@ -35,6 +36,8 @@ import type { BehaviorProfile } from "@/lib/behaviorProfile";
 import type { BehavioralRisk } from "@/lib/riskEngine";
 import type { CategoryIntelligence } from "@/lib/categoryIntelligence";
 import type { Intervention } from "@/lib/interventions";
+import type { FinancialHealthScore } from "@/lib/financialHealthScore";
+import type { CashFlowProjection } from "@/lib/cashFlowProjection";
 
 interface Props {
   profile: any;
@@ -79,6 +82,11 @@ interface Props {
     risk: BehavioralRisk;
     interventions: Intervention[];
   } | null;
+  /** Sprint 28 — Phase 5/10: 6-tier financial health score + cash flow projection, null when there isn't enough deposit history yet. */
+  financialHealth?: {
+    score: FinancialHealthScore;
+    cashFlow: CashFlowProjection;
+  } | null;
 }
 
 export default function DashboardClient({
@@ -88,7 +96,7 @@ export default function DashboardClient({
   almostMessages, activeChain, streakBroken,
   userStage, streakPaused, streakPausedUntil, dashboardEvents,
   timelinePreview, primaryGoal, reflectionData,
-  hasDeposit, notificationPromptDismissed, intelligence, intelligenceSectionOrder, behavior
+  hasDeposit, notificationPromptDismissed, intelligence, intelligenceSectionOrder, behavior, financialHealth
 }: Props) {
   const router = useRouter();
   const [pauseLoading, setPauseLoading] = useState(false);
@@ -282,6 +290,15 @@ export default function DashboardClient({
       {userStage !== "new" && intelligence && (
         <CategoryIntelligenceCard
           data={intelligence.categoryIntelligence}
+          formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
+        />
+      )}
+
+      {/* ── Sprint 28: Phase 5/10/11 — Financial Health Score + Cash Flow ── */}
+      {userStage !== "new" && financialHealth && (
+        <FinancialHealthCard
+          healthScore={financialHealth.score}
+          cashFlow={financialHealth.cashFlow}
           formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
         />
       )}
