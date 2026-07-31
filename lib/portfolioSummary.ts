@@ -14,6 +14,7 @@ import { getLevelFromXP } from "@/lib/xp";
 import { computeFinancialPersonality, type FinancialPersonality } from "@/lib/financialPersonality";
 import { computeAccountHealth, type AccountHealth } from "@/lib/accountHealth";
 import { buildMonthlyReport, type MonthlyReport } from "@/lib/monthlyReport";
+import { sumGoalBalances } from "@/lib/utils";
 import type { SavingsGoal, Transaction } from "@/lib/types";
 
 export interface PortfolioSummary {
@@ -50,7 +51,7 @@ export function buildPortfolioSummary(inputs: PortfolioSummaryInputs): Portfolio
 
   const completedGoals = inputs.goals.filter((g) => g.is_complete);
   const activeGoals = inputs.goals.filter((g) => !g.is_complete);
-  const currentSavings = activeGoals.reduce((s, g) => s + Number(g.current_amount), 0) + completedGoals.reduce((s, g) => s + Number(g.current_amount), 0);
+  const currentSavings = sumGoalBalances(inputs.goals);
 
   const financialPersonality = computeFinancialPersonality({
     transactions: inputs.transactions,

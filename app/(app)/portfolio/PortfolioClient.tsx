@@ -1,21 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, Sparkles } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { StatCard } from "@/app/(app)/dashboard/DashboardClient";
 import type { PortfolioSummary } from "@/lib/portfolioSummary";
-import type { CashFlowProjection } from "@/lib/cashFlowProjection";
-import type { GoalRecommendation } from "@/lib/recommendations";
+
+import PortfolioIntelligenceCard from "@/components/insights/PortfolioIntelligenceCard";
+import type { PortfolioIntelligence } from "@/lib/portfolioIntelligence";
 
 interface Props {
   summary: PortfolioSummary;
+  portfolioIntelligence: PortfolioIntelligence;
   currencyCode: string;
   locale: string;
-  /** Sprint 28.5 — Phase 5: portfolio-wide quarter cash-flow projection. Null when there isn't enough deposit history yet. */
-  cashFlow: CashFlowProjection | null;
-  /** Sprint 28.5 — Phase 5: highest-priority suggested next goal. Null only if the user already has a goal in every category. */
-  topRecommendation: GoalRecommendation | null;
 }
 
 const HEALTH_COLOR: Record<string, string> = {
@@ -25,13 +23,7 @@ const HEALTH_COLOR: Record<string, string> = {
   "At Risk": "text-red-400",
 };
 
-const DIFFICULTY_LABEL: Record<GoalRecommendation["difficulty"], string> = {
-  easy: "Easy fit",
-  moderate: "Moderate stretch",
-  ambitious: "Ambitious",
-};
-
-export default function PortfolioClient({ summary, currencyCode, locale, cashFlow, topRecommendation }: Props) {
+export default function PortfolioClient({ summary, portfolioIntelligence, currencyCode, locale }: Props) {
   const fc = (n: number) => formatCurrency(n, currencyCode, locale);
 
   return (
@@ -67,11 +59,17 @@ export default function PortfolioClient({ summary, currencyCode, locale, cashFlo
             {summary.healthScore.status} · {summary.healthScore.score}/100
           </span>
         </div>
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           {summary.healthScore.factors.map((f) => (
-            <div key={f.name} className="flex justify-between text-xs">
-              <span className="text-white/50">{f.name}</span>
-              <span className="text-white/70">{f.points}/{f.maxPoints}</span>
+            <div key={f.name}>
+              <div className="flex justify-between text-xs">
+                <span className="text-white/50">{f.name}</span>
+                <span className="text-white/70">{f.points}/{f.maxPoints}</span>
+              </div>
+              {/* Sprint 28.5 — Phase 5/7: same fix as GoalIntelligenceCard —
+                  accountHealth.ts has always computed this explanation,
+                  it just wasn't rendered here either. */}
+              <p className="text-[11px] text-white/55 mt-0.5">{f.explanation}</p>
             </div>
           ))}
         </div>
@@ -84,70 +82,8 @@ export default function PortfolioClient({ summary, currencyCode, locale, cashFlo
         )}
       </div>
 
-      {/* Sprint 28.5 — Phase 5/6: Quarter cash flow projection.
-          Portfolio-wide (all goals combined), not per-goal — the one
-          genuinely new number this page didn't already show. Renders
-          nothing when there isn't enough deposit history, same
-          "no fabricated placeholder" convention as every other card here. */}
-      {cashFlow && cashFlow.projectedBalanceQuarter !== null && (
-        <div className="card p-4 mb-4" aria-labelledby="cashflow-heading">
-          <p id="cashflow-heading" className="text-white/40 text-xs uppercase tracking-wide mb-2">
-            Quarter Projection
-          </p>
-          <p className="font-display text-2xl font-bold text-white">{fc(cashFlow.projectedBalanceQuarter)}</p>
-          <p className="text-white/50 text-xs mt-1">
-            projected in 90 days, at your current pace of {fc(cashFlow.weeklyPace ?? 0)}/week
-          </p>
-          <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-surface-border text-xs">
-            <div>
-              <span className="text-white/40">30 days</span>
-              <p className="text-white/80 font-medium">{fc(cashFlow.projectedBalance30Day ?? 0)}</p>
-            </div>
-            <div>
-              <span className="text-white/40">60 days</span>
-              <p className="text-white/80 font-medium">{fc(cashFlow.projectedBalance60Day ?? 0)}</p>
-            </div>
-          </div>
-          {cashFlow.fundableWithinQuarter.length > 0 && (
-            <p className="text-xs text-emerald-400/90 mt-3 pt-3 border-t border-surface-border">
-              At this pace, {cashFlow.fundableWithinQuarter.length === 1 ? "1 goal" : `${cashFlow.fundableWithinQuarter.length} goals`} could
-              individually be funded within the quarter if you focused your saving there.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Sprint 28.5 — Phase 3/5: Recommended goal. First real UI consumer
-          of lib/recommendations.ts (Phase 1 audit found zero call sites
-          before this). Every field shown ("why", suggested target/pace,
-          difficulty) already exists on GoalRecommendation — no new
-          calculation, this is purely presentation. */}
-      {topRecommendation && (
-        <div className="card p-4 mb-4" aria-labelledby="recommendation-heading">
-          <div className="flex items-center gap-1.5 mb-2">
-            <Sparkles size={14} className="text-amber-400" />
-            <p id="recommendation-heading" className="text-white/40 text-xs uppercase tracking-wide">Suggested Next Goal</p>
-          </div>
-          <p className="font-display text-lg font-bold text-white">{topRecommendation.title}</p>
-          <p className="text-white/60 text-sm mt-1 leading-snug">{topRecommendation.reason}</p>
-          <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-surface-border text-xs">
-            <div>
-              <span className="text-white/40">Suggested target</span>
-              <p className="text-white/80 font-medium">{fc(topRecommendation.suggestedTarget)}</p>
-            </div>
-            <div>
-              <span className="text-white/40">Per week</span>
-              <p className="text-white/80 font-medium">{fc(topRecommendation.suggestedWeeklySaving)}</p>
-            </div>
-          </div>
-          <div className="flex items-center justify-between mt-3">
-            <span className="text-[11px] text-white/40">{DIFFICULTY_LABEL[topRecommendation.difficulty]}</span>
-            <Link href="/goals/new" className="text-xs font-medium text-brand-400 hover:text-brand-300">
-              Start this goal →
-            </Link>
-          </div>
-        </div>
-      )}
+      {/* Sprint 28.5 — Phase 5: Portfolio Intelligence */}
+      <PortfolioIntelligenceCard data={portfolioIntelligence} formatAmount={fc} />
 
       {/* Financial Personality */}
       <div className="card p-4 mb-4">

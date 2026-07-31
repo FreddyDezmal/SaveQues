@@ -16,6 +16,7 @@ import {
   getWeeksRemaining,
   getCategoryById,
   timeAgo,
+  sumGoalBalances,
   GOAL_CATEGORIES,
 } from "@/lib/utils";
 
@@ -125,5 +126,24 @@ describe("timeAgo", () => {
   it("never returns a negative duration for a timestamp slightly in the future (clock skew tolerance)", () => {
     const oneSecondInFuture = new Date("2026-07-01T12:00:01Z").toISOString();
     expect(timeAgo(oneSecondInFuture)).toBe("just now");
+  });
+});
+
+describe("sumGoalBalances", () => {
+  it("sums current_amount across all goals regardless of completion status", () => {
+    const goals = [
+      { current_amount: 200 },
+      { current_amount: 800, is_complete: true },
+      { current_amount: 50 },
+    ];
+    expect(sumGoalBalances(goals)).toBe(1050);
+  });
+
+  it("returns 0 for an empty goals array", () => {
+    expect(sumGoalBalances([])).toBe(0);
+  });
+
+  it("coerces string current_amount values (as jsonb/RPC data may arrive)", () => {
+    expect(sumGoalBalances([{ current_amount: "150.50" as any }, { current_amount: 49.5 }])).toBe(200);
   });
 });

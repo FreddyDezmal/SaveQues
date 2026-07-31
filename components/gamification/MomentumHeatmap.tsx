@@ -79,7 +79,22 @@ export default function MomentumHeatmap({ activityLog, userStage = "established"
         </div>
       </div>
 
+      {/* Sprint 28.5 — Phase 6/10: screen-reader description. The grid below
+          is decorative (aria-hidden) — same pattern GitHub's own
+          contribution heatmap uses: a 30-cell grid of individual
+          aria-labels is more noise than signal for a screen-reader user,
+          so one concise, complete summary replaces it rather than
+          supplementing it. Every number in this sentence already existed
+          (activeDays, daysToShow, totalXP, momentum.label) — this isn't
+          new data, just the first accessible text carrying all of it at
+          once. */}
+      <p className="sr-only">
+        {headerLabel}: {activeDays} of {daysToShow} days active
+        {totalXP > 0 ? `, ${totalXP.toLocaleString()} XP earned` : ""}. Momentum: {momentum.label}. {momentum.description}
+      </p>
+
       <div
+        aria-hidden="true"
         className="gap-1 mb-3"
         style={{
           display: "grid",
@@ -99,18 +114,28 @@ export default function MomentumHeatmap({ activityLog, userStage = "established"
         ))}
       </div>
 
-      {/* Momentum state description */}
+      {/* Momentum state description — already plain text, already visible to
+          screen readers (no aria-hidden here), duplicated into the sr-only
+          summary above only so a screen reader user gets the complete
+          picture from one place without needing to piece it together from
+          two separate elements. */}
       <p className="text-[11px] mb-2" style={{ color: `${momentum.color}99` }}>
         {momentum.description}
       </p>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5" aria-hidden="true">
         <span className="text-[10px] text-white/30">Less</span>
         {["bg-surface-border","bg-emerald-900/60","bg-emerald-700/70","bg-emerald-500/80","bg-emerald-400"].map(cls => (
           <div key={cls} className={`w-3 h-3 rounded-sm ${cls}`} />
         ))}
         <span className="text-[10px] text-white/30">More</span>
       </div>
+      {/* Sprint 28.5 — Phase 6/10: the legend above is decorative shorthand
+          for "darker green = more XP that day," already stated in the
+          sr-only summary's per-day intensity isn't itself narrated (that
+          would be excessive detail), but the legend's meaning — what the
+          colors represent — is, so hiding the swatches themselves from AT
+          doesn't lose any information a screen reader user needs. */}
     </div>
   );
 }

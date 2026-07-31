@@ -90,3 +90,37 @@ describe("ScenarioSimulatorCard", () => {
     expect(weeklyDeposits).toEqual(txsSnapshot);
   });
 });
+
+describe("ScenarioSimulatorCard — comparison bars (Sprint 28.5 Phase 6)", () => {
+  // ScenarioSimulatorCard always calls simulateStandardScenarios(goal,
+  // transactions) with the live new Date() internally — it has no `now`
+  // prop. weeklyDeposits above is fixed to Feb 2026 and is fine for the
+  // text-only assertions above (they only check labels render, not that a
+  // pace could actually be computed), but a "does a bar render" test needs
+  // deposits recent enough, relative to whenever this suite actually runs,
+  // to produce a real (non-insufficient-data) delta.
+  const recentWeeklyDeposits = [0, 1, 2, 3].map((weeksAgo) =>
+    tx({ created_at: new Date(Date.now() - weeksAgo * 7 * 86400000).toISOString(), amount: 100 })
+  );
+
+  it("renders a decorative, aria-hidden comparison bar for each standard scenario with a delta", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<ScenarioSimulatorCard goal={goal()} transactions={recentWeeklyDeposits} formatAmount={formatAmount} />);
+
+    await user.click(screen.getByRole("button", { name: /what if/i }));
+
+    const bars = container.querySelectorAll('li [aria-hidden="true"]');
+    expect(bars.length).toBeGreaterThan(0);
+  });
+
+  it("does not render a bar for a scenario with no projectable delta (insufficient data)", async () => {
+    const user = userEvent.setup();
+    // No deposit history at all → every scenario is insufficient-data, no bars.
+    const { container } = render(<ScenarioSimulatorCard goal={goal()} transactions={[]} formatAmount={formatAmount} />);
+
+    await user.click(screen.getByRole("button", { name: /what if/i }));
+
+    const bars = container.querySelectorAll('li [aria-hidden="true"]');
+    expect(bars.length).toBe(0);
+  });
+});

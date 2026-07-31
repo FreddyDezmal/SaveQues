@@ -31,7 +31,7 @@ function formatDate(iso: string | null): string {
 
 function DeltaBadge({ deltaDays }: { deltaDays: number | null }) {
   if (deltaDays === null) return null;
-  if (deltaDays === 0) return <span className="text-xs text-white/40">No change</span>;
+  if (deltaDays === 0) return <span className="text-xs text-white/55">No change</span>;
   const earlier = deltaDays < 0;
   return (
     <span className={`text-xs font-medium ${earlier ? "text-emerald-400" : "text-amber-400"}`}>
@@ -40,13 +40,40 @@ function DeltaBadge({ deltaDays }: { deltaDays: number | null }) {
   );
 }
 
-function ScenarioRow({ result, formatAmount }: { result: ScenarioResult; formatAmount: (n: number) => string }) {
+/**
+ * Sprint 28.5 — Phase 6: "Scenario comparison" visualization. A centered
+ * bar showing each scenario's deltaDays relative to the largest delta in
+ * the current comparison set — lets a user see at a glance which what-if
+ * moves the needle most, something the text-only rows below don't give
+ * you without reading and mentally comparing every number.
+ *
+ * aria-hidden: purely a visual reinforcement of `DeltaBadge`'s text
+ * ("14 days earlier") sitting right next to it — same "don't make a
+ * screen reader announce the same fact twice" reasoning as the momentum
+ * heatmap's grid (see that component's own comment).
+ */
+function ScenarioBar({ deltaDays, maxAbsDelta }: { deltaDays: number | null; maxAbsDelta: number }) {
+  if (deltaDays === null || deltaDays === 0 || maxAbsDelta === 0) return null;
+  const earlier = deltaDays < 0;
+  const widthPct = Math.min(100, (Math.abs(deltaDays) / maxAbsDelta) * 100);
+  return (
+    <div aria-hidden="true" className="h-1.5 rounded-full bg-white/5 mt-1.5 flex" style={{ direction: earlier ? "rtl" : "ltr" }}>
+      <div
+        className={`h-full rounded-full ${earlier ? "bg-emerald-400" : "bg-amber-400"}`}
+        style={{ width: `${widthPct}%` }}
+      />
+    </div>
+  );
+}
+
+function ScenarioRow({ result, formatAmount, maxAbsDelta }: { result: ScenarioResult; formatAmount: (n: number) => string; maxAbsDelta?: number }) {
   return (
     <li className="py-2.5 border-b border-white/5 last:border-0">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm text-white/85">{result.label}</span>
         <DeltaBadge deltaDays={result.deltaDays} />
       </div>
+      {maxAbsDelta !== undefined && <ScenarioBar deltaDays={result.deltaDays} maxAbsDelta={maxAbsDelta} />}
       <p className="text-xs text-white/50 mt-0.5">
         {result.insufficientDataReason ?? result.explanation}
       </p>
@@ -62,6 +89,14 @@ export default function ScenarioSimulatorCard({ goal, transactions, formatAmount
   const standardScenarios = useMemo(
     () => (expanded ? simulateStandardScenarios(goal, transactions) : []),
     [expanded, goal, transactions]
+  );
+
+  // Sprint 28.5 — Phase 6: shared scale for the comparison bars — computed
+  // once here (not per-row) so every bar in the list is relative to the
+  // same maximum, which is what makes them comparable at a glance.
+  const maxAbsDelta = useMemo(
+    () => Math.max(0, ...standardScenarios.map((r) => Math.abs(r.deltaDays ?? 0))),
+    [standardScenarios]
   );
 
   const customResult = useMemo(() => {
@@ -98,7 +133,7 @@ export default function ScenarioSimulatorCard({ goal, transactions, formatAmount
         <div className="mt-3 pt-3 border-t border-surface-border">
           <ul>
             {standardScenarios.map((result) => (
-              <ScenarioRow key={result.type + result.label} result={result} formatAmount={formatAmount} />
+              <ScenarioRow key={result.type + result.label} result={result} formatAmount={formatAmount} maxAbsDelta={maxAbsDelta} />
             ))}
           </ul>
 

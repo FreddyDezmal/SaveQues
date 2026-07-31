@@ -13,14 +13,7 @@ import { generateInsights }    from "@/lib/insights";
 import { buildWeeklyReview }   from "@/lib/weeklyReview";
 import { generateCoachingMessages } from "@/lib/coaching";
 import { classifyJourneyStage, getDashboardSectionOrder, getRiskAwareSectionOrder } from "@/lib/dashboardPersonalization";
-import { computeHabitProfile } from "@/lib/habits";
-import { computeBehaviorProfile } from "@/lib/behaviorProfile";
-import { computeBehavioralRisk } from "@/lib/riskEngine";
-import { generateInterventions } from "@/lib/interventions";
-import { computeAccountHealth } from "@/lib/accountHealth";
-import { computeCategoryIntelligence } from "@/lib/categoryIntelligence";
-import { computeFinancialHealthScore } from "@/lib/financialHealthScore";
-import { projectCashFlow } from "@/lib/cashFlowProjection";
+import { getFinancialIntelligence } from "@/lib/intelligence/getFinancialIntelligence";
 import type { Transaction }    from "@/lib/types";
 
 // Sprint 12 audit fix: measure server-side render time so the dashboard
@@ -122,11 +115,11 @@ export default async function DashboardPage() {
   const userStage            = getUserStage(profile.created_at);
   const streakCurrentlyPaused = isStreakPaused(profile.streak_paused_until);
 
-  // ── Sprint 19: Intelligence layer ──────────────────────────────────────
+  // ── Sprint 19-28: Intelligence layer ─────────────────────────────────────
   // The dashboard RPC (032) intentionally does not return full transaction
   // history (it was scoped to the 5-event timeline preview only — see the
-  // RPC's own comments). Insights/forecasting/coaching need the full
-  // deposit history, so it's fetched here as one additional indexed query
+  // RPC's own comments). The intelligence layer needs the full deposit
+  // history, so it's fetched here as one additional indexed query
   // (idx_transactions_user_created_at, migration 024/033 — already covers
   // this access pattern) rather than modifying the RPC and risking the
   // dashboard's existing single-round-trip guarantee for users who don't
@@ -135,23 +128,29 @@ export default async function DashboardPage() {
   // hasDeposit is already known false for brand-new users — skip the query
   // and every downstream computation for them rather than running an
   // analytics engine over an empty array.
-  let insights: ReturnType<typeof generateInsights> = [];
-  let weeklyReview: ReturnType<typeof buildWeeklyReview> | null = null;
+  //
+  // Sprint 28.5 — Phase 2/8: this used to be ~10 separate hand-wired calls
+  // to lib/insights.ts, lib/weeklyReview.ts, lib/coaching.ts, lib/habits.ts,
+  // lib/behaviorProfile.ts, lib/riskEngine.ts, lib/interventions.ts,
+  // lib/accountHealth.ts, lib/categoryIntelligence.ts,
+  // lib/financialHealthScore.ts, and lib/cashFlowProjection.ts, assembled
+  // by hand across Sprints 19–28. That's now one call to the orchestrator
+  // (lib/intelligence/getFinancialIntelligence.ts), assembled once, in one
+  // place — the individual local variables below are kept (rather than
+  // passing the bundle object straight through) purely so every existing
+  // reference further down this file didn't need touching.
+  let insights: ReturnType<typeof getFinancialIntelligence>["insights"] = [];
+  let weeklyReview: ReturnType<typeof getFinancialIntelligence>["weeklyReview"] | null = null;
   let topCoachingMessage: string | null = null;
   let depositCount = 0;
-  // Sprint 21 — behavioral layer (Phases 2-5). Computed from the same
-  // `transactions`/`activityLog` already fetched below for Sprint 19/20's
-  // intelligence layer — no additional query.
-  let habitProfile: ReturnType<typeof computeHabitProfile> | null = null;
-  let behaviorProfile: ReturnType<typeof computeBehaviorProfile> | null = null;
-  let behavioralRisk: ReturnType<typeof computeBehavioralRisk> | null = null;
-  let interventions: ReturnType<typeof generateInterventions> = [];
-  let categoryIntelligence: ReturnType<typeof computeCategoryIntelligence> | null = null;
-  // Sprint 28 — Phase 5/10: reuses the same `transactions`/`goals` already
-  // fetched below for the rest of the intelligence layer — no additional
-  // query, same hasDeposit/userStage gate as everything else here.
-  let financialHealthScore: ReturnType<typeof computeFinancialHealthScore> | null = null;
-  let cashFlow: ReturnType<typeof projectCashFlow> | null = null;
+  let habitProfile: ReturnType<typeof getFinancialIntelligence>["habitProfile"] | null = null;
+  let behaviorProfile: ReturnType<typeof getFinancialIntelligence>["behaviorProfile"] | null = null;
+  let behavioralRisk: ReturnType<typeof getFinancialIntelligence>["behavioralRisk"] | null = null;
+  let interventions: ReturnType<typeof getFinancialIntelligence>["interventions"] = [];
+  let categoryIntelligence: ReturnType<typeof getFinancialIntelligence>["categoryIntelligence"] | null = null;
+  let financialHealthScore: ReturnType<typeof getFinancialIntelligence>["financialHealth"] | null = null;
+  let cashFlow: ReturnType<typeof getFinancialIntelligence>["cashFlow"] | null = null;
+  let goalRecommendations: ReturnType<typeof getFinancialIntelligence>["goalRecommendations"] = [];
 
   if (hasDeposit && userStage !== "new") {
     const { data: txData, error: txError } = await supabase
@@ -165,106 +164,35 @@ export default async function DashboardPage() {
     } else {
       const transactions = (txData ?? []) as Transaction[];
       depositCount = transactions.filter((t) => t.transaction_type === "deposit").length;
-      insights = generateInsights(transactions, {
-        currencyCode: profile.currency_code ?? "ZAR",
-        locale: profile.locale ?? "en-ZA",
-      });
-      weeklyReview = buildWeeklyReview({
+
+      const intelligence = getFinancialIntelligence({
         transactions,
-        goals: goals.map((g: any) => ({ id: g.id, is_complete: g.is_complete })),
-        achievements: dash.achievements ?? [],
+        goals,
         activityLog: (dash.activity_log ?? []).map((a: any) => ({
           date: a.date,
           xp_earned: a.xp_earned,
           actions_count: a.actions_count,
         })),
-        profile: { streak_days: profile.streak_days, longest_streak: profile.longest_streak },
+        achievements: dash.achievements ?? [],
+        profile: {
+          streak_days: profile.streak_days,
+          longest_streak: profile.longest_streak,
+          currency_code: profile.currency_code,
+          locale: profile.locale,
+        },
       });
 
-      const transactionsByGoal: Record<string, Transaction[]> = {};
-      for (const t of transactions) {
-        (transactionsByGoal[t.goal_id] ??= []).push(t);
-      }
-      const coachingMessages = generateCoachingMessages({
-        transactions,
-        goals: activeGoals.map((g: any) => ({
-          id: g.id,
-          title: g.title,
-          target_amount: g.target_amount,
-          current_amount: g.current_amount,
-          target_date: g.target_date,
-          is_complete: g.is_complete,
-        })),
-        transactionsByGoal,
-      });
-      topCoachingMessage = coachingMessages[0]?.message ?? null;
-
-      // ── Sprint 21: Phases 2-5 — habits, behavior profile, risk, interventions ──
-      const activityLogForBehavior = (dash.activity_log ?? []).map((a: any) => ({
-        date: a.date,
-        xp_earned: a.xp_earned,
-        actions_count: a.actions_count,
-      }));
-      habitProfile = computeHabitProfile(transactions);
-      behaviorProfile = computeBehaviorProfile({
-        transactions,
-        goals: goals.map((g: any) => ({ id: g.id, is_complete: g.is_complete })),
-        streakDays: profile.streak_days,
-        longestStreak: profile.longest_streak,
-      });
-      behavioralRisk = computeBehavioralRisk({
-        transactions,
-        streakDays: profile.streak_days,
-        longestStreak: profile.longest_streak,
-      });
-      const accountHealthForInterventions = computeAccountHealth({
-        transactions,
-        goals: goals.map((g: any) => ({
-          id: g.id,
-          target_amount: g.target_amount,
-          current_amount: g.current_amount,
-          target_date: g.target_date,
-          is_complete: g.is_complete,
-        })),
-        activityLog: activityLogForBehavior,
-      });
-      interventions = generateInterventions({
-        behaviorProfile,
-        risk: behavioralRisk,
-        accountHealth: accountHealthForInterventions,
-        coachingMessages,
-      });
-
-      // ── Sprint 24: Phase 8 — Category Intelligence ─────────────────────
-      // Reuses the same `goals`/`transactions` already loaded above for
-      // insights/coaching — no separate fetch. Gated behind the same
-      // hasDeposit/userStage check as the rest of the intelligence layer
-      // for consistency, since a brand-new user has no per-category
-      // savings behaviour to report yet.
-      categoryIntelligence = computeCategoryIntelligence(goals, transactions);
-
-      // ── Sprint 28: Phase 5/10 — Financial Health Score + Cash Flow ─────
-      // Reuses the exact same `transactions`, `goals`, and `activityLog`
-      // already loaded above — no separate fetch. See
-      // lib/financialHealthScore.ts for why this doesn't touch/replace
-      // computeAccountHealth (accountHealthForInterventions, above),
-      // which lib/interventions.ts still depends on unchanged.
-      financialHealthScore = computeFinancialHealthScore({
-        transactions,
-        goals: goals.map((g: any) => ({
-          id: g.id,
-          category: g.category,
-          target_amount: g.target_amount,
-          current_amount: g.current_amount,
-          target_date: g.target_date,
-          is_complete: g.is_complete,
-        })),
-        activityLog: activityLogForBehavior,
-      });
-      cashFlow = projectCashFlow(
-        transactions,
-        goals.map((g: any) => ({ id: g.id, target_amount: g.target_amount, current_amount: g.current_amount, is_complete: g.is_complete }))
-      );
+      insights = intelligence.insights;
+      weeklyReview = intelligence.weeklyReview;
+      topCoachingMessage = intelligence.topCoachingMessage;
+      habitProfile = intelligence.habitProfile;
+      behaviorProfile = intelligence.behaviorProfile;
+      behavioralRisk = intelligence.behavioralRisk;
+      interventions = intelligence.interventions;
+      categoryIntelligence = intelligence.categoryIntelligence;
+      financialHealthScore = intelligence.financialHealth;
+      cashFlow = intelligence.cashFlow;
+      goalRecommendations = intelligence.goalRecommendations;
     }
   }
 
@@ -362,7 +290,7 @@ export default async function DashboardPage() {
       intelligence={{ insights, weeklyReview, topCoachingMessage, categoryIntelligence }}
       intelligenceSectionOrder={intelligenceSectionOrder}
       behavior={habitProfile && behaviorProfile && behavioralRisk ? { habits: habitProfile, behaviorProfile, risk: behavioralRisk, interventions } : null}
-      financialHealth={financialHealthScore && cashFlow ? { score: financialHealthScore, cashFlow } : null}
+      financialHealth={financialHealthScore && cashFlow ? { score: financialHealthScore, cashFlow, goalRecommendations } : null}
     />
   );
 }

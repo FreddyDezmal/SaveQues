@@ -84,13 +84,20 @@ export default function GoalIntelligenceCard({ forecast, health, coaching, forma
             <div className="text-xs text-white/50">
               Required pace to hit your target date: <span className="text-white/80">{formatAmount(forecast.requiredWeeklyPace)}/week</span>
               {" "}({formatAmount(forecast.requiredMonthlyPace ?? 0)}/month)
+              <p className="text-[11px] text-white/55 mt-0.5">Assumes even weekly deposits from today until the target date — not a lump sum at the end.</p>
             </div>
           )}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {health.factors.map((f) => (
-              <div key={f.name} className="flex justify-between text-xs">
-                <span className="text-white/50">{f.name}</span>
-                <span className="text-white/70">{f.points}/{f.maxPoints}</span>
+              <div key={f.name}>
+                <div className="flex justify-between text-xs">
+                  <span className="text-white/50">{f.name}</span>
+                  <span className="text-white/70">{f.points}/{f.maxPoints}</span>
+                </div>
+                {/* Sprint 28.5 — Phase 4/7: every score must answer "why".
+                    goalHealth.ts has always computed this explanation per
+                    factor; it just wasn't rendered anywhere until now. */}
+                <p className="text-[11px] text-white/55 mt-0.5">{f.explanation}</p>
               </div>
             ))}
           </div>

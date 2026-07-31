@@ -117,6 +117,40 @@ describe("computeFinancialHealthScore", () => {
     expect(factor?.points).toBe(0);
   });
 
+  it("uses a precomputed accountHealth when provided, instead of recomputing it — Sprint 28.5 Phase 8 dedup", () => {
+    // A deliberately artificial AccountHealth that could never occur
+    // naturally from empty transactions/goals (computeAccountHealth's own
+    // neutral default for "Consistency" with no data is 10/20, not 3.7).
+    // If computeFinancialHealthScore silently recomputed AccountHealth
+    // instead of using this one, the rescaled Consistency factor below
+    // would come out as 15 * (10/20) = 7.5, not 15 * (3.7/20) = 2.775.
+    const artificialAccountHealth = {
+      score: 50,
+      status: "Needs Attention" as const,
+      trend: "stable" as const,
+      recommendations: [],
+      factors: [
+        { name: "Consistency", points: 3.7, maxPoints: 20, explanation: "artificial" },
+        { name: "Savings growth", points: 10, maxPoints: 20, explanation: "artificial" },
+        { name: "Goal completion", points: 10, maxPoints: 15, explanation: "artificial" },
+        { name: "Deposit frequency", points: 5, maxPoints: 15, explanation: "artificial" },
+        { name: "Momentum", points: 10, maxPoints: 15, explanation: "artificial" },
+        { name: "Forecast reliability", points: 5, maxPoints: 15, explanation: "artificial" },
+      ],
+    };
+
+    const result = computeFinancialHealthScore({
+      transactions: [],
+      goals: [],
+      activityLog: [],
+      accountHealth: artificialAccountHealth,
+    });
+
+    const consistencyFactor = result.factors.find((f) => f.name === "Consistency");
+    // rescale() rounds to 1 decimal place (round1) — 15 * (3.7/20) = 2.775 → 2.8.
+    expect(consistencyFactor!.points).toBeCloseTo(2.8, 1);
+  });
+
   it("never mutates the underlying accountHealth factor objects it rescales from", () => {
     // Regression guard: rescale() must not accidentally share references
     // whose mutation would corrupt lib/accountHealth.ts's own output for

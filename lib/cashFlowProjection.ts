@@ -29,6 +29,7 @@
 
 import { getDeposits, getDepositStats } from "@/lib/analyticsEngine";
 import { recentWeeklyPace, PACE_WINDOW_WEEKS } from "@/lib/forecast";
+import { sumGoalBalances } from "@/lib/utils";
 import type { SavingsGoal, Transaction } from "@/lib/types";
 
 export interface CashFlowProjection {
@@ -63,7 +64,7 @@ export function projectCashFlow(
   goals: GoalInput[],
   now: Date = new Date()
 ): CashFlowProjection {
-  const currentBalance = goals.reduce((s, g) => s + Number(g.current_amount), 0);
+  const currentBalance = sumGoalBalances(goals);
   const deposits = getDeposits(transactions);
   const weeklyPace = recentWeeklyPace(deposits, now);
 

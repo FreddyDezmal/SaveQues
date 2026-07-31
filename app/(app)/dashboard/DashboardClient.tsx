@@ -28,6 +28,7 @@ import type { TimelineEventGroup } from "@/lib/types";
 import IntelligencePanel from "@/components/insights/IntelligencePanel";
 import CategoryIntelligenceCard from "@/components/insights/CategoryIntelligenceCard";
 import FinancialHealthCard from "@/components/insights/FinancialHealthCard";
+import RecommendedGoalCard from "@/components/insights/RecommendedGoalCard";
 import BehaviorInsights from "@/components/behavior/BehaviorInsights";
 import type { Insight } from "@/lib/insights";
 import type { WeeklyReview } from "@/lib/weeklyReview";
@@ -38,6 +39,7 @@ import type { CategoryIntelligence } from "@/lib/categoryIntelligence";
 import type { Intervention } from "@/lib/interventions";
 import type { FinancialHealthScore } from "@/lib/financialHealthScore";
 import type { CashFlowProjection } from "@/lib/cashFlowProjection";
+import type { GoalRecommendation } from "@/lib/recommendations";
 
 interface Props {
   profile: any;
@@ -82,10 +84,11 @@ interface Props {
     risk: BehavioralRisk;
     interventions: Intervention[];
   } | null;
-  /** Sprint 28 — Phase 5/10: 6-tier financial health score + cash flow projection, null when there isn't enough deposit history yet. */
+  /** Sprint 28.5 — Phase 3: 6-tier financial health score + cash flow projection + top new-goal recommendation. null when there isn't enough deposit history yet. */
   financialHealth?: {
     score: FinancialHealthScore;
     cashFlow: CashFlowProjection;
+    goalRecommendations: GoalRecommendation[];
   } | null;
 }
 
@@ -299,6 +302,14 @@ export default function DashboardClient({
         <FinancialHealthCard
           healthScore={financialHealth.score}
           cashFlow={financialHealth.cashFlow}
+          formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
+        />
+      )}
+
+      {/* ── Sprint 28.5: Phase 3 — Recommended Goal ── */}
+      {userStage !== "new" && financialHealth && (
+        <RecommendedGoalCard
+          recommendations={financialHealth.goalRecommendations}
           formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
         />
       )}

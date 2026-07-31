@@ -3,225 +3,245 @@
  * ─────────────────────────────────────────────────────────────
  * Sprint 28.5 — Phase 2: Financial Intelligence Orchestrator.
  *
- * AUDIT CONTEXT (see docs/Sprint 28.5/SPRINT28_5_PHASE1_AUDIT.md): every
- * calculation this file touches already exists and already shipped
- * (Sprints 19–28). Nothing here recomputes anything. What's genuinely
- * missing is a single, reusable place that assembles those modules into
- * one object — today that assembly is either duplicated inline (the ~80
- * lines in app/(app)/dashboard/page.tsx under "Sprint 19: Intelligence
- * layer") or simply absent (portfolio and goal-detail pages call a subset
- * of these modules directly, or not at all). This file is that place.
+ * THIS MODULE CALCULATES NOTHING. Every number in the object it returns
+ * comes from a Sprint 19–28 engine that already existed and was already
+ * shipped: lib/insights.ts, lib/weeklyReview.ts, lib/coaching.ts,
+ * lib/habits.ts, lib/behaviorProfile.ts, lib/riskEngine.ts,
+ * lib/interventions.ts, lib/accountHealth.ts, lib/categoryIntelligence.ts,
+ * lib/financialHealthScore.ts, lib/cashFlowProjection.ts, and (added in
+ * Sprint 28.5's Phase 3 pass, see that field's own comment below)
+ * lib/recommendations.ts. This file's only job is to call them in the
+ * right order with the right shared inputs and hand back one object, so a
+ * caller (a page, an API route, a future Premium feature) doesn't have to
+ * know that order or re-derive the shared `transactionsByGoal`/
+ * `activityLog` shaping every engine needs.
  *
- * This module MUST NOT calculate anything itself. Every value below is a
- * direct pass-through to an existing `lib/*.ts` function. If a new metric
- * is ever needed, it belongs in the relevant existing module (or a new
- * one), never inlined here.
+ * WHERE THIS CAME FROM: app/(app)/dashboard/page.tsx had grown this exact
+ * sequence of ~10 calls inline, by hand, across Sprints 19–28 (each
+ * sprint's own comment block still visible in that file's git history).
+ * That was fine for one caller. Sprint 28.5's brief is explicit that
+ * "Premium features should simply expose deeper intelligence rather than
+ * introducing a second analytics system" — which requires this bundle to
+ * be callable from more than one place without copy-pasting the dashboard
+ * page's wiring. This file IS that inline block, moved and named, not
+ * rewritten. Diffing this file against the removed dashboard code should
+ * show identical call shapes.
  *
- * Gating: mirrors the dashboard's existing convention — with zero
- * deposits there is nothing honest to say, so every field is null/empty
- * rather than computed against an empty array (see dashboard/page.tsx's
- * `hasDeposit` gate and cashFlowProjection.ts's own "don't fabricate a
- * neutral default" principle).
- *
- * Dashboard note: app/(app)/dashboard/page.tsx is intentionally NOT
- * migrated to call this orchestrator in this sprint. It already computes
- * `accountHealthForInterventions` once and reuses it for both
- * `interventions` and (indirectly, inside financialHealthScore.ts)
- * financial health — reshaping that specific call graph to fit a generic
- * orchestrator either re-triggers a duplicate computeAccountHealth() call
- * or requires the orchestrator to special-case the dashboard's exact
- * ordering. Per this sprint's own instruction to preserve working,
- * tested architecture rather than force a conflicting shape onto it,
- * that migration is left as a documented future step (see
- * FINANCIAL_INTELLIGENCE_INTEGRATION.md, "Extension points"). Every
- * *new* integration point added this sprint (portfolio) calls this
- * orchestrator instead of hand-rolling the same assembly a third time.
+ * DELIBERATELY NOT DUPLICATED HERE: forecast.ts's per-goal
+ * forecastGoal()/goalHealth.ts's computeGoalHealth() are NOT part of this
+ * bundle. Both are inherently per-goal (need one specific goal's target/
+ * current amount), not portfolio-wide, so they're called directly by
+ * goal-detail-page code (see GoalDetailClient.tsx) rather than threaded
+ * through here — bundling them would mean either running them for every
+ * goal on every dashboard load (wasted work almost nobody's dashboard
+ * displays) or accepting a `goalId` parameter that makes this module's
+ * shape depend on which page is calling it. Same reasoning for
+ * lib/portfolioSummary.ts's computePortfolioSummary() — already its own
+ * single-purpose orchestration-adjacent function; this module doesn't
+ * wrap it, callers that want both call both.
  */
 
-import { getDeposits } from "@/lib/analyticsEngine";
-import { computeAccountHealth, type AccountHealth } from "@/lib/accountHealth";
-import { computeFinancialHealthScore, type FinancialHealthScore } from "@/lib/financialHealthScore";
-import { projectCashFlow, type CashFlowProjection } from "@/lib/cashFlowProjection";
+import { generateInsights, type Insight } from "@/lib/insights";
+import { buildWeeklyReview, type WeeklyReview } from "@/lib/weeklyReview";
+import { generateCoachingMessages, type CoachingMessage } from "@/lib/coaching";
+import { computeHabitProfile, type HabitProfile } from "@/lib/habits";
 import { computeBehaviorProfile, type BehaviorProfile } from "@/lib/behaviorProfile";
 import { computeBehavioralRisk, type BehavioralRisk } from "@/lib/riskEngine";
 import { generateInterventions, type Intervention } from "@/lib/interventions";
+import { computeAccountHealth, type AccountHealth } from "@/lib/accountHealth";
 import { computeCategoryIntelligence, type CategoryIntelligence } from "@/lib/categoryIntelligence";
-import { generateInsights, type Insight } from "@/lib/insights";
+import { computeFinancialHealthScore, type FinancialHealthScore } from "@/lib/financialHealthScore";
+import { projectCashFlow, type CashFlowProjection } from "@/lib/cashFlowProjection";
 import { generateGoalRecommendations, type GoalRecommendation } from "@/lib/recommendations";
-import { generateCoachingMessages, type CoachingMessage } from "@/lib/coaching";
 import type { SavingsGoal, Transaction } from "@/lib/types";
 
-export interface FinancialIntelligenceInputs {
+export interface FinancialIntelligenceInput {
   transactions: Transaction[];
-  /** Full goal rows — computeCategoryIntelligence needs the full shape; every other module here only reads a subset of it. */
+  // Full SavingsGoal, not a narrowed Pick: computeCategoryIntelligence
+  // (unlike every other engine here) needs the complete row shape. Every
+  // other call below narrows what it needs itself via `.map()`, same as
+  // the dashboard page did before this file existed.
   goals: SavingsGoal[];
-  activityLog: { date: string; xp_earned: number; actions_count?: number }[];
+  activityLog: { date: string; xp_earned: number; actions_count: number }[];
+  achievements: { achievement_id: string; earned_at: string }[];
   profile: {
     streak_days: number;
     longest_streak: number;
-    currency_code?: string;
-    locale?: string;
+    currency_code?: string | null;
+    locale?: string | null;
   };
   now?: Date;
-  /** Passed through to generateGoalRecommendations. Default 3 (that module's own default). */
-  maxRecommendations?: number;
 }
 
 export interface FinancialIntelligence {
-  /** False when there isn't at least one deposit — every field below is null/empty in that case. */
-  hasEnoughData: boolean;
-  insufficientDataReason: string | null;
-
-  accountHealth: AccountHealth | null;
-  financialHealthScore: FinancialHealthScore | null;
-  cashFlow: CashFlowProjection | null;
-  behaviorProfile: BehaviorProfile | null;
-  behavioralRisk: BehavioralRisk | null;
-  interventions: Intervention[];
-  categoryIntelligence: CategoryIntelligence | null;
   insights: Insight[];
+  weeklyReview: WeeklyReview;
   coachingMessages: CoachingMessage[];
-  recommendations: GoalRecommendation[];
-
-  // Convenience "top" picks — the same objects already sorted
-  // highest-priority-first by their own module, just unwrapped for
-  // callers (dashboard widgets, cards) that only want the headline item.
-  topInsight: Insight | null;
-  topRecommendation: GoalRecommendation | null;
   topCoachingMessage: string | null;
-  topInterventionMessage: string | null;
-}
-
-function emptyIntelligence(reason: string): FinancialIntelligence {
-  return {
-    hasEnoughData: false,
-    insufficientDataReason: reason,
-    accountHealth: null,
-    financialHealthScore: null,
-    cashFlow: null,
-    behaviorProfile: null,
-    behavioralRisk: null,
-    interventions: [],
-    categoryIntelligence: null,
-    insights: [],
-    coachingMessages: [],
-    recommendations: [],
-    topInsight: null,
-    topRecommendation: null,
-    topCoachingMessage: null,
-    topInterventionMessage: null,
-  };
+  habitProfile: HabitProfile;
+  behaviorProfile: BehaviorProfile;
+  behavioralRisk: BehavioralRisk;
+  accountHealth: AccountHealth;
+  interventions: Intervention[];
+  categoryIntelligence: CategoryIntelligence;
+  financialHealth: FinancialHealthScore;
+  cashFlow: CashFlowProjection;
+  /**
+   * Sprint 28.5 — Phase 3: lib/recommendations.ts existed since Sprint 20
+   * but was never actually called from anywhere in the app until now — a
+   * real gap this orchestrator closes rather than something rebuilt.
+   * Suggests up to 3 NEW goal categories the user doesn't already have an
+   * active/completed goal in, sized to their own demonstrated saving
+   * capacity. Distinct from `interventions` (which react to problems in
+   * *existing* goals) and from a "which of my current goals should get my
+   * next deposit" prioritizer, which does not exist in this codebase —
+   * see this file's own audit trail for that correction.
+   */
+  goalRecommendations: GoalRecommendation[];
 }
 
 /**
- * Orchestrates every existing financial-intelligence module for one user
- * into a single object. Pure assembly — see module comment. Safe to call
- * once per page render; callers should NOT call individual modules again
- * afterward for data already present here (that would be the exact
- * duplicate computation this file exists to prevent).
+ * Assembles the full financial intelligence bundle for one user from
+ * already-fetched data. Callers are expected to gate this behind their own
+ * "does this user have enough history to bother" check (the dashboard uses
+ * `hasDeposit && userStage !== "new"`) — this function itself doesn't
+ * refuse to run for a sparse user, since several of the underlying engines
+ * (habitProfile, behaviorProfile, behavioralRisk) already return their own
+ * documented "not enough data yet" neutral states rather than erroring,
+ * and forcing a second, slightly-different gate here would be a second
+ * place that same policy could drift out of sync.
+ *
+ * Pure and synchronous — no I/O, no network, no database access. Callers
+ * own fetching `transactions`/`goals`/`activityLog`/`achievements` however
+ * fits their context (a single dashboard RPC round trip today; a
+ * different fetch shape for a future Premium endpoint tomorrow), and pass
+ * the results in.
  */
-export function getFinancialIntelligence(inputs: FinancialIntelligenceInputs): FinancialIntelligence {
-  const now = inputs.now ?? new Date();
-  const deposits = getDeposits(inputs.transactions);
+export function getFinancialIntelligence(input: FinancialIntelligenceInput): FinancialIntelligence {
+  const { transactions, goals, activityLog, achievements, profile } = input;
+  const now = input.now ?? new Date();
+  const currencyCode = profile.currency_code ?? "ZAR";
+  const locale = profile.locale ?? "en-ZA";
 
-  // Recommendations are the one exception to the "gate on deposits" rule:
-  // generateGoalRecommendations already handles a zero-deposit user
-  // itself (unscaled "starter estimate" templates — see that module's own
-  // comment), and a brand-new user with no goals yet is exactly who most
-  // needs a first suggestion. Compute it before the early return.
-  const recommendations = generateGoalRecommendations({
-    transactions: inputs.transactions,
-    goals: inputs.goals,
-    now,
-    maxResults: inputs.maxRecommendations,
-  });
+  const insights = generateInsights(transactions, { currencyCode, locale, now });
 
-  if (deposits.length === 0) {
-    const empty = emptyIntelligence(
-      "No deposits recorded yet, so most of the intelligence layer has nothing to say — recommendations still work from goal templates alone."
-    );
-    return { ...empty, recommendations, topRecommendation: recommendations[0] ?? null };
-  }
-
-  const activityLog = inputs.activityLog.map((a) => ({
-    date: a.date,
-    xp_earned: a.xp_earned,
-    actions_count: a.actions_count ?? 0,
-  }));
-
-  const accountHealth = computeAccountHealth({
-    transactions: inputs.transactions,
-    goals: inputs.goals,
+  const weeklyReview = buildWeeklyReview({
+    transactions,
+    goals: goals.map((g) => ({ id: g.id, is_complete: g.is_complete })),
+    achievements,
     activityLog,
-    now,
-  });
-
-  const financialHealthScore = computeFinancialHealthScore({
-    transactions: inputs.transactions,
-    goals: inputs.goals,
-    activityLog,
-    now,
-  });
-
-  const cashFlow = projectCashFlow(inputs.transactions, inputs.goals, now);
-
-  const behaviorProfile = computeBehaviorProfile({
-    transactions: inputs.transactions,
-    goals: inputs.goals,
-    streakDays: inputs.profile.streak_days,
-    longestStreak: inputs.profile.longest_streak,
-    now,
-  });
-
-  const behavioralRisk = computeBehavioralRisk({
-    transactions: inputs.transactions,
-    streakDays: inputs.profile.streak_days,
-    longestStreak: inputs.profile.longest_streak,
-    now,
-  });
-
-  const categoryIntelligence = computeCategoryIntelligence(inputs.goals, inputs.transactions, now);
-
-  const insights = generateInsights(inputs.transactions, {
-    currencyCode: inputs.profile.currency_code ?? "ZAR",
-    locale: inputs.profile.locale ?? "en-ZA",
+    profile: { streak_days: profile.streak_days, longest_streak: profile.longest_streak },
     now,
   });
 
   const transactionsByGoal: Record<string, Transaction[]> = {};
-  for (const t of inputs.transactions) {
+  for (const t of transactions) {
     (transactionsByGoal[t.goal_id] ??= []).push(t);
   }
+  const activeGoals = goals.filter((g) => !g.is_complete);
   const coachingMessages = generateCoachingMessages({
-    transactions: inputs.transactions,
-    goals: inputs.goals.filter((g) => !g.is_complete),
+    transactions,
+    goals: activeGoals.map((g) => ({
+      id: g.id,
+      title: g.title,
+      target_amount: g.target_amount,
+      current_amount: g.current_amount,
+      target_date: g.target_date,
+      is_complete: g.is_complete,
+    })),
     transactionsByGoal,
   });
+  const topCoachingMessage = coachingMessages[0]?.message ?? null;
 
-  const accountHealthForInterventions = accountHealth; // same call, reused — never a second computeAccountHealth()
+  const habitProfile = computeHabitProfile(transactions, now);
+
+  const behaviorProfile = computeBehaviorProfile({
+    transactions,
+    goals: goals.map((g) => ({ id: g.id, is_complete: g.is_complete })),
+    streakDays: profile.streak_days,
+    longestStreak: profile.longest_streak,
+    now,
+  });
+
+  const behavioralRisk = computeBehavioralRisk({
+    transactions,
+    streakDays: profile.streak_days,
+    longestStreak: profile.longest_streak,
+    now,
+  });
+
+  const goalsForHealth = goals.map((g) => ({
+    id: g.id,
+    target_amount: g.target_amount,
+    current_amount: g.current_amount,
+    target_date: g.target_date,
+    is_complete: g.is_complete,
+  }));
+
+  const accountHealth = computeAccountHealth({
+    transactions,
+    goals: goalsForHealth,
+    activityLog,
+    now,
+  });
+
   const interventions = generateInterventions({
     behaviorProfile,
     risk: behavioralRisk,
-    accountHealth: accountHealthForInterventions,
+    accountHealth,
     coachingMessages,
   });
 
-  return {
-    hasEnoughData: true,
-    insufficientDataReason: null,
+  const categoryIntelligence = computeCategoryIntelligence(goals, transactions);
+
+  // financialHealthScore reuses computeAccountHealth's own output (see that
+  // module's docstring). Sprint 28.5 — Phase 8 (Performance): this used to
+  // call computeFinancialHealthScore() without `accountHealth`, meaning it
+  // silently recomputed the exact same AccountHealth this orchestrator had
+  // just computed two lines above. computeFinancialHealthScore() now
+  // accepts a precomputed AccountHealth for exactly this situation — pass
+  // the one already sitting in `accountHealth` instead of paying for a
+  // second identical pass over the same transactions/goals/activityLog.
+  const financialHealth = computeFinancialHealthScore({
+    transactions,
+    goals: goals.map((g) => ({
+      id: g.id,
+      category: g.category,
+      target_amount: g.target_amount,
+      current_amount: g.current_amount,
+      target_date: g.target_date,
+      is_complete: g.is_complete,
+    })),
+    activityLog,
+    now,
     accountHealth,
-    financialHealthScore,
-    cashFlow,
+  });
+
+  const cashFlow = projectCashFlow(
+    transactions,
+    goals.map((g) => ({ id: g.id, target_amount: g.target_amount, current_amount: g.current_amount, is_complete: g.is_complete })),
+    now
+  );
+
+  const goalRecommendations = generateGoalRecommendations({
+    transactions,
+    goals: goals.map((g) => ({ id: g.id, category: g.category, is_complete: g.is_complete })),
+    now,
+  });
+
+  return {
+    insights,
+    weeklyReview,
+    coachingMessages,
+    topCoachingMessage,
+    habitProfile,
     behaviorProfile,
     behavioralRisk,
+    accountHealth,
     interventions,
     categoryIntelligence,
-    insights,
-    coachingMessages,
-    recommendations,
-    topInsight: insights[0] ?? null,
-    topRecommendation: recommendations[0] ?? null,
-    topCoachingMessage: coachingMessages[0]?.message ?? null,
-    topInterventionMessage: interventions[0]?.title ?? null,
+    financialHealth,
+    cashFlow,
+    goalRecommendations,
   };
 }

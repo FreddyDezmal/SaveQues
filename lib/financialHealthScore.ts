@@ -176,10 +176,20 @@ function computeGoalDiversification(goals: GoalInput[]): { points: number; facto
 
 export interface FinancialHealthInputs extends Omit<AccountHealthInputs, "goals"> {
   goals: GoalInput[];
+  /**
+   * Sprint 28.5 — Phase 8 (Performance): optional. If the caller already
+   * computed AccountHealth for these exact inputs (e.g.
+   * lib/intelligence/getFinancialIntelligence.ts, which needs its own
+   * `accountHealth` field for lib/interventions.ts too), pass it here to
+   * skip a second, otherwise-identical computeAccountHealth() call.
+   * Omit it and this function computes it internally exactly as before —
+   * every existing caller (including every test) keeps working unchanged.
+   */
+  accountHealth?: AccountHealth;
 }
 
 export function computeFinancialHealthScore(inputs: FinancialHealthInputs): FinancialHealthScore {
-  const base = computeAccountHealth(inputs);
+  const base = inputs.accountHealth ?? computeAccountHealth(inputs);
 
   const consistency = rescale(base.factors, "Consistency", 15);
   const growth = rescale(base.factors, "Savings growth", 15);

@@ -81,3 +81,15 @@ export function timeAgo(input: string | number): string {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
+
+/**
+ * Sprint 28.5 — Phase 13 (Final Review): same situation as Sprint 17's
+ * `timeAgo()` above — this consolidates two implementations of the exact
+ * same one-line formula (sum of every goal's `current_amount`) found
+ * independently in lib/portfolioSummary.ts (`currentSavings`, Sprint 20)
+ * and lib/cashFlowProjection.ts (`currentBalance`, Sprint 28), neither
+ * aware of the other. Both now call this instead.
+ */
+export function sumGoalBalances(goals: { current_amount: number | string }[]): number {
+  return goals.reduce((sum, g) => sum + Number(g.current_amount), 0);
+}

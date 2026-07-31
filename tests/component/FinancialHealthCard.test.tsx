@@ -63,6 +63,11 @@ describe("FinancialHealthCard", () => {
     expect(screen.queryByText("Consistency")).not.toBeInTheDocument();
   });
 
+  it("shows each surfaced factor's explanation text, not just its score — Sprint 28.5 Phase 7 fix", () => {
+    render(<FinancialHealthCard healthScore={score()} cashFlow={null} formatAmount={formatAmount} />);
+    expect(screen.getByText("No emergency fund goal set up yet.")).toBeInTheDocument();
+  });
+
   it("renders the quarter cash flow projection when provided", () => {
     render(<FinancialHealthCard healthScore={score()} cashFlow={cashFlow()} formatAmount={formatAmount} />);
     expect(screen.getByText("R1200.00")).toBeInTheDocument();

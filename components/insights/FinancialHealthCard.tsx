@@ -43,7 +43,7 @@ export default function FinancialHealthCard({ healthScore, cashFlow, formatAmoun
         <h2 id="financial-health-heading" className="text-sm font-semibold text-white/90">
           Financial Health
         </h2>
-        <span className="text-xs text-white/40">{healthScore.score}/100</span>
+        <span className="text-xs text-white/55">{healthScore.score}/100</span>
       </div>
 
       <p className={`text-lg font-semibold ${TIER_COLOR[healthScore.tier]}`}>{healthScore.tier}</p>
@@ -62,12 +62,18 @@ export default function FinancialHealthCard({ healthScore, cashFlow, formatAmoun
       )}
 
       {topFactors.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-white/10 space-y-1.5">
-          <p className="text-xs text-white/40 mb-1">Areas with the most room to improve</p>
+        <div className="mt-3 pt-3 border-t border-white/10 space-y-2">
+          <p className="text-xs text-white/55 mb-1">Areas with the most room to improve</p>
           {topFactors.map((f) => (
-            <div key={f.name} className="flex justify-between text-xs">
-              <span className="text-white/50">{f.name}</span>
-              <span className="text-white/70">{f.points}/{f.maxPoints}</span>
+            <div key={f.name}>
+              <div className="flex justify-between text-xs">
+                <span className="text-white/50">{f.name}</span>
+                <span className="text-white/70">{f.points}/{f.maxPoints}</span>
+              </div>
+              {/* Sprint 28.5 — Phase 7: same explanation-dropping bug as
+                  GoalIntelligenceCard and PortfolioClient's health block —
+                  fixed all three the same way. */}
+              <p className="text-[11px] text-white/55 mt-0.5">{f.explanation}</p>
             </div>
           ))}
         </div>
