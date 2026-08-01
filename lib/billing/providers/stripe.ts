@@ -35,7 +35,7 @@ function getClient(): Stripe {
   if (client) return client;
   const secretKey = getEnv("STRIPE_SECRET_KEY");
   client = new Stripe(secretKey, {
-    apiVersion: "2024-11-20.acacia",
+    apiVersion: "2025-02-24.acacia",
     typescript: true,
   });
   return client;
