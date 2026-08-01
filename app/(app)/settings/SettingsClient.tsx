@@ -236,6 +236,18 @@ export default function SettingsClient({ profile, email }: Props) {
         <ChevronRight size={16} className="text-white/20" />
       </Link>
 
+      {/* Billing — Sprint 29: Premium Subscription Platform */}
+      <Link
+        href="/settings/billing"
+        className="card p-4 flex items-center justify-between hover:border-white/10 transition-colors mb-6"
+      >
+        <div>
+          <p className="text-sm font-medium text-white">Billing & Premium</p>
+          <p className="text-xs text-white/40 mt-0.5">Manage your plan, payment method, and billing history</p>
+        </div>
+        <ChevronRight size={16} className="text-white/20" />
+      </Link>
+
       {/* Password */}
       <div className="mb-6">
         <p className="text-xs text-white/40 uppercase tracking-wider font-medium mb-3">Security</p>

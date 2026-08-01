@@ -37,6 +37,8 @@ import { captureError, setSentryUser } from "@/lib/monitoring";
 import { trackServerEvent, AnalyticsEvents } from "@/lib/analytics-server";
 import { writeAuditLog } from "@/lib/auditLog";
 import { GOAL_CATEGORIES, GOAL_EMOJIS } from "@/lib/utils";
+import { getFeatureLimit } from "@/lib/billing/entitlements";
+import { BillingAnalyticsEvents } from "@/lib/billing/analytics";
 
 const log = createLogger("goals.create");
 
@@ -102,6 +104,44 @@ export async function POST(req: NextRequest) {
       user_id: user.id, request_id: requestId, errors: validationErrors.join("; "),
     });
     return NextResponse.json({ error: validationErrors.join("; ") }, { status: 422 });
+  }
+
+  // ── Premium entitlement: goals_limit ────────────────────────────────────
+  // Sprint 29 — Premium Subscription Platform, Phase 5. goals_limit is a
+  // count of currently-active goals, not an append-only counter (a
+  // deleted goal frees up a slot), so this counts live rows rather than
+  // going through lib/billing/usage.ts's period-scoped usage_counters —
+  // see that module's header comment for why "lifetime" features that can
+  // decrease are counted live, not tracked as a monotonic counter.
+  const goalsLimit = await getFeatureLimit(user.id, "goals_limit");
+  if (goalsLimit !== null) {
+    const { count: activeGoalCount, error: countError } = await supabase
+      .from("savings_goals")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id);
+
+    if (!countError && (activeGoalCount ?? 0) >= goalsLimit) {
+      log.info("Goal creation blocked by plan limit", { user_id: user.id, request_id: requestId, limit: goalsLimit });
+      await trackServerEvent(BillingAnalyticsEvents.USAGE_LIMIT_REACHED, user.id, {
+        feature_key: "goals_limit",
+        limit: goalsLimit,
+      });
+      return NextResponse.json(
+        {
+          error: `You've reached the Free plan's limit of ${goalsLimit} active goals. Upgrade to Premium for unlimited goals.`,
+          code: "PLAN_LIMIT_REACHED",
+          feature_key: "goals_limit",
+          limit: goalsLimit,
+        },
+        { status: 403 }
+      );
+    }
+    // countError is swallowed deliberately (fails open) — see
+    // lib/billing/usage.ts's own note that limit checks generally fail
+    // closed, but here a transient count-query error blocking every goal
+    // creation for every free-tier user would be a worse outcome than an
+    // occasional over-limit goal; the DB-level ceiling this codebase
+    // could add later (a CHECK/trigger) would be the stricter backstop.
   }
 
   const end = log.time("goal creation", { user_id: user.id, request_id: requestId, category });

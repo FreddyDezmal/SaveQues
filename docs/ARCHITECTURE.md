@@ -202,7 +202,39 @@ Deposits and withdrawals are never queued for later — see `lib/hooks/useOnline
 
 `skipWaiting`/`clientsClaim` are deliberately `false` — a new service worker version waits until the user's next full app restart to activate, rather than swapping an already-open tab's network layer mid-session. `UpdateToast` is the explicit, user-triggered path to activate sooner.
 
-## Security model
+## Premium subscription architecture
+
+Sprint 29. Full design rationale in `docs/PREMIUM_ARCHITECTURE.md`; audit
+of what pre-existed (nothing) in `docs/BILLING_AUDIT.md`.
+
+- **Domain model**: `Plan` / `Feature` / `PlanFeature` (catalogue, DB rows
+  under `supabase/migrations/069_premium_subscriptions.sql` — not
+  hardcoded in TypeScript) → `Subscription` (one per user, synced only by
+  webhooks) → `Entitlements` (computed on every call, never stored).
+- **Single entry point**: `lib/billing/entitlements.ts`'s
+  `getEntitlements()` / `hasFeature()` / `getFeatureLimit()` are the only
+  functions any route or component calls — no scattered
+  `if (user.isPremium)` checks anywhere.
+- **Provider abstraction**: `lib/billing/provider.ts` (interface) +
+  `lib/billing/providers/stripe.ts` (first adapter), mirroring the
+  existing `lib/push/types.ts` provider-adapter pattern. `stripe` package
+  is imported in exactly one file.
+- **Webhooks are the only writer of `subscriptions`**: `POST
+  /api/billing/webhook` verifies Stripe's signature before touching the
+  request, records every event id in `billing_webhook_events`
+  (idempotency/replay protection), and only then upserts subscription
+  state. Checkout/portal routes only ever redirect to Stripe.
+- **Usage limits**: `lib/billing/usage.ts` for period-scoped counters
+  (exports/month, scenarios/day via `usage_counters` + an atomic
+  `increment_usage_counter()` RPC); `goals_limit` is counted live against
+  `savings_goals` instead, since it's a decreasable count, not a
+  monotonic one — see that module's header comment.
+- **Client entitlement UI**: `lib/hooks/useBillingStatus.ts` wraps `GET
+  /api/billing/status` with a module-level cache so multiple gated
+  components on one page cost one network request, feeding
+  `components/billing/{PremiumBadge,LockedCard,UpgradePrompt,PlanComparisonDialog}`.
+
+
 
 - **Auth**: Supabase Auth, RLS-scoped client (`lib/supabase/server.ts` using the anon key + user's session cookies) for all user-facing routes. A separate `createServiceClient()` (service role, RLS-bypassing) is used only in the notification cron and a small number of admin/system paths — never in a route reachable directly from client input.
 - **Middleware**: `middleware.ts` redirects unauthenticated requests to `/auth/login`, with a negative-lookahead matcher excluding static assets, `manifest.json`, `sw.js`, and icon/screenshot paths (the SW file must never be routed through an auth check that could return a redirect body, which would break registration).
@@ -211,3 +243,4 @@ Deposits and withdrawals are never queued for later — see `lib/hooks/useOnline
 - **RLS**: 50 policies across 28 tables (see `docs/DATABASE.md`). Every user-facing table scopes reads/writes to `auth.uid()`.
 - **Audit logging**: `audit_logs` table, written from financial mutation paths.
 - **Notification-specific hardening** (Sprint 27, Phase 14): deep-link values are validated as same-origin relative paths (rejecting absolute/protocol-relative/`javascript:` URLs) before client-side navigation, on both the in-app router and the service worker — defense-in-depth, since `deep_link` is exclusively server-constructed today. `sendToUser()` re-checks the master notification switch as a final safety net, mirroring how vacation mode was already handled.
+- **Billing-specific hardening** (Sprint 29, Phase 14 — full detail in `docs/SECURITY_AUDIT.md`): no client-writable "isPremium" flag exists anywhere — entitlements are recomputed server-side on every gated request. `subscriptions` and `usage_counters` have RLS `SELECT`-own policies and **no client write policy at all**; the only writer of `subscriptions` is the signature-verified webhook route, and the only writer of `usage_counters` is a `SECURITY DEFINER` RPC invoked exclusively via the service-role client. A canceled/past-due subscription falls back to free-plan entitlements even though its row still references the paid plan.

@@ -55,6 +55,21 @@ const SERVER_VARS: EnvSpec[] = [
     description: "VAPID subject — mailto: or https: URI identifying the push sender",
     devOptional: true,
   },
+  {
+    key:         "STRIPE_SECRET_KEY",
+    description: "Stripe secret key for server-side billing API calls (lib/billing/providers/stripe.ts)",
+    devOptional: true,
+  },
+  {
+    key:         "STRIPE_WEBHOOK_SECRET",
+    description: "Stripe webhook signing secret, used to verify /api/billing/webhook requests",
+    devOptional: true,
+  },
+  {
+    key:         "STRIPE_PRICE_ID_PREMIUM_MONTHLY",
+    description: "Stripe Price ID for the Premium monthly plan",
+    devOptional: true,
+  },
 ];
 
 /** Variables that must exist on both server and client (NEXT_PUBLIC_ prefix). */

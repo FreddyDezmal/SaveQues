@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkAttemptRateLimit, recordAttempt } from "@/lib/rateLimit";
 import { createLogger } from "@/lib/logger";
 import { transactionsToCSV } from "@/lib/exportCenter";
+import { enforceUsageLimit, recordUsage } from "@/lib/billing/gate";
 import type { Transaction, SavingsGoal } from "@/lib/types";
 
 const log = createLogger("export.transactions");
@@ -35,6 +36,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: limit.message }, { status: 429 });
   }
 
+  // Sprint 29 — Premium Subscription Platform, Phase 5: plan-based export
+  // quota, separate from (and checked after) the anti-abuse rate limit
+  // above — the rate limit stops spamming, this stops exceeding what the
+  // Free plan includes. Premium has unlimited_exports enabled, which
+  // resolves exports_limit to null (unlimited) in getFeatureLimit(), so
+  // checkUsage() short-circuits to allowed for Premium users without a
+  // count query.
+  const { blocked } = await enforceUsageLimit(user.id, "exports_limit", "monthly export");
+  if (blocked) return blocked;
+
   const [{ data: txData, error: txError }, { data: goalData, error: goalError }] = await Promise.all([
     supabase
       .from("transactions")
@@ -50,6 +61,8 @@ export async function GET(req: NextRequest) {
   }
 
   const csv = transactionsToCSV((txData ?? []) as Transaction[], (goalData ?? []) as Pick<SavingsGoal, "id" | "title" | "category">[]);
+
+  await recordUsage(user.id, "exports_limit");
 
   return new NextResponse(csv, {
     headers: {

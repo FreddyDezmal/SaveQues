@@ -26,6 +26,7 @@ import {
   annualReportCategoryToCSV,
   milestonesToCSV,
 } from "@/lib/exportCenter";
+import { enforceUsageLimit, recordUsage } from "@/lib/billing/gate";
 import type { SavingsGoal, Transaction } from "@/lib/types";
 
 const log = createLogger("export.annual-report");
@@ -90,10 +91,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ report }, { headers: { "Cache-Control": "private, no-store" } });
   }
 
+  // Sprint 29 — Premium Subscription Platform, Phase 5: only the CSV
+  // download consumes an export unit. format=json powers
+  // app/(app)/reports/annual/page.tsx's on-screen view (and its
+  // print-to-PDF flow) — viewing your own report isn't "an export" in
+  // the sense the Free-tier limit is meant to cover; downloading a CSV
+  // file is.
+  const { blocked } = await enforceUsageLimit(user.id, "exports_limit", "monthly export");
+  if (blocked) return blocked;
+
   const csv =
     section === "category" ? annualReportCategoryToCSV(report) :
     section === "milestones" ? milestonesToCSV(report.milestones) :
     annualReportMonthlyToCSV(report);
+
+  await recordUsage(user.id, "exports_limit");
 
   return new NextResponse(csv, {
     headers: {

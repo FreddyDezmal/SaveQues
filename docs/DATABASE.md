@@ -64,8 +64,40 @@ CREATE POLICY "table_update_own" ON table_name
 
 One documented residual gap (Sprint 16, still accurate as of Sprint 27): RLS policies can't restrict *which columns* an `UPDATE` touches — `notification_logs`'s update policy allows updating the row, and it's the **application code** (`app/api/notifications/mark-read/route.ts`, `/archive`, `/delete`, `/track` — the last of these now also writing `dismissed_at` as of Phase 11), not the database, that guarantees only the intended tracking columns are ever written. A follow-up trigger rejecting changes to `title`/`body`/`sent_at`/`notification_type` would close this properly; not yet built.
 
-## Migrations
+## Billing (Sprint 29)
+
+Full design rationale in `docs/PREMIUM_ARCHITECTURE.md`. Six new tables,
+none of which existed before Sprint 29 (see `docs/BILLING_AUDIT.md`):
+
+| Table | Purpose |
+|---|---|
+| `plans` | Purchasable tier catalogue (`free`, `premium`, ...). Public-readable, admin-write only. |
+| `features` | Gatable feature/limit catalogue, tagged `kind` (`boolean`/`limit`). |
+| `plan_features` | Which features a plan grants, and at what limit (`null` = unlimited). The single source of truth `lib/billing/entitlements.ts` reads from. |
+| `subscriptions` | One row per user's current subscription state. Written only by the Stripe webhook route — see Security model below. |
+| `usage_counters` | Period-scoped usage (exports/month, scenarios/day), incremented via the `increment_usage_counter()` `SECURITY DEFINER` RPC. |
+| `billing_webhook_events` | Idempotency ledger keyed on the provider's own event id — no client policies at all. |
+
+## Row-Level Security — Sprint 29 additions
+
+5 new `SELECT`-only policies (`plans_select_all`, `features_select_all`,
+`plan_features_select_all` are public-readable catalogue data;
+`subscriptions_select_own` and `usage_counters_select_own` scope to
+`auth.uid()`). `billing_webhook_events` has RLS enabled with **zero**
+policies — deliberately deny-all for every client role; only the
+service-role client (used exclusively by the webhook route) can touch it.
+
+
 
 **A note on naming, found during the Sprint 18 audit and worth stating plainly rather than re-presenting as a fresh discovery**: migration files use three different naming conventions across the project's history — sequential numbers (`001_initial_schema.sql` … `017_...`), dated files (`20260613_notifications.sql`, `20260707_notification_preferences.sql`), and a few unprefixed files (`admin_read_policies.sql`). This is **already documented and audited** in `supabase/migrations/MIGRATION_CONFLICTS.md`, which predates this sprint and explains which early migrations were superseded (e.g. `0061_...` superseded by `0062_...`) and the `014_prod_cleanup.sql` vs `014_consolidated_schema.sql` split for production vs. clean-environment setup. A `rollback/` subdirectory contains `_down.sql` files for several migrations; an `archive/` subdirectory holds superseded originals. Read `MIGRATION_CONFLICTS.md` before touching any migration numbered below 014.
 
 **Sprint 27 additions**: 4 new migrations, all date-prefixed (continuing the convention `20260613_notifications.sql` started): `20260723_notification_preferences_expansion.sql` (Phase 4), `20260724_user_digests.sql` (Phase 5), `20260725_notification_analytics.sql` (Phase 11), `20260726_notification_performance_indexes.sql` (Phase 13) — the last of these adds two composite indexes on `notification_logs`; see `docs/SPRINT27_PHASE13_PERFORMANCE.md` for exactly which query shapes they target and why single-column indexes weren't enough.
+
+**Sprint 29 addition**: `069_premium_subscriptions.sql` (+
+`rollback/069_down.sql`), numbered sequentially continuing the
+`001`–`068` convention (not date-prefixed like the Sprint 27 batch above)
+since it sits in the same numeric sequence as the migration immediately
+before it (`068`). See `docs/PREMIUM_ARCHITECTURE.md` for the six tables
+it adds.
+
+

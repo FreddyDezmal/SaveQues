@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkAttemptRateLimit, recordAttempt } from "@/lib/rateLimit";
 import { createLogger } from "@/lib/logger";
 import { goalsToCSV } from "@/lib/exportCenter";
+import { enforceUsageLimit, recordUsage } from "@/lib/billing/gate";
 import type { SavingsGoal } from "@/lib/types";
 
 const log = createLogger("export.goals");
@@ -32,6 +33,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: limit.message }, { status: 429 });
   }
 
+  // Sprint 29 — Premium Subscription Platform, Phase 5: see the matching
+  // comment in app/api/export/transactions/route.ts.
+  const { blocked } = await enforceUsageLimit(user.id, "exports_limit", "monthly export");
+  if (blocked) return blocked;
+
   const { data, error } = await supabase
     .from("savings_goals")
     .select("id, user_id, title, category, goal_emoji, target_amount, current_amount, target_date, is_complete, created_at")
@@ -44,6 +50,8 @@ export async function GET(req: NextRequest) {
   }
 
   const csv = goalsToCSV((data ?? []) as SavingsGoal[]);
+
+  await recordUsage(user.id, "exports_limit");
 
   return new NextResponse(csv, {
     headers: {
