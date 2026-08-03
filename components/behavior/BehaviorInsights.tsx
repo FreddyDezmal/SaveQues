@@ -100,6 +100,12 @@ export default function BehaviorInsights({ habits, behaviorProfile, risk, interv
                 {interventions.map((i) => (
                   <li key={i.type} className="text-xs text-white/60">
                     <span className="text-white/80 font-medium">{i.title}</span> — {i.expectedBenefit}
+                    {/* Sprint 30 — Phase 8: 'reason' was already computed by
+                        lib/interventions.ts (and already shown for the top
+                        intervention above) but silently dropped for every
+                        other item in this list — expectedBenefit alone
+                        answers "what", not "why". */}
+                    <p className="text-[11px] text-white/45 mt-0.5">{i.reason}</p>
                   </li>
                 ))}
               </ul>

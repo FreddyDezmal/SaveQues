@@ -154,3 +154,38 @@ describe("simulateScenarios / simulateStandardScenarios", () => {
     expect(types).toContain("cadence_change");
   });
 });
+
+// ── Sprint 30 — Phase 6: currency-aware labels ────────────────────────────
+describe("formatAmount parameter (Sprint 30 Phase 6)", () => {
+  const rand = (n: number) => `R${n.toFixed(2)}`;
+
+  it("defaults to the previous hardcoded '$' behavior when no formatAmount is passed", () => {
+    const g = goal({ current_amount: 200, target_amount: 1000 });
+    const result = simulateScenario(g, weeklyDeposits, { type: "weekly_delta", amount: 30 }, now);
+    expect(result.label).toBe("Deposit $30/week more");
+  });
+
+  it("uses the passed formatAmount for a weekly_delta label instead of a hardcoded '$'", () => {
+    const g = goal({ current_amount: 200, target_amount: 1000 });
+    const result = simulateScenario(g, weeklyDeposits, { type: "weekly_delta", amount: 30 }, now, rand);
+    expect(result.label).toBe("Deposit R30.00/week more");
+  });
+
+  it("uses the passed formatAmount for a lump_sum label and explanation", () => {
+    const g = goal({ current_amount: 200, target_amount: 1000 });
+    const result = simulateScenario(g, weeklyDeposits, { type: "lump_sum", amount: 500 }, now, rand);
+    expect(result.label).toBe("Add a one-time R500.00 deposit today");
+    expect(result.explanation).toContain("R500.00");
+  });
+
+  it("threads formatAmount through simulateStandardScenarios into every scenario that has an amount", () => {
+    const g = goal({ current_amount: 200, target_amount: 1000 });
+    const results = simulateStandardScenarios(g, weeklyDeposits, now, rand);
+    const weeklyResults = results.filter((r) => r.type === "weekly_delta");
+    expect(weeklyResults.length).toBeGreaterThan(0);
+    for (const r of weeklyResults) {
+      expect(r.label).not.toContain("$");
+      expect(r.label).toMatch(/^Deposit R\d/);
+    }
+  });
+});

@@ -44,6 +44,8 @@
 import { generateInsights, type Insight } from "@/lib/insights";
 import { buildWeeklyReview, type WeeklyReview } from "@/lib/weeklyReview";
 import { generateCoachingMessages, type CoachingMessage } from "@/lib/coaching";
+import { forecastGoal, type GoalForecast } from "@/lib/forecast";
+import { computeGoalHealth, type GoalHealth } from "@/lib/goalHealth";
 import { computeHabitProfile, type HabitProfile } from "@/lib/habits";
 import { computeBehaviorProfile, type BehaviorProfile } from "@/lib/behaviorProfile";
 import { computeBehavioralRisk, type BehavioralRisk } from "@/lib/riskEngine";
@@ -139,6 +141,23 @@ export function getFinancialIntelligence(input: FinancialIntelligenceInput): Fin
     (transactionsByGoal[t.goal_id] ??= []).push(t);
   }
   const activeGoals = goals.filter((g) => !g.is_complete);
+
+  // Sprint 30 — Phase 10 (Performance audit): forecastGoal()/
+  // computeGoalHealth() were each being computed once here (inside
+  // lib/coaching.ts's goalMessages, called below) and forecastGoal() a
+  // second time inside lib/accountHealth.ts's forecast-reliability
+  // factor — same goal, same transactions, same request. Computed once,
+  // for every active goal, and shared into both. See CoachingContext's
+  // and AccountHealthInputs' own comments on the two optional params
+  // this feeds.
+  const forecastsByGoalId = new Map<string, GoalForecast>();
+  const healthByGoalId = new Map<string, GoalHealth>();
+  for (const goal of activeGoals) {
+    const goalTxs = transactionsByGoal[goal.id] ?? [];
+    forecastsByGoalId.set(goal.id, forecastGoal(goal, goalTxs, now));
+    healthByGoalId.set(goal.id, computeGoalHealth(goal, goalTxs, now));
+  }
+
   const coachingMessages = generateCoachingMessages({
     transactions,
     goals: activeGoals.map((g) => ({
@@ -150,6 +169,8 @@ export function getFinancialIntelligence(input: FinancialIntelligenceInput): Fin
       is_complete: g.is_complete,
     })),
     transactionsByGoal,
+    forecastsByGoalId,
+    healthByGoalId,
   });
   const topCoachingMessage = coachingMessages[0]?.message ?? null;
 
@@ -183,6 +204,7 @@ export function getFinancialIntelligence(input: FinancialIntelligenceInput): Fin
     goals: goalsForHealth,
     activityLog,
     now,
+    forecastsByGoalId,
   });
 
   const interventions = generateInterventions({

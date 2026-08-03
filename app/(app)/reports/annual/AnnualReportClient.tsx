@@ -13,6 +13,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatCurrency } from "@/lib/utils";
+import { useGatedDownload } from "@/lib/hooks/useGatedDownload";
+import UpgradePrompt from "@/components/billing/UpgradePrompt";
 import type { AnnualReport } from "@/lib/exportCenter";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -28,6 +30,7 @@ interface Props {
 export default function AnnualReportClient({ report, currencyCode, locale, earliestYear, latestYear }: Props) {
   const router = useRouter();
   const fmt = (n: number) => formatCurrency(n, currencyCode, locale);
+  const { download, downloading, blocked, clearBlocked } = useGatedDownload();
   const years = Array.from({ length: latestYear - earliestYear + 1 }, (_, i) => latestYear - i);
   const maxMonthTotal = Math.max(1, ...report.monthlyBreakdown.map((m) => m.total));
   const topCategories = [...report.categoryBreakdown].filter((c) => c.totalSaved > 0).sort((a, b) => b.totalSaved - a.totalSaved);
@@ -51,7 +54,7 @@ export default function AnnualReportClient({ report, currencyCode, locale, earli
           </select>
           <button
             onClick={() => window.print()}
-            className="text-sm px-3 py-1.5 rounded-lg bg-brand-500 text-black font-semibold hover:opacity-90 transition-opacity"
+            className="text-sm px-3 py-1.5 rounded-lg bg-brand-500 text-black font-semibold hover:opacity-90 transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50"
           >
             Print / Save as PDF
           </button>
@@ -147,12 +150,35 @@ export default function AnnualReportClient({ report, currencyCode, locale, earli
       <div className="print:hidden mt-6 pt-4 border-t border-white/10">
         <h2 className="text-sm font-semibold text-white/90 mb-2">Export raw data</h2>
         <div className="flex flex-wrap gap-3 text-sm">
-          <a className="text-brand-500 hover:underline" href={`/api/export/annual-report?year=${report.year}&format=csv&section=monthly`}>Monthly CSV</a>
-          <a className="text-brand-500 hover:underline" href={`/api/export/annual-report?year=${report.year}&format=csv&section=category`}>Category CSV</a>
-          <a className="text-brand-500 hover:underline" href={`/api/export/annual-report?year=${report.year}&format=csv&section=milestones`}>Milestones CSV</a>
-          <a className="text-brand-500 hover:underline" href="/api/export/transactions">All transactions CSV</a>
-          <a className="text-brand-500 hover:underline" href="/api/export/goals">All goals CSV</a>
+          {[
+            { label: "Monthly CSV", url: `/api/export/annual-report?year=${report.year}&format=csv&section=monthly`, filename: `savequest-monthly-${report.year}.csv` },
+            { label: "Category CSV", url: `/api/export/annual-report?year=${report.year}&format=csv&section=category`, filename: `savequest-category-${report.year}.csv` },
+            { label: "Milestones CSV", url: `/api/export/annual-report?year=${report.year}&format=csv&section=milestones`, filename: `savequest-milestones-${report.year}.csv` },
+            { label: "All transactions CSV", url: "/api/export/transactions", filename: "savequest-transactions.csv" },
+            { label: "All goals CSV", url: "/api/export/goals", filename: "savequest-goals.csv" },
+          ].map((exp) => (
+            <button
+              key={exp.url}
+              type="button"
+              onClick={() => download(exp.url, exp.filename)}
+              disabled={downloading === exp.url}
+              className="text-brand-500 hover:underline disabled:opacity-50 disabled:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 rounded"
+            >
+              {downloading === exp.url ? "Preparing…" : exp.label}
+            </button>
+          ))}
         </div>
+        {blocked && (
+          <UpgradePrompt
+            message={blocked.message}
+            usageDetail={blocked.limit !== null && blocked.used !== null ? `${blocked.used} of ${blocked.limit} exports used this period` : undefined}
+            onUpgradeClick={() => {
+              clearBlocked();
+              router.push("/settings/billing");
+            }}
+            className="mt-3"
+          />
+        )}
       </div>
     </div>
   );

@@ -228,7 +228,41 @@ export function milestonesToCSV(highlights: JourneyHighlight[]): string {
   ]);
 }
 
-// ── PDF export — HONEST LIMITATION, NOT IMPLEMENTED ────────────────────────
+// ── Monthly report ───────────────────────────────────────────────────────
+// Sprint 30 — Phase 5: Premium Reports.
+//
+// buildMonthlyReport() (lib/monthlyReport.ts, Sprint 20) already exists
+// and already reuses the right engines internally — see that file's own
+// docstring. Per the Phase 1 audit, it had zero UI/export surface before
+// this sprint (grepped app/ and components/: no references at all). This
+// is purely a CSV flattening of its existing goalHealthSummary/
+// forecastSummary arrays, joined with goal titles for readability — no
+// new computation. Deliberately does NOT accept a historical `report`
+// for a past month the way the annual report's CSVs do for past years:
+// buildMonthlyReport() is designed to answer "how is this user doing
+// *right now*" (see its own file header) using today's real goal
+// balances/pace, so there is no way to flatten it into a CSV for a past
+// month without reproducing the exact misleading-inaccuracy problem this
+// file's own header explains buildAnnualReport() was written to avoid.
+import type { MonthlyReport } from "@/lib/monthlyReport";
+
+export function monthlyReportGoalsToCSV(
+  report: MonthlyReport,
+  goals: Pick<SavingsGoal, "id" | "title">[]
+): string {
+  const goalById = new Map(goals.map((g) => [g.id, g]));
+  const forecastByGoal = new Map(report.forecastSummary.map((f) => [f.goalId, f]));
+
+  return toCSV(report.goalHealthSummary, [
+    { header: "Goal", value: (h) => goalById.get(h.goalId)?.title ?? "(deleted goal)" },
+    { header: "Health status", value: (h) => h.status },
+    { header: "Health score", value: (h) => String(h.score) },
+    { header: "Pace status", value: (h) => forecastByGoal.get(h.goalId)?.paceStatus ?? "" },
+    { header: "Projected completion", value: (h) => forecastByGoal.get(h.goalId)?.projectedCompletionDate ?? "" },
+  ]);
+}
+
+
 // The Sprint 24 brief asks for PDF export. There is no PDF-generation
 // library anywhere in this codebase (checked package.json — only
 // @playwright/test, a dev/test-only dependency, not something this app

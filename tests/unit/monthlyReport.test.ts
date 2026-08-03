@@ -74,4 +74,26 @@ describe("buildMonthlyReport", () => {
     expect(report.goalsCompleted).toBe(1);
     expect(report.topMilestone).toContain("New Bike");
   });
+
+  // ── Sprint 30 — Phase 8: explainability audit ────────────────────────
+  describe("topMilestone's largest-deposit amount (Phase 8 fix)", () => {
+    it("defaults to a bare rounded number when no formatAmount is passed, matching the previous behavior exactly", () => {
+      const now = new Date("2026-03-15T00:00:00Z");
+      const txs = [tx({ id: "1", goal_id: "g1", amount: 250, created_at: "2026-03-10T00:00:00Z" })];
+      const report = buildMonthlyReport({ ...baseInputs, transactions: txs, now });
+      expect(report.topMilestone).toBe("Largest deposit this month: 250");
+    });
+
+    it("uses the passed formatAmount instead of a bare number", () => {
+      const now = new Date("2026-03-15T00:00:00Z");
+      const txs = [tx({ id: "1", goal_id: "g1", amount: 250, created_at: "2026-03-10T00:00:00Z" })];
+      const report = buildMonthlyReport({
+        ...baseInputs,
+        transactions: txs,
+        now,
+        formatAmount: (n) => `R${n.toFixed(2)}`,
+      });
+      expect(report.topMilestone).toBe("Largest deposit this month: R250.00");
+    });
+  });
 });

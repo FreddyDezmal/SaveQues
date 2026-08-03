@@ -27,7 +27,7 @@
 import { getDeposits, consistencyScore, averageDepositsPerWeek } from "@/lib/analyticsEngine";
 import { compareRecentPeriods } from "@/lib/trends";
 import { getMomentumState } from "@/lib/momentum";
-import { forecastGoal } from "@/lib/forecast";
+import { forecastGoal, type GoalForecast } from "@/lib/forecast";
 import type { SavingsGoal, Transaction } from "@/lib/types";
 import type { GoalHealthStatus } from "@/lib/goalHealth";
 
@@ -58,6 +58,19 @@ export interface AccountHealthInputs {
   goals: Pick<SavingsGoal, "id" | "target_amount" | "current_amount" | "target_date" | "is_complete">[];
   activityLog: { date: string; xp_earned: number }[];
   now?: Date;
+  /**
+   * Sprint 30 — Phase 10 (Performance audit): getFinancialIntelligence()
+   * was calling forecastGoal() once per active goal here AND once per
+   * active goal again inside lib/coaching.ts's goalMessages() — the same
+   * function, same goal, same transactions, computed twice in one
+   * request. Optional and additive: when the orchestrator has already
+   * computed a goal's forecast, it passes it here instead of paying for
+   * a second identical pass. Falls back to computing it internally (byte
+   * -identical to the previous behavior) for any caller that doesn't
+   * have one — e.g. any direct unit-test call, or callers computing
+   * account health in isolation without also needing coaching messages.
+   */
+  forecastsByGoalId?: Map<string, GoalForecast>;
 }
 
 export function computeAccountHealth(inputs: AccountHealthInputs): AccountHealth {
@@ -119,7 +132,7 @@ export function computeAccountHealth(inputs: AccountHealthInputs): AccountHealth
     }
 
     const onTrackCount = activeGoalsWithTarget.filter((g) => {
-      const f = forecastGoal(g, transactionsByGoalId.get(g.id) ?? [], now);
+      const f = inputs.forecastsByGoalId?.get(g.id) ?? forecastGoal(g, transactionsByGoalId.get(g.id) ?? [], now);
       return f.paceStatus === "on_track" || f.paceStatus === "ahead";
     }).length;
     const ratio = onTrackCount / activeGoalsWithTarget.length;

@@ -72,4 +72,24 @@ describe("generateCoachingMessages", () => {
     const priorities = messages.map((m) => m.priority);
     expect(priorities).toEqual([...priorities].sort((a, b) => b - a));
   });
+
+  // ── Sprint 30 — Phase 10: performance audit ──────────────────────────
+  it("uses a precomputed forecast instead of recomputing one from transactions, when forecastsByGoalId provides it", () => {
+    const g = goal({ target_date: "2026-06-01" });
+
+    // Zero transactions -> a freshly-computed forecastGoal() would have
+    // paceStatus "unknown", never "on_track" (see lib/forecast.ts) — so
+    // "on_pace_for_deadline" only fires here if the precomputed forecast
+    // below is actually what's used.
+    const messages = generateCoachingMessages({
+      transactions: [],
+      goals: [g],
+      transactionsByGoal: { g1: [] },
+      forecastsByGoalId: new Map([
+        ["g1", { paceStatus: "on_track", isComplete: false, remaining: 200, projectedCompletionDate: "2026-06-01", insufficientDataReason: null } as any],
+      ]),
+    });
+
+    expect(messages.some((m) => m.id === "on_pace_for_deadline")).toBe(true);
+  });
 });

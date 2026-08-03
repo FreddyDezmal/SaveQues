@@ -87,6 +87,30 @@ none of which existed before Sprint 29 (see `docs/BILLING_AUDIT.md`):
 policies — deliberately deny-all for every client role; only the
 service-role client (used exclusively by the webhook route) can touch it.
 
+## Billing — Sprint 30 addition
+
+`saved_scenarios` (migration `070_scenario_simulator_premium.sql` +
+`rollback/070_down.sql`) — one row per scenario a user has saved on a
+goal's "what if" panel. Stores the scenario *input*
+(`scenario_type`/`amount`/`interval_days`/`label`), not a frozen
+computed result: a saved scenario re-simulates against the goal's
+current transactions every time it's viewed, via the same
+`simulateScenario()` every other scenario on that page already goes
+through — see `docs/PREMIUM_ARCHITECTURE.md`. FK to `savings_goals(id)`
+and `profiles(id)`, both `ON DELETE CASCADE`.
+
+New feature row: `saved_scenarios_limit` (`kind='limit'`,
+`reset_period='lifetime'`) — same live-row-count pattern as
+`goals_limit`, not `usage_counters`. Free: 1 per goal. Premium:
+unlimited (`limit_value = NULL`).
+
+RLS: one `FOR ALL USING/WITH CHECK (auth.uid() = user_id)` policy
+(`saved_scenarios_crud_own`) — the only new-in-Sprint-30 table with a
+client write policy at all (everything else this sprint touched was
+either read-only catalogue data already covered by Sprint 29's policies,
+or write access already mediated entirely through existing tables'
+existing policies).
+
 
 
 **A note on naming, found during the Sprint 18 audit and worth stating plainly rather than re-presenting as a fresh discovery**: migration files use three different naming conventions across the project's history — sequential numbers (`001_initial_schema.sql` … `017_...`), dated files (`20260613_notifications.sql`, `20260707_notification_preferences.sql`), and a few unprefixed files (`admin_read_policies.sql`). This is **already documented and audited** in `supabase/migrations/MIGRATION_CONFLICTS.md`, which predates this sprint and explains which early migrations were superseded (e.g. `0061_...` superseded by `0062_...`) and the `014_prod_cleanup.sql` vs `014_consolidated_schema.sql` split for production vs. clean-environment setup. A `rollback/` subdirectory contains `_down.sql` files for several migrations; an `archive/` subdirectory holds superseded originals. Read `MIGRATION_CONFLICTS.md` before touching any migration numbered below 014.
@@ -99,5 +123,11 @@ service-role client (used exclusively by the webhook route) can touch it.
 since it sits in the same numeric sequence as the migration immediately
 before it (`068`). See `docs/PREMIUM_ARCHITECTURE.md` for the six tables
 it adds.
+
+**Sprint 30 addition**: `070_scenario_simulator_premium.sql` (+
+`rollback/070_down.sql`), continuing the same sequential convention
+`069` established. One new table (`saved_scenarios`) and one new
+feature/plan_features row (`saved_scenarios_limit`) — see the Billing —
+Sprint 30 addition section above.
 
 

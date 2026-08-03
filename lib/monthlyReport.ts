@@ -46,6 +46,16 @@ export interface MonthlyReportInputs {
   activityLog: { date: string; xp_earned: number }[];
   profile: { streak_days: number; longest_streak: number };
   now?: Date;
+  /**
+   * Sprint 30 — Phase 8 (Explainability audit): topMilestone's
+   * "largest deposit this month" case used to embed a raw
+   * `Math.round(amount)` with no currency symbol at all — a genuinely
+   * unformatted number, exactly what this phase's "never show
+   * unexplained numbers" rule exists to catch. Optional and defaults to
+   * the exact previous behavior (`Math.round(n)` as a bare string) so
+   * any existing caller/test that doesn't pass one sees no change.
+   */
+  formatAmount?: (n: number) => string;
 }
 
 function inMonth(iso: string, monthKey: string): boolean {
@@ -54,6 +64,7 @@ function inMonth(iso: string, monthKey: string): boolean {
 
 export function buildMonthlyReport(inputs: MonthlyReportInputs): MonthlyReport {
   const now = inputs.now ?? new Date();
+  const formatAmount = inputs.formatAmount ?? ((n: number) => String(Math.round(n)));
   const monthKey = getUTCMonthString(now);
   const prevMonthKey = getUTCMonthString(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)));
 
@@ -125,7 +136,7 @@ export function buildMonthlyReport(inputs: MonthlyReportInputs): MonthlyReport {
     topMilestone = completedTitle ? `Completed "${completedTitle}"` : null;
   } else if (thisMonthDeposits.length > 0) {
     const largest = thisMonthDeposits.reduce((a, b) => (Number(b.amount) > Number(a.amount) ? b : a));
-    topMilestone = `Largest deposit this month: ${Math.round(Number(largest.amount))}`;
+    topMilestone = `Largest deposit this month: ${formatAmount(Number(largest.amount))}`;
   }
 
   const mostImprovedMetric =

@@ -3,7 +3,8 @@
  * Sprint 24 — Phase 11: Export Centre.
  */
 import { describe, it, expect } from "vitest";
-import { toCSV, transactionsToCSV, goalsToCSV, buildAnnualReport } from "@/lib/exportCenter";
+import { toCSV, transactionsToCSV, goalsToCSV, buildAnnualReport, monthlyReportGoalsToCSV } from "@/lib/exportCenter";
+import { buildMonthlyReport } from "@/lib/monthlyReport";
 import type { Transaction, SavingsGoal, Profile } from "@/lib/types";
 
 function tx(overrides: Partial<Transaction>): Transaction {
@@ -133,5 +134,122 @@ describe("buildAnnualReport", () => {
     const report2026 = buildAnnualReport({ profile, goals: [], transactions: txs, year: 2026 });
     expect(report2025.milestones.some((m) => m.type === "first_deposit")).toBe(false);
     expect(report2026.milestones.some((m) => m.type === "first_deposit")).toBe(true);
+  });
+});
+
+// ── Sprint 30 — Phase 13: coverage audit ──────────────────────────────────
+// annualReportMonthlyToCSV/annualReportCategoryToCSV/milestonesToCSV predate
+// this sprint (same file as monthlyReportGoalsToCSV, same toCSV helper) but
+// had no test coverage at all. Added while already in this file for Phase 5.
+import type { JourneyHighlight } from "@/lib/journeyHighlights";
+import { annualReportMonthlyToCSV, annualReportCategoryToCSV, milestonesToCSV } from "@/lib/exportCenter";
+
+describe("annualReportMonthlyToCSV", () => {
+  it("includes all 12 zero-filled months with their totals and deposit counts", () => {
+    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+    const txs = [tx({ created_at: "2026-03-15T00:00:00Z", amount: 100 }), tx({ created_at: "2026-03-20T00:00:00Z", amount: 50 })];
+    const report = buildAnnualReport({ profile, goals: [], transactions: txs, year: 2026 });
+
+    const csv = annualReportMonthlyToCSV(report);
+    const lines = csv.split("\r\n");
+    expect(lines[0]).toBe("Month,Total saved,Deposits");
+    expect(lines.length).toBe(13); // header + 12 months
+    expect(csv).toContain("2026-03,150,2");
+    expect(csv).toContain("2026-01,0,0");
+  });
+});
+
+describe("annualReportCategoryToCSV", () => {
+  it("includes each category's total and percent-of-year-total, rounded to 1 decimal", () => {
+    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+    const g = goal({ id: "g1", category: "home", created_at: "2025-06-01T00:00:00Z" });
+    const txs = [tx({ goal_id: "g1", created_at: "2026-01-01T00:00:00Z", amount: 100 })];
+    const report = buildAnnualReport({ profile, goals: [g], transactions: txs, year: 2026 });
+
+    const csv = annualReportCategoryToCSV(report);
+    const lines = csv.split("\r\n");
+    expect(lines[0]).toBe("Category,Total saved,% of year total");
+    expect(csv).toContain("100");
+  });
+
+  it("zero-fills every category (all show 0) when there's no deposit activity, rather than omitting them", () => {
+    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+    const report = buildAnnualReport({ profile, goals: [], transactions: [], year: 2026 });
+    const csv = annualReportCategoryToCSV(report);
+    const lines = csv.split("\r\n");
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.slice(1).every((line) => line.endsWith(",0,0"))).toBe(true);
+  });
+});
+
+describe("milestonesToCSV", () => {
+  it("includes each milestone's date and label", () => {
+    const highlights: JourneyHighlight[] = [
+      { id: "h1", type: "first_deposit", timestamp: "2026-01-05T00:00:00Z", label: "Made your first deposit" },
+      { id: "h2", type: "round_number_milestone", timestamp: "2026-02-10T00:00:00Z", label: "Completed \"Emergency Fund\"" },
+    ];
+    const csv = milestonesToCSV(highlights);
+    const lines = csv.split("\r\n");
+    expect(lines[0]).toBe("Date,Milestone");
+    expect(lines[1]).toContain("Made your first deposit");
+    expect(lines[2]).toContain("Emergency Fund");
+  });
+
+  it("returns just a header row for an empty highlights list", () => {
+    expect(milestonesToCSV([]).split("\r\n").length).toBe(1);
+  });
+});
+describe("monthlyReportGoalsToCSV", () => {
+  const now = new Date("2026-03-15T00:00:00Z");
+
+  it("joins goalHealthSummary with goal titles and forecastSummary's pace/completion columns", () => {
+    const g = goal({ id: "g1", title: "Emergency Fund", target_amount: 1000, current_amount: 500 });
+    const txs = [
+      tx({ goal_id: "g1", created_at: "2026-03-01T00:00:00Z", amount: 100 }),
+      tx({ goal_id: "g1", created_at: "2026-03-08T00:00:00Z", amount: 100 }),
+    ];
+    const report = buildMonthlyReport({
+      transactions: txs,
+      goals: [g],
+      achievements: [],
+      activityLog: [],
+      profile: { streak_days: 2, longest_streak: 2 },
+      now,
+    });
+
+    const csv = monthlyReportGoalsToCSV(report, [{ id: "g1", title: "Emergency Fund" }]);
+    const lines = csv.split("\r\n");
+    expect(lines[0]).toBe("Goal,Health status,Health score,Pace status,Projected completion");
+    expect(lines[1]).toContain("Emergency Fund");
+  });
+
+  it("falls back to '(deleted goal)' when the goal referenced in the report no longer exists in the goals list", () => {
+    const g = goal({ id: "g1", title: "Old Goal" });
+    const txs = [tx({ goal_id: "g1", created_at: "2026-03-01T00:00:00Z", amount: 50 })];
+    const report = buildMonthlyReport({
+      transactions: txs,
+      goals: [g],
+      achievements: [],
+      activityLog: [],
+      profile: { streak_days: 1, longest_streak: 1 },
+      now,
+    });
+
+    // Simulate the goal having been deleted between report generation and CSV rendering.
+    const csv = monthlyReportGoalsToCSV(report, []);
+    expect(csv).toContain("(deleted goal)");
+  });
+
+  it("returns just a header row (no goal rows) when there are no active goals", () => {
+    const report = buildMonthlyReport({
+      transactions: [],
+      goals: [],
+      achievements: [],
+      activityLog: [],
+      profile: { streak_days: 0, longest_streak: 0 },
+      now,
+    });
+    const csv = monthlyReportGoalsToCSV(report, []);
+    expect(csv.split("\r\n").length).toBe(1);
   });
 });

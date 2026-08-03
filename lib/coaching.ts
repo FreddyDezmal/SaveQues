@@ -20,8 +20,8 @@
  */
 
 import { getDeposits, mostFrequentDay, consistencyScore } from "@/lib/analyticsEngine";
-import { forecastGoal } from "@/lib/forecast";
-import { computeGoalHealth } from "@/lib/goalHealth";
+import { forecastGoal, type GoalForecast } from "@/lib/forecast";
+import { computeGoalHealth, type GoalHealth } from "@/lib/goalHealth";
 import type { SavingsGoal, Transaction } from "@/lib/types";
 
 export interface CoachingMessage {
@@ -35,6 +35,18 @@ export interface CoachingMessage {
 interface GoalCoachingInput {
   goal: Pick<SavingsGoal, "id" | "title" | "target_amount" | "current_amount" | "target_date" | "is_complete">;
   transactions: Transaction[]; // this goal's transactions only
+  /**
+   * Sprint 30 — Phase 10 (Performance audit): optional, additive. When the
+   * caller (generateCoachingMessages, via getFinancialIntelligence) has
+   * already computed this goal's forecast/health for another purpose in
+   * the same request, pass it here instead of recomputing — see
+   * CoachingContext's own comment for the full "computed twice" finding.
+   * Falls back to computing internally (identical to the previous
+   * behavior) when omitted, so coachingMessagesForGoal() — which has no
+   * reason to precompute anything for a single goal — is unaffected.
+   */
+  precomputedForecast?: GoalForecast;
+  precomputedHealth?: GoalHealth;
 }
 
 /** Coaching messages that look at overall saving behaviour (not tied to one goal). */
@@ -64,12 +76,12 @@ function behaviorMessages(allTransactions: Transaction[]): CoachingMessage[] {
 }
 
 /** Coaching messages scoped to a single goal, using its forecast + health. */
-function goalMessages({ goal, transactions }: GoalCoachingInput): CoachingMessage[] {
+function goalMessages({ goal, transactions, precomputedForecast, precomputedHealth }: GoalCoachingInput): CoachingMessage[] {
   if (goal.is_complete) return [];
 
   const messages: CoachingMessage[] = [];
-  const forecast = forecastGoal(goal, transactions);
-  const health = computeGoalHealth(goal, transactions);
+  const forecast = precomputedForecast ?? forecastGoal(goal, transactions);
+  const health = precomputedHealth ?? computeGoalHealth(goal, transactions);
   const deposits = getDeposits(transactions);
 
   // "Two deposits away" — only fires when we can support the exact number:
@@ -128,6 +140,19 @@ export interface CoachingContext {
   goals: Pick<SavingsGoal, "id" | "title" | "target_amount" | "current_amount" | "target_date" | "is_complete">[];
   /** Per-goal transaction lists (already filtered), keyed by goal_id. Callers already have this from goal detail fetches. */
   transactionsByGoal: Record<string, Transaction[]>;
+  /**
+   * Sprint 30 — Phase 10 (Performance audit): getFinancialIntelligence()
+   * was calling forecastGoal()/computeGoalHealth() once per active goal
+   * here, then lib/accountHealth.ts was calling forecastGoal() again for
+   * the exact same goals in the exact same request — the same
+   * computation done twice for no reason other than each module not
+   * knowing the other had already done it. Both maps are optional and
+   * additive: any existing caller that doesn't pass them (including
+   * coachingMessagesForGoal, which only ever handles one goal at a time
+   * and has nothing to share) sees byte-identical behavior.
+   */
+  forecastsByGoalId?: Map<string, GoalForecast>;
+  healthByGoalId?: Map<string, GoalHealth>;
 }
 
 /**
@@ -140,7 +165,14 @@ export function generateCoachingMessages(ctx: CoachingContext): CoachingMessage[
 
   for (const goal of ctx.goals) {
     const goalTxs = ctx.transactionsByGoal[goal.id] ?? [];
-    messages.push(...goalMessages({ goal, transactions: goalTxs }));
+    messages.push(
+      ...goalMessages({
+        goal,
+        transactions: goalTxs,
+        precomputedForecast: ctx.forecastsByGoalId?.get(goal.id),
+        precomputedHealth: ctx.healthByGoalId?.get(goal.id),
+      })
+    );
   }
 
   return messages.sort((a, b) => b.priority - a.priority);

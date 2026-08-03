@@ -18,6 +18,7 @@ import { computeGoalHealth } from "@/lib/goalHealth";
 import { coachingMessagesForGoal } from "@/lib/coaching";
 import { buildCelebrationStats } from "@/lib/celebrationSummary";
 import GoalIntelligenceCard from "@/components/goals/GoalIntelligenceCard";
+import PremiumCoachingCard from "@/components/insights/PremiumCoachingCard";
 import ScenarioSimulatorCard from "@/components/goals/ScenarioSimulatorCard";
 
 type TxType = "deposit" | "withdrawal" | "goal_purchase";
@@ -384,6 +385,11 @@ export default function GoalDetailClient({ goal: initialGoal, transactions: init
 
         {!goal.is_complete && (
           <GoalIntelligenceCard forecast={forecast} health={health} coaching={coaching} formatAmount={fc} />
+        )}
+
+        {/* Sprint 30 — Phase 7: unlocks coaching[3:] — GoalIntelligenceCard above already shows coaching[0:3] for free, unchanged. */}
+        {!goal.is_complete && (
+          <PremiumCoachingCard messages={coaching} alreadyFreeCount={3} />
         )}
 
         {!goal.is_complete && (

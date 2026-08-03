@@ -244,3 +244,44 @@ of what pre-existed (nothing) in `docs/BILLING_AUDIT.md`.
 - **Audit logging**: `audit_logs` table, written from financial mutation paths.
 - **Notification-specific hardening** (Sprint 27, Phase 14): deep-link values are validated as same-origin relative paths (rejecting absolute/protocol-relative/`javascript:` URLs) before client-side navigation, on both the in-app router and the service worker — defense-in-depth, since `deep_link` is exclusively server-constructed today. `sendToUser()` re-checks the master notification switch as a final safety net, mirroring how vacation mode was already handled.
 - **Billing-specific hardening** (Sprint 29, Phase 14 — full detail in `docs/SECURITY_AUDIT.md`): no client-writable "isPremium" flag exists anywhere — entitlements are recomputed server-side on every gated request. `subscriptions` and `usage_counters` have RLS `SELECT`-own policies and **no client write policy at all**; the only writer of `subscriptions` is the signature-verified webhook route, and the only writer of `usage_counters` is a `SECURITY DEFINER` RPC invoked exclusively via the service-role client. A canceled/past-due subscription falls back to free-plan entitlements even though its row still references the paid plan.
+
+## Sprint 30: premium feature activation
+
+Sprint 29 (above) built the billing plumbing; Sprint 30's Phase 1 audit
+found almost none of it was connected to the app. Full detail (feature
+keys, enforcement points, the one documented client-side-gating
+tradeoff — see that section's security note) is in
+`docs/PREMIUM_ARCHITECTURE.md`'s own Sprint 30 section; this is the
+app-structure summary.
+
+- **`/intelligence`** (new route) — one page surfacing everything
+  `getFinancialIntelligence()` already computes (financial health, cash
+  flow, category intelligence, behavior/risk, recommendations, coaching)
+  plus a per-goal forecast/health/coaching panel for whichever goal is
+  flagged `is_primary` (falling back to the nearest-target-date active
+  goal — there is no existing engine that ranks a user's current goals by
+  priority; this page does not invent one, see that route's own comment).
+  Every card reused as-is from the dashboard/goal-detail pages that
+  already had it; nothing recomputed.
+- **`/reports`** (new hub) + **`/reports/monthly`** (new) — the Annual
+  Report (pre-existing) had no link to it anywhere in the app before this
+  sprint; neither did `lib/monthlyReport.ts` (Sprint 20, computed but
+  never surfaced). Both are reachable now. The monthly report
+  deliberately has no historical-month picker the way the annual report
+  has a year picker — `buildMonthlyReport()` computes goal health/pace
+  against *today's* real balances, so a past month would be actively
+  misleading (see that route's own comment for the full reasoning).
+- **Scenario Simulator** (`components/goals/ScenarioSimulatorCard.tsx`,
+  goal detail) — extended, not rebuilt: the standard-scenario "what if"
+  cards and comparison bars are unchanged Sprint 28/28.5 work. Added:
+  server-enforced daily quota (see Premium doc), saved scenarios, and a
+  currency-formatting fix (`lib/scenarioSimulator.ts`'s labels hardcoded
+  `$` regardless of the user's real `currency_code`).
+- **Performance**: `getFinancialIntelligence()` was computing
+  `forecastGoal()` twice per active goal on every call — once inside
+  `lib/coaching.ts`'s message generation, again inside
+  `lib/accountHealth.ts`'s forecast-reliability factor. Both now accept
+  an optional precomputed map (`forecastsByGoalId`/`healthByGoalId`),
+  populated once by the orchestrator and shared into both; every other
+  caller (e.g. `coachingMessagesForGoal()` on goal detail, which only
+  ever handles one goal) is unaffected.

@@ -70,9 +70,9 @@ type GoalInput = Pick<SavingsGoal, "id" | "target_amount" | "current_amount" | "
  * existing `whatIfWeeklyDelta()` — no new pace math, just packaged as a
  * ScenarioResult alongside the other scenario types.
  */
-function simulateWeeklyDelta(baseline: GoalForecast, input: ScenarioInput, now: Date): ScenarioResult {
+function simulateWeeklyDelta(baseline: GoalForecast, input: ScenarioInput, now: Date, formatAmount: (n: number) => string): ScenarioResult {
   const amount = input.amount ?? 0;
-  const label = amount >= 0 ? `Deposit $${amount}/week more` : `Deposit $${Math.abs(amount)}/week less`;
+  const label = amount >= 0 ? `Deposit ${formatAmount(amount)}/week more` : `Deposit ${formatAmount(Math.abs(amount))}/week less`;
 
   if (baseline.isComplete) {
     return {
@@ -256,9 +256,9 @@ function simulateCadenceChange(baseline: GoalForecast, transactions: Transaction
  * `current_amount` — the safest way to reuse the exact same pace/remaining
  * math as the baseline forecast without duplicating it.
  */
-function simulateLumpSum(goal: GoalInput, transactions: Transaction[], baseline: GoalForecast, input: ScenarioInput, now: Date): ScenarioResult {
+function simulateLumpSum(goal: GoalInput, transactions: Transaction[], baseline: GoalForecast, input: ScenarioInput, now: Date, formatAmount: (n: number) => string): ScenarioResult {
   const amount = Math.max(0, input.amount ?? 0);
-  const label = `Add a one-time $${amount} deposit today`;
+  const label = `Add a one-time ${formatAmount(amount)} deposit today`;
 
   if (baseline.isComplete || amount <= 0) {
     return {
@@ -267,7 +267,7 @@ function simulateLumpSum(goal: GoalInput, transactions: Transaction[], baseline:
       baselineCompletionDate: baseline.isComplete ? null : baseline.projectedCompletionDate,
       projectedCompletionDate: baseline.isComplete ? null : baseline.projectedCompletionDate,
       deltaDays: 0,
-      explanation: baseline.isComplete ? "This goal is already complete — there's nothing left to simulate." : "Enter a lump sum amount greater than $0 to simulate.",
+      explanation: baseline.isComplete ? "This goal is already complete — there's nothing left to simulate." : `Enter a lump sum amount greater than ${formatAmount(0)} to simulate.`,
       insufficientDataReason: null,
     };
   }
@@ -285,9 +285,9 @@ function simulateLumpSum(goal: GoalInput, transactions: Transaction[], baseline:
     projectedCompletionDate: projected.isComplete ? toUTCDateStringForNow(now) : projected.projectedCompletionDate,
     deltaDays: projected.isComplete ? diffDays(baseline.projectedCompletionDate, toUTCDateStringForNow(now)) : diffDays(baseline.projectedCompletionDate, projected.projectedCompletionDate),
     explanation: projected.isComplete
-      ? `A $${amount} lump sum today would complete this goal immediately.`
+      ? `A ${formatAmount(amount)} lump sum today would complete this goal immediately.`
       : projected.projectedCompletionDate
-        ? `A $${amount} lump sum today would move completion to ${projected.projectedCompletionDate}, keeping the same ongoing pace.`
+        ? `A ${formatAmount(amount)} lump sum today would move completion to ${projected.projectedCompletionDate}, keeping the same ongoing pace.`
         : label,
     insufficientDataReason: projected.isComplete ? null : projected.insufficientDataReason,
   };
@@ -297,24 +297,38 @@ function toUTCDateStringForNow(now: Date): string {
   return now.toISOString().slice(0, 10);
 }
 
+// Sprint 30 — Phase 6 (Goal Detail Enhancements audit): every label/
+// explanation above used to hardcode "$" regardless of the user's actual
+// currency_code — a real bug for this app specifically, which defaults
+// to ZAR (see lib/utils.ts's formatCurrency). formatAmount is threaded
+// through as an optional parameter, defaulting to the exact previous
+// "$${n}" behavior, so every existing call site (and
+// tests/unit/scenarioSimulator.test.ts, unchanged) keeps working
+// identically when it isn't passed. components/goals/ScenarioSimulatorCard.tsx
+// now passes its own `formatAmount` prop through (previously received but
+// never actually used — see that component's own Sprint 30 comments).
+/** Default formatter — matches this module's previous hardcoded behavior exactly, so any existing caller that doesn't pass one sees no change. */
+const defaultFormatAmount = (n: number) => `$${n}`;
+
 /** Runs a single scenario against one goal. Never mutates `goal` or `transactions`. */
 export function simulateScenario(
   goal: GoalInput,
   transactions: Transaction[],
   input: ScenarioInput,
-  now: Date = new Date()
+  now: Date = new Date(),
+  formatAmount: (n: number) => string = defaultFormatAmount
 ): ScenarioResult {
   const baseline = forecastGoal(goal, transactions, now);
 
   switch (input.type) {
     case "weekly_delta":
-      return simulateWeeklyDelta(baseline, input, now);
+      return simulateWeeklyDelta(baseline, input, now, formatAmount);
     case "skip_payment":
       return simulateSkipPayment(baseline, transactions, now);
     case "cadence_change":
       return simulateCadenceChange(baseline, transactions, input, now);
     case "lump_sum":
-      return simulateLumpSum(goal, transactions, baseline, input, now);
+      return simulateLumpSum(goal, transactions, baseline, input, now, formatAmount);
   }
 }
 
@@ -323,9 +337,10 @@ export function simulateScenarios(
   goal: GoalInput,
   transactions: Transaction[],
   inputs: ScenarioInput[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  formatAmount: (n: number) => string = defaultFormatAmount
 ): ScenarioResult[] {
-  return inputs.map((input) => simulateScenario(goal, transactions, input, now));
+  return inputs.map((input) => simulateScenario(goal, transactions, input, now, formatAmount));
 }
 
 /**
@@ -337,7 +352,8 @@ export function simulateScenarios(
 export function simulateStandardScenarios(
   goal: GoalInput,
   transactions: Transaction[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  formatAmount: (n: number) => string = defaultFormatAmount
 ): ScenarioResult[] {
   const deposits = getDeposits(transactions);
   const stats = getDepositStats(deposits);
@@ -352,7 +368,8 @@ export function simulateStandardScenarios(
       { type: "skip_payment" },
       { type: "cadence_change", intervalDays: 14 },
     ],
-    now
+    now,
+    formatAmount
   );
 }
 

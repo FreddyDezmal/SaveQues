@@ -28,6 +28,9 @@ import type { TimelineEventGroup } from "@/lib/types";
 import IntelligencePanel from "@/components/insights/IntelligencePanel";
 import CategoryIntelligenceCard from "@/components/insights/CategoryIntelligenceCard";
 import FinancialHealthCard from "@/components/insights/FinancialHealthCard";
+import PremiumForecastCard from "@/components/insights/PremiumForecastCard";
+import PremiumBadge from "@/components/billing/PremiumBadge";
+import { useBillingStatus } from "@/lib/hooks/useBillingStatus";
 import RecommendedGoalCard from "@/components/insights/RecommendedGoalCard";
 import BehaviorInsights from "@/components/behavior/BehaviorInsights";
 import type { Insight } from "@/lib/insights";
@@ -102,6 +105,7 @@ export default function DashboardClient({
   hasDeposit, notificationPromptDismissed, intelligence, intelligenceSectionOrder, behavior, financialHealth
 }: Props) {
   const router = useRouter();
+  const { isPremium } = useBillingStatus();
   const [pauseLoading, setPauseLoading] = useState(false);
   const [pauseConfirm, setPauseConfirm] = useState(false);
   const [selectedBadge, setSelectedBadge] = useState<BadgeDetailData | null>(null);
@@ -163,8 +167,9 @@ export default function DashboardClient({
       <div className="flex items-center justify-between mb-5">
         <div>
           <p className="text-white/40 text-sm" suppressHydrationWarning>{greeting}</p>
-          <h1 className="font-display text-2xl font-bold text-white mt-0.5">
+          <h1 className="font-display text-2xl font-bold text-white mt-0.5 flex items-center gap-2">
             {profile.display_name} <span>{profile.avatar_emoji}</span>
+            {isPremium && <PremiumBadge variant="icon" />}
           </h1>
           <p className="text-xs mt-0.5" style={{ color: tierColor }}>
             {tierLabel} · Level {levelInfo.level}
@@ -278,6 +283,28 @@ export default function DashboardClient({
         </Link>
       )}
 
+      {/* Sprint 30 — Phase 4: same lightweight entry-point pattern as the Portfolio link above, for the new Intelligence Center. */}
+      {userStage !== "new" && (
+        <Link
+          href="/intelligence"
+          className="flex items-center justify-between card p-3 mb-4 text-sm text-white/60 hover:text-white/90 transition-colors"
+        >
+          <span>Open your Intelligence Center</span>
+          <span aria-hidden>→</span>
+        </Link>
+      )}
+
+      {/* Sprint 30 — Phase 5: same lightweight entry-point pattern, for the new Reports hub. */}
+      {userStage !== "new" && (
+        <Link
+          href="/reports"
+          className="flex items-center justify-between card p-3 mb-4 text-sm text-white/60 hover:text-white/90 transition-colors"
+        >
+          <span>View your reports</span>
+          <span aria-hidden>→</span>
+        </Link>
+      )}
+
       {/* ── Sprint 19: Intelligence panel (insights + coaching + weekly snapshot) ── */}
       {userStage !== "new" && intelligence && (
         <IntelligencePanel
@@ -301,6 +328,14 @@ export default function DashboardClient({
       {userStage !== "new" && financialHealth && (
         <FinancialHealthCard
           healthScore={financialHealth.score}
+          cashFlow={financialHealth.cashFlow}
+          formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
+        />
+      )}
+
+      {/* ── Sprint 30: Phase 2 — Premium Forecast (30/60/90-day breakdown) ── */}
+      {userStage !== "new" && financialHealth && (
+        <PremiumForecastCard
           cashFlow={financialHealth.cashFlow}
           formatAmount={(n) => formatCurrency(n, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")}
         />

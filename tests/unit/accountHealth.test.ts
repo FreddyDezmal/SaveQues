@@ -59,4 +59,23 @@ describe("computeAccountHealth", () => {
     const result = computeAccountHealth({ transactions: [], goals: [], activityLog: [] });
     expect(result.trend).toBe("unknown");
   });
+
+  // ── Sprint 30 — Phase 10: performance audit ──────────────────────────
+  it("uses a precomputed forecast instead of recomputing one, when forecastsByGoalId provides it", () => {
+    const now = new Date("2026-03-01T00:00:00Z");
+    const goals = [{ id: "g1", target_amount: 1000, current_amount: 500, target_date: "2026-04-01", is_complete: false }];
+
+    // A deliberately wrong/fabricated forecast — if computeAccountHealth
+    // actually uses this instead of computing its own from (empty)
+    // transactions, the forecast-reliability factor's explanation will
+    // reflect it (1 of 1 on pace) rather than what real forecastGoal()
+    // would say from zero deposits (off pace / no data).
+    const forecastsByGoalId = new Map([
+      ["g1", { paceStatus: "on_track", isComplete: false, remaining: 500, projectedCompletionDate: "2026-04-01", insufficientDataReason: null } as any],
+    ]);
+
+    const result = computeAccountHealth({ transactions: [], goals, activityLog: [], now, forecastsByGoalId });
+    const forecastFactor = result.factors.find((f) => f.name === "Forecast reliability");
+    expect(forecastFactor?.explanation).toContain("1 of 1 target-dated goals are on pace");
+  });
 });
