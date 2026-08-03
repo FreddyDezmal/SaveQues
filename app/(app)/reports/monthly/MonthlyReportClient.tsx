@@ -167,7 +167,7 @@ export default function MonthlyReportClient({ report, goals, currencyCode, local
 
       {report.coachingSummary.length > 0 && (
         <section className="card p-4 mb-4 print:border print:border-black/20" aria-labelledby="coaching-heading">
-          <h2 id="coaching-heading" className="text-sm font-semibold text-white/90 print:text-black mb-2">This month's coaching</h2>
+          <h2 id="coaching-heading" className="text-sm font-semibold text-white/90 print:text-black mb-2">This month&apos;s coaching</h2>
           <ul className="space-y-1.5">
             {report.coachingSummary.map((line, i) => (
               <li key={i} className="text-sm text-white/85 print:text-black">{line}</li>

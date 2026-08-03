@@ -308,7 +308,7 @@ export default function ScenarioSimulatorCard({ goal, transactions, formatAmount
     } finally {
       setCustomRunning(false);
     }
-  }, [customAmount, customType, goal, transactions]);
+  }, [customAmount, customType, goal, transactions, formatAmount]);
 
   const saveScenario = useCallback(
     async (result: ScenarioResult, amount?: number, intervalDays?: number) => {

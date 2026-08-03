@@ -69,7 +69,7 @@ export default function PremiumCoachingCard({ messages, alreadyFreeCount, goalTi
       <h2 id="premium-coaching-heading" className="text-sm font-semibold text-white/90 mb-1">Your coaching plan</h2>
       {focus && (
         <p className="text-xs text-white/45 mb-3">
-          This week's focus: <span className="text-white/70">{focus.message}</span>
+          This week&apos;s focus: <span className="text-white/70">{focus.message}</span>
         </p>
       )}
       {trendExplanation && (
