@@ -12,6 +12,33 @@
  *
  * Deliberately excludes categories the user already has an active (or
  * completed) goal in, per the brief's "avoid recommending duplicate goals."
+ *
+ * SPRINT 31 — PHASE 8 AUDIT FINDING, FIXED HERE:
+ * TEMPLATES.baselineTarget below was authored in ZAR (this app's original
+ * single currency — see "Emergency Fund: 15000" etc.) and, before this
+ * fix, was used completely unconverted for every user regardless of
+ * currency_code. A JPY user got offered a literal "¥15,000" emergency
+ * fund (≈$100 — far too small), while a KWD user got offered "15,000 KWD"
+ * (≈$49,000 — absurdly large). Capacity-based scaling (below) made this
+ * worse, not better, for non-ZAR users: it compares the user's own-currency
+ * weekly capacity against a ZAR-denominated reference rate, so currencies
+ * with very different unit values than ZAR (JPY, KWD, etc.) would almost
+ * always hit the ±clamp rather than scaling meaningfully.
+ *
+ * Fixed via dependency injection, not a rewrite of the scaling math: an
+ * optional `convertFromZar` pure function converts each ZAR-denominated
+ * baseline into the user's currency BEFORE scaling runs, so the scaling
+ * logic itself (unchanged) now operates on numbers that are actually
+ * comparable to the user's real capacity. Same pattern
+ * lib/scenarioSimulator.ts already uses for `formatAmount` — keeps this
+ * module pure, synchronous, and fully unit-testable without a live
+ * exchange-rate cache. Defaults to identity (no conversion) so any
+ * existing caller that doesn't pass one keeps getting the exact previous
+ * ZAR-denominated behavior — zero regression.
+ *
+ * The actual rate lookup (Phase 6/7's async cache) is the caller's job —
+ * see lib/intelligence/getFinancialIntelligence.ts's docstring for why
+ * that wiring stops there for now rather than reaching further upstream.
  */
 
 import { getDeposits, getDepositStats, averageDepositsPerWeek } from "@/lib/analyticsEngine";
@@ -64,6 +91,16 @@ export interface RecommendationInputs {
   goals: Pick<SavingsGoal, "id" | "category" | "is_complete">[];
   now?: Date;
   maxResults?: number;
+  /**
+   * Converts a ZAR-denominated amount (what TEMPLATES.baselineTarget is
+   * authored in) into the user's real currency. Defaults to identity —
+   * i.e. "no conversion," which is exactly correct for ZAR users and
+   * exactly the previous (pre-Phase-8) behavior for everyone else, so
+   * omitting this is safe but reintroduces the bug documented above for
+   * non-ZAR users. Callers with a real currency_code should pass a
+   * function backed by lib/currencyConversion.ts's convertCurrency().
+   */
+  convertFromZar?: (zarAmount: number) => number;
 }
 
 /**
@@ -75,6 +112,7 @@ export interface RecommendationInputs {
  */
 export function generateGoalRecommendations(inputs: RecommendationInputs): GoalRecommendation[] {
   const now = inputs.now ?? new Date();
+  const convertFromZar = inputs.convertFromZar ?? ((zarAmount: number) => zarAmount);
   const deposits = getDeposits(inputs.transactions);
   const stats = getDepositStats(deposits);
   const weeklyPace = averageDepositsPerWeek(deposits);
@@ -85,14 +123,23 @@ export function generateGoalRecommendations(inputs: RecommendationInputs): GoalR
   const candidates = TEMPLATES.filter((t) => !existingCategories.has(t.category));
 
   const recommendations: GoalRecommendation[] = candidates.map((t) => {
+    const baselineTarget = convertFromZar(t.baselineTarget);
+
     // Scale factor: how the user's typical weekly capacity compares to a
     // "reference" saver who could clear this template in its baseline
     // duration at baselineTarget/baselineWeeks per week. Clamped so a very
     // high or very low capacity doesn't produce an absurd target.
-    const referenceWeekly = t.baselineTarget / t.baselineWeeks;
+    const referenceWeekly = baselineTarget / t.baselineWeeks;
     const scale = capacityPerWeek ? Math.min(2.5, Math.max(0.4, capacityPerWeek / referenceWeekly)) : 1;
 
-    const suggestedTarget = Math.round((t.baselineTarget * Math.min(1.5, Math.max(0.5, scale))) / 100) * 100;
+    const suggestedTarget = Math.round((baselineTarget * Math.min(1.5, Math.max(0.5, scale))) / 100) * 100;
+    // NOTE (known limitation, not fixed here): rounding to the nearest 100
+    // units assumes a ZAR-like unit value. For a currency where 100 units
+    // is a much bigger or smaller amount than 100 ZAR (JPY, KWD, BHD...),
+    // this rounding granularity itself isn't currency-aware. Left as
+    // documented future work rather than redesigned here, since it's a
+    // cosmetic rounding-precision issue, not the magnitude bug this fix
+    // addresses.
     const suggestedWeeklySaving = capacityPerWeek
       ? Math.round(Math.min(capacityPerWeek * 0.5, suggestedTarget / t.baselineWeeks))
       : Math.round(suggestedTarget / t.baselineWeeks);

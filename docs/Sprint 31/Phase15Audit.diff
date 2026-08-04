@@ -1,0 +1,509 @@
+=== NEW FILE: tests/unit/exchangeRatesCacheFallback.test.ts ===
+--- /dev/null	2026-08-04 03:08:39.605224572 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/exchangeRatesCacheFallback.test.ts"	2026-08-04 14:03:15.917113519 +0000
+@@ -0,0 +1,146 @@
++/**
++ * tests/unit/exchangeRatesCacheFallback.test.ts
++ * Sprint 31 — Phase 15 (Testing): closes the coverage gap on
++ * lib/exchangeRates/cache.ts's documented fallback order, which is the
++ * core design contract of Phase 6 but wasn't actually exercised by
++ * tests until now — tests/unit/exchangeRatesCache.test.ts only covered
++ * the fresh-cache-hit path.
++ *
++ * Fallback order under test (see cache.ts's file header):
++ *   1. Fresh cached row → use it, no network call.
++ *   2. Stale/missing → call the live provider (refreshAllRates).
++ *   3. Live call fails AND a stale row exists → serve the stale row.
++ *   4. Live call fails AND there is no cached row at all → throw.
++ *   5. Live call SUCCEEDS but the provider's response is missing this
++ *      particular currency → same stale-or-throw logic applies.
++ */
++import { describe, it, expect, vi, beforeEach } from "vitest";
++
++const cachedRows: Record<string, { currency_code: string; usd_rate: number; fetched_at: string; source: string }> = {};
++let upsertShouldFail = false;
++let upsertCalls: any[] = [];
++
++vi.mock("@/lib/supabase/server", () => ({
++  createServiceClient: () => ({
++    from: (_table: string) => ({
++      select: () => ({
++        in: (_col: string, codes: string[]) => {
++          const rows = codes.map((c) => cachedRows[c]).filter(Boolean);
++          return Promise.resolve({ data: rows, error: null });
++        },
++      }),
++      upsert: (rows: any[], _opts: any) => {
++        upsertCalls.push(rows);
++        if (upsertShouldFail) return Promise.resolve({ error: { message: "db unavailable" } });
++        return Promise.resolve({ error: null });
++      },
++    }),
++  }),
++}));
++
++vi.mock("@/lib/logger", () => ({
++  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
++}));
++
++// Mock the provider layer so tests can control exactly what "the live
++// provider" returns, independent of env vars.
++let mockProviderImpl: () => Promise<{ currencyCode: string; usdRate: number; fetchedAt: string; source: string }[]>;
++vi.mock("@/lib/exchangeRates/index", () => ({
++  getExchangeRateProvider: () => ({
++    name: "mock-provider",
++    getRates: () => mockProviderImpl(),
++  }),
++}));
++
++import { getCachedRates, refreshAllRates } from "@/lib/exchangeRates/cache";
++
++const FAR_PAST = "2020-01-01T00:00:00.000Z"; // always stale
++const NOW = new Date("2026-08-04T00:00:00.000Z");
++
++function freshRow(code: string, usdRate: number, fetchedAt = NOW.toISOString()) {
++  return { currency_code: code, usd_rate: usdRate, fetched_at: fetchedAt, source: "test" };
++}
++
++describe("getCachedRates — fallback order", () => {
++  beforeEach(() => {
++    for (const key of Object.keys(cachedRows)) delete cachedRows[key];
++    upsertShouldFail = false;
++    upsertCalls = [];
++    mockProviderImpl = async () => [
++      { currencyCode: "ZAR", usdRate: 18.5, fetchedAt: NOW.toISOString(), source: "mock-provider" },
++      { currencyCode: "EUR", usdRate: 0.92, fetchedAt: NOW.toISOString(), source: "mock-provider" },
++    ];
++  });
++
++  it("1. uses a fresh cached row without calling the provider", async () => {
++    cachedRows.ZAR = freshRow("ZAR", 99); // deliberately different from provider's 18.5
++    const rates = await getCachedRates(["ZAR"], NOW);
++    expect(rates.get("ZAR")?.usdRate).toBe(99); // proves it used the cache, not the provider
++  });
++
++  it("2. refreshes from the provider when the cached row is stale", async () => {
++    cachedRows.ZAR = freshRow("ZAR", 99, FAR_PAST);
++    const rates = await getCachedRates(["ZAR"], NOW);
++    expect(rates.get("ZAR")?.usdRate).toBe(18.5); // provider's value, proving a refresh happened
++  });
++
++  it("2b. refreshes from the provider when there's no cached row at all", async () => {
++    const rates = await getCachedRates(["EUR"], NOW);
++    expect(rates.get("EUR")?.usdRate).toBe(0.92);
++  });
++
++  it("3. serves the stale row when the live refresh throws", async () => {
++    cachedRows.ZAR = freshRow("ZAR", 99, FAR_PAST);
++    mockProviderImpl = async () => { throw new Error("network down"); };
++    const rates = await getCachedRates(["ZAR"], NOW);
++    expect(rates.get("ZAR")?.usdRate).toBe(99); // stale value, not a throw
++  });
++
++  it("4. throws when the live refresh fails AND there is no cached row", async () => {
++    mockProviderImpl = async () => { throw new Error("network down"); };
++    await expect(getCachedRates(["ZAR"], NOW)).rejects.toThrow();
++  });
++
++  it("5. serves the stale row when the provider succeeds but omits this currency", async () => {
++    cachedRows.BHD = freshRow("BHD", 0.376, FAR_PAST); // BHD not in mockProviderImpl's response
++    const rates = await getCachedRates(["BHD"], NOW);
++    expect(rates.get("BHD")?.usdRate).toBe(0.376);
++  });
++
++  it("5b. throws when the provider succeeds but omits a currency with no cached row", async () => {
++    await expect(getCachedRates(["BHD"], NOW)).rejects.toThrow();
++  });
++
++  it("mixes fresh, stale, and missing currencies correctly in one batched call", async () => {
++    cachedRows.ZAR = freshRow("ZAR", 99); // fresh — should NOT be refreshed
++    cachedRows.BHD = freshRow("BHD", 0.376, FAR_PAST); // stale, provider omits it — falls back to stale
++    // EUR: no cached row at all — provider has it
++    const rates = await getCachedRates(["ZAR", "BHD", "EUR"], NOW);
++    expect(rates.get("ZAR")?.usdRate).toBe(99);
++    expect(rates.get("BHD")?.usdRate).toBe(0.376);
++    expect(rates.get("EUR")?.usdRate).toBe(0.92);
++  });
++});
++
++describe("refreshAllRates", () => {
++  beforeEach(() => {
++    for (const key of Object.keys(cachedRows)) delete cachedRows[key];
++    upsertShouldFail = false;
++    upsertCalls = [];
++    mockProviderImpl = async () => [
++      { currencyCode: "ZAR", usdRate: 18.5, fetchedAt: NOW.toISOString(), source: "mock-provider" },
++    ];
++  });
++
++  it("upserts every rate the provider returns", async () => {
++    const rates = await refreshAllRates(NOW);
++    expect(rates).toHaveLength(1);
++    expect(upsertCalls).toHaveLength(1);
++    expect(upsertCalls[0][0]).toMatchObject({ currency_code: "ZAR", usd_rate: 18.5 });
++  });
++
++  it("throws a clear error when the DB write fails", async () => {
++    upsertShouldFail = true;
++    await expect(refreshAllRates(NOW)).rejects.toThrow(/Failed to persist exchange rates/);
++  });
++});
+=== NEW FILE: tests/unit/currencyConversionAsync.test.ts ===
+--- /dev/null	2026-08-04 03:08:39.605224572 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/currencyConversionAsync.test.ts"	2026-08-04 14:03:55.849115893 +0000
+@@ -0,0 +1,136 @@
++/**
++ * tests/unit/currencyConversionAsync.test.ts
++ * Sprint 31 — Phase 15 (Testing): tests/unit/currencyConversion.test.ts
++ * only covers convertAmount()'s pure math (by design — see that file's
++ * header). This file covers the async I/O wrappers convertCurrency(),
++ * convertAmountsTo(), and resolveRates() via the same Supabase
++ * service-client mock pattern as tests/unit/exchangeRatesCache.test.ts,
++ * closing a real coverage gap Phase 15's audit found (55% line coverage
++ * on lib/currencyConversion.ts before this file existed).
++ */
++import { describe, it, expect, vi, beforeEach } from "vitest";
++
++const cachedRows: Record<string, { currency_code: string; usd_rate: number; fetched_at: string; source: string }> = {};
++let inCallCount = 0;
++
++vi.mock("@/lib/supabase/server", () => ({
++  createServiceClient: () => ({
++    from: (_table: string) => ({
++      select: () => ({
++        in: (_col: string, codes: string[]) => {
++          inCallCount++;
++          const rows = codes.map((c) => cachedRows[c]).filter(Boolean);
++          return Promise.resolve({ data: rows, error: null });
++        },
++      }),
++    }),
++  }),
++}));
++
++vi.mock("@/lib/logger", () => ({
++  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
++}));
++
++import { convertCurrency, convertAmountsTo, resolveRates } from "@/lib/currencyConversion";
++
++function freshRow(code: string, usdRate: number) {
++  return { currency_code: code, usd_rate: usdRate, fetched_at: new Date().toISOString(), source: "test" };
++}
++
++describe("convertCurrency", () => {
++  beforeEach(() => {
++    inCallCount = 0;
++    cachedRows.ZAR = freshRow("ZAR", 18.5);
++    cachedRows.EUR = freshRow("EUR", 0.92);
++  });
++
++  it("short-circuits to identity (no cache read at all) when fromCode === toCode", async () => {
++    const result = await convertCurrency(1234.567, "ZAR", "ZAR");
++    expect(result.rate).toBe(1);
++    expect(result.amount).toBe(1234.57); // rounded to ZAR's 2 decimals
++    expect(inCallCount).toBe(0);
++  });
++
++  it("converts between two different currencies via one batched cache read", async () => {
++    const result = await convertCurrency(100, "ZAR", "EUR");
++    expect(result.amount).toBeCloseTo(4.97, 2);
++    expect(inCallCount).toBe(1);
++  });
++
++  it("zero amount converts to zero", async () => {
++    const result = await convertCurrency(0, "ZAR", "EUR");
++    expect(result.amount).toBe(0);
++  });
++
++  it("negative amounts convert correctly (e.g. a shortfall figure)", async () => {
++    const result = await convertCurrency(-100, "ZAR", "EUR");
++    expect(result.amount).toBeCloseTo(-4.97, 2);
++  });
++
++  it("large amounts convert without precision loss", async () => {
++    const result = await convertCurrency(10_000_000, "ZAR", "EUR");
++    expect(result.amount).toBeCloseTo(497297.30, 1);
++  });
++});
++
++describe("convertAmountsTo", () => {
++  beforeEach(() => {
++    inCallCount = 0;
++    cachedRows.ZAR = freshRow("ZAR", 18.5);
++    cachedRows.EUR = freshRow("EUR", 0.92);
++    cachedRows.USD = freshRow("USD", 1);
++  });
++
++  it("converts a mixed-currency list to one target currency", async () => {
++    const results = await convertAmountsTo(
++      [
++        { amount: 100, currencyCode: "ZAR" },
++        { amount: 50, currencyCode: "USD" },
++      ],
++      "EUR"
++    );
++    expect(results).toHaveLength(2);
++    expect(results[0].toCurrency).toBe("EUR");
++    expect(results[0].originalAmount).toBe(100);
++    expect(results[1].originalAmount).toBe(50);
++  });
++
++  it("resolves every distinct currency in exactly ONE batched query, regardless of item count", async () => {
++    const items = Array.from({ length: 20 }, (_, i) => ({
++      amount: i + 1,
++      currencyCode: i % 2 === 0 ? "ZAR" : "USD",
++    }));
++    await convertAmountsTo(items, "EUR");
++    expect(inCallCount).toBe(1);
++  });
++
++  it("returns an empty array for an empty input", async () => {
++    const results = await convertAmountsTo([], "EUR");
++    expect(results).toEqual([]);
++  });
++
++  it("handles an item already in the target currency (rate of 1, no distortion)", async () => {
++    const results = await convertAmountsTo([{ amount: 100, currencyCode: "EUR" }], "EUR");
++    expect(results[0].amount).toBe(100);
++    expect(results[0].rate).toBe(1);
++  });
++});
++
++describe("resolveRates", () => {
++  beforeEach(() => {
++    inCallCount = 0;
++    cachedRows.ZAR = freshRow("ZAR", 18.5);
++    cachedRows.EUR = freshRow("EUR", 0.92);
++  });
++
++  it("returns a Map keyed by currency code", async () => {
++    const rates = await resolveRates(["ZAR", "EUR"]);
++    expect(rates.get("ZAR")?.usdRate).toBe(18.5);
++    expect(rates.get("EUR")?.usdRate).toBe(0.92);
++  });
++
++  it("does the conversion-free lookup in one query", async () => {
++    await resolveRates(["ZAR", "EUR"]);
++    expect(inCallCount).toBe(1);
++  });
++});
+=== NEW FILE: tests/unit/exchangerateApiProvider.test.ts ===
+--- /dev/null	2026-08-04 03:08:39.605224572 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/exchangerateApiProvider.test.ts"	2026-08-04 14:04:30.137117931 +0000
+@@ -0,0 +1,112 @@
++/**
++ * tests/unit/exchangerateApiProvider.test.ts
++ * Sprint 31 — Phase 15 (Testing): closes the coverage gap on
++ * lib/exchangeRates/providers/exchangerateApi.ts's getRates() — the
++ * actual fetch/parse/filter logic was untested (only
++ * buildExchangeRateApiRequest's URL-building was covered, in
++ * tests/unit/exchangeRateProvider.test.ts).
++ */
++import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
++
++vi.mock("@/lib/logger", () => ({
++  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
++}));
++
++import { createExchangeRateApiProvider } from "@/lib/exchangeRates/providers/exchangerateApi";
++
++function mockFetchOnce(body: unknown, ok = true, status = 200) {
++  vi.stubGlobal(
++    "fetch",
++    vi.fn().mockResolvedValue({
++      ok,
++      status,
++      json: () => Promise.resolve(body),
++    })
++  );
++}
++
++describe("createExchangeRateApiProvider().getRates()", () => {
++  afterEach(() => {
++    vi.unstubAllGlobals();
++  });
++
++  it("returns a rate for every currency present with a valid positive number", async () => {
++    mockFetchOnce({
++      result: "success",
++      conversion_rates: { ZAR: 18.5, EUR: 0.92, USD: 1, JPY: 155.2, BHD: 0.376 },
++    });
++    const provider = createExchangeRateApiProvider({ apiKey: "test_key" });
++    const rates = await provider.getRates();
++
++    const zar = rates.find((r) => r.currencyCode === "ZAR");
++    expect(zar?.usdRate).toBe(18.5);
++    expect(zar?.source).toBe("exchangerate_api");
++    // Every returned rate is a currency this app actually supports.
++    expect(rates.every((r) => typeof r.currencyCode === "string" && r.currencyCode.length === 3)).toBe(true);
++  });
++
++  it("excludes currencies missing from the response, without throwing", async () => {
++    // Only 3 of the 116 supported currencies present — realistic for a
++    // free-tier response that doesn't price everything.
++    mockFetchOnce({ result: "success", conversion_rates: { ZAR: 18.5, USD: 1, EUR: 0.92 } });
++    const provider = createExchangeRateApiProvider({ apiKey: "test_key" });
++    const rates = await provider.getRates();
++
++    expect(rates).toHaveLength(3);
++    expect(rates.map((r) => r.currencyCode).sort()).toEqual(["EUR", "USD", "ZAR"]);
++  });
++
++  it("excludes a currency with a zero or negative rate as if it were missing", async () => {
++    mockFetchOnce({ result: "success", conversion_rates: { ZAR: 18.5, USD: 0, EUR: -0.92 } });
++    const provider = createExchangeRateApiProvider({ apiKey: "test_key" });
++    const rates = await provider.getRates();
++
++    expect(rates.map((r) => r.currencyCode)).toEqual(["ZAR"]);
++  });
++
++  it("excludes a currency with a non-numeric rate as if it were missing", async () => {
++    mockFetchOnce({ result: "success", conversion_rates: { ZAR: 18.5, USD: "not-a-number" as any } });
++    const provider = createExchangeRateApiProvider({ apiKey: "test_key" });
++    const rates = await provider.getRates();
++
++    expect(rates.map((r) => r.currencyCode)).toEqual(["ZAR"]);
++  });
++
++  it("throws when the HTTP response is not ok", async () => {
++    mockFetchOnce({ result: "error", "error-type": "invalid-key" }, false, 401);
++    const provider = createExchangeRateApiProvider({ apiKey: "bad_key" });
++    await expect(provider.getRates()).rejects.toThrow(/invalid-key/);
++  });
++
++  it("throws when the API reports result: 'error' even with HTTP 200", async () => {
++    mockFetchOnce({ result: "error", "error-type": "quota-reached" });
++    const provider = createExchangeRateApiProvider({ apiKey: "test_key" });
++    await expect(provider.getRates()).rejects.toThrow(/quota-reached/);
++  });
++
++  it("throws when the response has no conversion_rates at all", async () => {
++    mockFetchOnce({ result: "success" });
++    const provider = createExchangeRateApiProvider({ apiKey: "test_key" });
++    await expect(provider.getRates()).rejects.toThrow();
++  });
++
++  it("throws (rather than crashing) when the response body isn't valid JSON", async () => {
++    vi.stubGlobal(
++      "fetch",
++      vi.fn().mockResolvedValue({
++        ok: true,
++        status: 200,
++        json: () => Promise.reject(new Error("Unexpected token")),
++      })
++    );
++    const provider = createExchangeRateApiProvider({ apiKey: "test_key" });
++    await expect(provider.getRates()).rejects.toThrow();
++  });
++
++  it("stamps every rate with the same fetchedAt timestamp from one call", async () => {
++    mockFetchOnce({ result: "success", conversion_rates: { ZAR: 18.5, EUR: 0.92 } });
++    const provider = createExchangeRateApiProvider({ apiKey: "test_key" });
++    const rates = await provider.getRates();
++    expect(rates[0].fetchedAt).toBe(rates[1].fetchedAt);
++  });
++});
+(new/modified since sprint start: tests/unit/dateFormat.test.ts)
+--- "/home/claude/savequest_orig/savequest backup/tests/unit/exportCenter.test.ts"	2026-08-02 23:05:39.000000000 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/exportCenter.test.ts"	2026-08-04 14:05:30.199824124 +0000
+@@ -75,6 +75,35 @@
+     expect(csv).toContain("25");
+     expect(csv).toContain("No");
+   });
++
++  it("shows 0% progress (not NaN or Infinity) for a zero-target goal, per Phase 15's explicit zero-value edge case", () => {
++    const g = goal({ target_amount: 0, current_amount: 0 });
++    const csv = goalsToCSV([g]);
++    expect(csv).not.toContain("NaN");
++    expect(csv).not.toContain("Infinity");
++    const dataLine = csv.split("\r\n")[1];
++    expect(dataLine).toBeDefined();
++  });
++
++  it("defaults the Currency column to ZAR when no currencyCode is passed (Sprint 31, Phase 10)", () => {
++    const txs = [tx({ goal_id: "g1", amount: 250 })];
++    expect(transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }]).split("\r\n")[0]).toContain("Currency");
++    expect(transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }])).toContain(",ZAR,");
++    const g = goal({ target_amount: 1000, current_amount: 250 });
++    expect(goalsToCSV([g])).toContain("ZAR");
++  });
++
++  it("uses the passed currencyCode instead of the ZAR default", () => {
++    const txs = [tx({ goal_id: "g1", amount: 250 })];
++    const csv = transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }], "USD");
++    expect(csv).toContain(",USD,");
++    expect(csv).not.toContain("ZAR");
++
++    const g = goal({ target_amount: 1000, current_amount: 250 });
++    const goalsCsv = goalsToCSV([g], "USD");
++    expect(goalsCsv).toContain("USD");
++    expect(goalsCsv).not.toContain("ZAR");
++  });
+ });
+ 
+ describe("buildAnnualReport", () => {
+@@ -145,22 +174,37 @@
+ import { annualReportMonthlyToCSV, annualReportCategoryToCSV, milestonesToCSV } from "@/lib/exportCenter";
+ 
+ describe("annualReportMonthlyToCSV", () => {
+-  it("includes all 12 zero-filled months with their totals and deposit counts", () => {
++  it("includes all 12 zero-filled months with their totals, currency, and deposit counts", () => {
+     const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+     const txs = [tx({ created_at: "2026-03-15T00:00:00Z", amount: 100 }), tx({ created_at: "2026-03-20T00:00:00Z", amount: 50 })];
+     const report = buildAnnualReport({ profile, goals: [], transactions: txs, year: 2026 });
+ 
+     const csv = annualReportMonthlyToCSV(report);
+     const lines = csv.split("\r\n");
+-    expect(lines[0]).toBe("Month,Total saved,Deposits");
++    expect(lines[0]).toBe("Month,Total saved,Currency,Deposits");
+     expect(lines.length).toBe(13); // header + 12 months
+-    expect(csv).toContain("2026-03,150,2");
+-    expect(csv).toContain("2026-01,0,0");
++    expect(csv).toContain("2026-03,150,ZAR,2");
++    expect(csv).toContain("2026-01,0,ZAR,0");
++  });
++
++  it("defaults the Currency column to ZAR when no currencyCode is passed (previous behavior's implicit currency, now explicit)", () => {
++    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
++    const report = buildAnnualReport({ profile, goals: [], transactions: [], year: 2026 });
++    expect(annualReportMonthlyToCSV(report).split("\r\n")[0]).toBe("Month,Total saved,Currency,Deposits");
++  });
++
++  it("uses the passed currencyCode for every row", () => {
++    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
++    const txs = [tx({ created_at: "2026-03-15T00:00:00Z", amount: 100 })];
++    const report = buildAnnualReport({ profile, goals: [], transactions: txs, year: 2026 });
++    const csv = annualReportMonthlyToCSV(report, "USD");
++    expect(csv).toContain("2026-03,100,USD,1");
++    expect(csv).not.toContain("ZAR");
+   });
+ });
+ 
+ describe("annualReportCategoryToCSV", () => {
+-  it("includes each category's total and percent-of-year-total, rounded to 1 decimal", () => {
++  it("includes each category's total, currency, and percent-of-year-total, rounded to 1 decimal", () => {
+     const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+     const g = goal({ id: "g1", category: "home", created_at: "2025-06-01T00:00:00Z" });
+     const txs = [tx({ goal_id: "g1", created_at: "2026-01-01T00:00:00Z", amount: 100 })];
+@@ -168,8 +212,9 @@
+ 
+     const csv = annualReportCategoryToCSV(report);
+     const lines = csv.split("\r\n");
+-    expect(lines[0]).toBe("Category,Total saved,% of year total");
++    expect(lines[0]).toBe("Category,Total saved,Currency,% of year total");
+     expect(csv).toContain("100");
++    expect(csv).toContain("ZAR");
+   });
+ 
+   it("zero-fills every category (all show 0) when there's no deposit activity, rather than omitting them", () => {
+@@ -178,7 +223,7 @@
+     const csv = annualReportCategoryToCSV(report);
+     const lines = csv.split("\r\n");
+     expect(lines.length).toBeGreaterThan(1);
+-    expect(lines.slice(1).every((line) => line.endsWith(",0,0"))).toBe(true);
++    expect(lines.slice(1).every((line) => line.endsWith(",ZAR,0"))).toBe(true);
+   });
+ });
+ 
+(new/modified since sprint start: tests/unit/exportCenter.test.ts)

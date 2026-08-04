@@ -14,6 +14,7 @@
 import { useState } from "react";
 import { Target, TrendingUp, Award, Flame, Users, Trophy, X } from "lucide-react";
 import UserAvatar from "./UserAvatar";
+import { formatDateShort } from "@/lib/dateFormat";
 
 export interface FeedItem {
   id: string;
@@ -68,7 +69,7 @@ export default function ActivityFeedCard({ item, isOwn, onHide }: ActivityFeedCa
         <p className="text-sm text-white leading-snug">{describe(item)}</p>
         <div className="flex items-center gap-1.5 mt-1 text-xs text-white/40">
           <Icon size={11} aria-hidden="true" />
-          <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>
+          <time dateTime={item.created_at}>{formatDateShort(item.created_at)}</time>
         </div>
       </div>
       {isOwn && (

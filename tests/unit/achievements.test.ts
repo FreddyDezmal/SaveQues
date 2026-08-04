@@ -14,7 +14,7 @@
  *      glance like it might be a bug — see the night_owl/early_bird case)
  */
 import { describe, it, expect } from "vitest";
-import { checkAchievements } from "@/lib/achievements";
+import { checkAchievements, getAlmostMessages } from "@/lib/achievements";
 
 const baseParams = {
   streakDays: 0,
@@ -118,5 +118,31 @@ describe("checkAchievements", () => {
     const noData = checkAchievements(baseParams);
     expect(fast.map((a) => a.id)).toContain("speed_30");
     expect(noData.map((a) => a.id)).not.toContain("speed_30");
+  });
+});
+
+describe("getAlmostMessages — savings-proximity message currency awareness (Sprint 31, Phase 5)", () => {
+  const almostParams = {
+    streakDays: 0,
+    totalSaved: 45, // 90% of the 50 target — within the 75% proximity window
+    goalsCompleted: 0,
+    challengesCompleted: 0,
+    dailyQuestsCompleted: 0,
+    earnedIds: [] as string[],
+  };
+
+  it("defaults to ZAR/en-ZA formatting when no currency is passed (previous hardcoded 'R' behavior, preserved)", () => {
+    const [hint] = getAlmostMessages(almostParams);
+    expect(hint.message).toMatch(/^R\D*5/); // "R" prefix, remaining = 5
+  });
+
+  it("uses the user's real currency when passed, instead of a hardcoded R", () => {
+    const [hint] = getAlmostMessages({ ...almostParams, currencyCode: "USD", locale: "en-US" });
+    expect(hint.message).toContain("$5");
+    expect(hint.message).not.toMatch(/^R\d/);
+  });
+
+  it("never throws for any supported currency", () => {
+    expect(() => getAlmostMessages({ ...almostParams, currencyCode: "JPY", locale: "ja-JP" })).not.toThrow();
   });
 });

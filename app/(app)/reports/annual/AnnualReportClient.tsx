@@ -13,6 +13,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatCurrency } from "@/lib/utils";
+import { formatDateNumeric } from "@/lib/dateFormat";
 import { useGatedDownload } from "@/lib/hooks/useGatedDownload";
 import UpgradePrompt from "@/components/billing/UpgradePrompt";
 import type { AnnualReport } from "@/lib/exportCenter";
@@ -64,7 +65,7 @@ export default function AnnualReportClient({ report, currencyCode, locale, earli
       {/* ── Report content ─────────────────────────────────────────────── */}
       <header className="mb-6">
         <h1 className="text-2xl font-bold text-white print:text-black">{report.year} Savings Report</h1>
-        <p className="text-sm text-white/60 print:text-black/60">Generated {new Date(report.generatedAt).toLocaleDateString(locale)}</p>
+        <p className="text-sm text-white/60 print:text-black/60">Generated {formatDateNumeric(report.generatedAt, locale)}</p>
       </header>
 
       <section className="card p-4 mb-4 print:border print:border-black/20" aria-labelledby="totals-heading">
@@ -138,7 +139,7 @@ export default function AnnualReportClient({ report, currencyCode, locale, earli
               <li key={h.id} className="text-sm text-white/85 print:text-black flex items-baseline justify-between gap-3">
                 <span>{h.label}</span>
                 <span className="text-white/50 print:text-black/60 whitespace-nowrap">
-                  {new Date(h.timestamp).toLocaleDateString(locale)}
+                  {formatDateNumeric(h.timestamp, locale)}
                 </span>
               </li>
             ))}

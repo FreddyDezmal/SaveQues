@@ -1,0 +1,258 @@
+--- "/home/claude/savequest_orig/savequest backup/lib/exportCenter.ts"	2026-08-02 05:19:25.000000000 +0000
++++ "/home/claude/savequest/savequest backup/lib/exportCenter.ts"	2026-08-03 22:47:32.425261889 +0000
+@@ -43,6 +43,7 @@
+ import { getDeposits, monthlyTotals, getGoalCompletionTimestamp } from "@/lib/analyticsEngine";
+ import { buildJourneyHighlights, type JourneyHighlight } from "@/lib/journeyHighlights";
+ import { GOAL_CATEGORIES, type GoalCategory } from "@/lib/utils";
++import { DEFAULT_CURRENCY } from "@/lib/currency";
+ 
+ // ── Generic CSV builder ──────────────────────────────────────────────────
+ 
+@@ -75,7 +76,11 @@
+ 
+ // ── Transaction / goal exports ───────────────────────────────────────────
+ 
+-export function transactionsToCSV(transactions: Transaction[], goals: Pick<SavingsGoal, "id" | "title" | "category">[]): string {
++export function transactionsToCSV(
++  transactions: Transaction[],
++  goals: Pick<SavingsGoal, "id" | "title" | "category">[],
++  currencyCode: string = DEFAULT_CURRENCY
++): string {
+   const goalById = new Map(goals.map((g) => [g.id, g]));
+   const sorted = [...transactions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+ 
+@@ -83,18 +88,26 @@
+     { header: "Date",         value: (t) => t.created_at },
+     { header: "Type",         value: (t) => t.transaction_type },
+     { header: "Amount",       value: (t) => String(Number(t.amount)) },
++    // Sprint 31 — Phase 10: a bare numeric Amount column is ambiguous on
++    // a multi-currency platform. Kept as a separate column (not folded
++    // into "Amount" as a symbol/prefix) so the Amount column stays a
++    // clean number a spreadsheet can sum directly — the same reasoning
++    // toCSV's own docstring gives for RFC 4180 quoting: this is the part
++    // of "export" that has to stay genuinely spreadsheet-usable.
++    { header: "Currency",     value: () => currencyCode },
+     { header: "Goal",         value: (t) => goalById.get(t.goal_id)?.title ?? "(deleted goal)" },
+     { header: "Category",     value: (t) => goalById.get(t.goal_id)?.category ?? "" },
+     { header: "Note",         value: (t) => t.note ?? "" },
+   ]);
+ }
+ 
+-export function goalsToCSV(goals: SavingsGoal[]): string {
++export function goalsToCSV(goals: SavingsGoal[], currencyCode: string = DEFAULT_CURRENCY): string {
+   return toCSV(goals, [
+     { header: "Title",          value: (g) => g.title },
+     { header: "Category",       value: (g) => g.category },
+     { header: "Target amount",  value: (g) => String(Number(g.target_amount)) },
+     { header: "Current amount", value: (g) => String(Number(g.current_amount)) },
++    { header: "Currency",       value: () => currencyCode },
+     { header: "Progress (%)",   value: (g) => String(Number(g.target_amount) > 0 ? Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100) : 0) },
+     { header: "Target date",    value: (g) => g.target_date ?? "" },
+     { header: "Complete",       value: (g) => (g.is_complete ? "Yes" : "No") },
+@@ -153,7 +166,7 @@
+ }
+ 
+ export interface AnnualReportInputs {
+-  profile: Pick<Profile, "created_at" | "xp_total">;
++  profile: Pick<Profile, "created_at" | "xp_total"> & Partial<Pick<Profile, "currency_code" | "locale">>;
+   goals: SavingsGoal[];
+   transactions: Transaction[];
+   year: number;
+@@ -205,18 +218,20 @@
+   };
+ }
+ 
+-export function annualReportMonthlyToCSV(report: AnnualReport): string {
++export function annualReportMonthlyToCSV(report: AnnualReport, currencyCode: string = DEFAULT_CURRENCY): string {
+   return toCSV(report.monthlyBreakdown, [
+     { header: "Month",    value: (m) => m.monthKey },
+     { header: "Total saved", value: (m) => String(m.total) },
++    { header: "Currency", value: () => currencyCode },
+     { header: "Deposits", value: (m) => String(m.count) },
+   ]);
+ }
+ 
+-export function annualReportCategoryToCSV(report: AnnualReport): string {
++export function annualReportCategoryToCSV(report: AnnualReport, currencyCode: string = DEFAULT_CURRENCY): string {
+   return toCSV(report.categoryBreakdown, [
+     { header: "Category",       value: (c) => c.label },
+     { header: "Total saved",    value: (c) => String(c.totalSaved) },
++    { header: "Currency",       value: () => currencyCode },
+     { header: "% of year total", value: (c) => String(Math.round(c.percentOfYearTotal * 10) / 10) },
+   ]);
+ }
+--- "/home/claude/savequest_orig/savequest backup/app/api/export/transactions/route.ts"	2026-07-31 19:08:06.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/api/export/transactions/route.ts"	2026-08-03 22:47:42.170191266 +0000
+@@ -46,13 +46,14 @@
+   const { blocked } = await enforceUsageLimit(user.id, "exports_limit", "monthly export");
+   if (blocked) return blocked;
+ 
+-  const [{ data: txData, error: txError }, { data: goalData, error: goalError }] = await Promise.all([
++  const [{ data: txData, error: txError }, { data: goalData, error: goalError }, { data: profileData }] = await Promise.all([
+     supabase
+       .from("transactions")
+       .select("id, user_id, goal_id, amount, note, transaction_type, created_at")
+       .eq("user_id", user.id)
+       .order("created_at", { ascending: false }),
+     supabase.from("savings_goals").select("id, title, category").eq("user_id", user.id),
++    supabase.from("profiles").select("currency_code").eq("id", user.id).single(),
+   ]);
+ 
+   if (txError || goalError) {
+@@ -60,7 +61,11 @@
+     return NextResponse.json({ error: "Couldn't build that export right now." }, { status: 500 });
+   }
+ 
+-  const csv = transactionsToCSV((txData ?? []) as Transaction[], (goalData ?? []) as Pick<SavingsGoal, "id" | "title" | "category">[]);
++  const csv = transactionsToCSV(
++    (txData ?? []) as Transaction[],
++    (goalData ?? []) as Pick<SavingsGoal, "id" | "title" | "category">[],
++    profileData?.currency_code ?? "ZAR"
++  );
+ 
+   await recordUsage(user.id, "exports_limit");
+ 
+--- "/home/claude/savequest_orig/savequest backup/app/api/export/goals/route.ts"	2026-07-31 19:08:18.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/api/export/goals/route.ts"	2026-08-03 22:47:48.251233838 +0000
+@@ -38,18 +38,21 @@
+   const { blocked } = await enforceUsageLimit(user.id, "exports_limit", "monthly export");
+   if (blocked) return blocked;
+ 
+-  const { data, error } = await supabase
+-    .from("savings_goals")
+-    .select("id, user_id, title, category, goal_emoji, target_amount, current_amount, target_date, is_complete, created_at")
+-    .eq("user_id", user.id)
+-    .order("created_at", { ascending: false });
++  const [{ data, error }, { data: profileData }] = await Promise.all([
++    supabase
++      .from("savings_goals")
++      .select("id, user_id, title, category, goal_emoji, target_amount, current_amount, target_date, is_complete, created_at")
++      .eq("user_id", user.id)
++      .order("created_at", { ascending: false }),
++    supabase.from("profiles").select("currency_code").eq("id", user.id).single(),
++  ]);
+ 
+   if (error) {
+     log.error("export.goals failed", { user_id: user.id, error: error.message });
+     return NextResponse.json({ error: "Couldn't build that export right now." }, { status: 500 });
+   }
+ 
+-  const csv = goalsToCSV((data ?? []) as SavingsGoal[]);
++  const csv = goalsToCSV((data ?? []) as SavingsGoal[], profileData?.currency_code ?? "ZAR");
+ 
+   await recordUsage(user.id, "exports_limit");
+ 
+--- "/home/claude/savequest_orig/savequest backup/app/api/export/annual-report/route.ts"	2026-07-31 19:08:30.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/api/export/annual-report/route.ts"	2026-08-03 22:47:55.855313539 +0000
+@@ -61,7 +61,7 @@
+ 
+   const [{ data: profileData, error: profileError }, { data: goalData, error: goalError }, { data: txData, error: txError }] =
+     await Promise.all([
+-      supabase.from("profiles").select("created_at, xp_total").eq("id", user.id).single(),
++      supabase.from("profiles").select("created_at, xp_total, currency_code, locale").eq("id", user.id).single(),
+       supabase
+         .from("savings_goals")
+         .select("id, user_id, title, category, goal_emoji, target_amount, current_amount, target_date, is_complete, created_at")
+@@ -101,9 +101,9 @@
+   if (blocked) return blocked;
+ 
+   const csv =
+-    section === "category" ? annualReportCategoryToCSV(report) :
++    section === "category" ? annualReportCategoryToCSV(report, profileData?.currency_code ?? "ZAR") :
+     section === "milestones" ? milestonesToCSV(report.milestones) :
+-    annualReportMonthlyToCSV(report);
++    annualReportMonthlyToCSV(report, profileData?.currency_code ?? "ZAR");
+ 
+   await recordUsage(user.id, "exports_limit");
+ 
+--- "/home/claude/savequest_orig/savequest backup/tests/unit/exportCenter.test.ts"	2026-08-02 23:05:39.000000000 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/exportCenter.test.ts"	2026-08-03 22:49:54.625981007 +0000
+@@ -75,6 +75,26 @@
+     expect(csv).toContain("25");
+     expect(csv).toContain("No");
+   });
++
++  it("defaults the Currency column to ZAR when no currencyCode is passed (Sprint 31, Phase 10)", () => {
++    const txs = [tx({ goal_id: "g1", amount: 250 })];
++    expect(transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }]).split("\r\n")[0]).toContain("Currency");
++    expect(transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }])).toContain(",ZAR,");
++    const g = goal({ target_amount: 1000, current_amount: 250 });
++    expect(goalsToCSV([g])).toContain("ZAR");
++  });
++
++  it("uses the passed currencyCode instead of the ZAR default", () => {
++    const txs = [tx({ goal_id: "g1", amount: 250 })];
++    const csv = transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }], "USD");
++    expect(csv).toContain(",USD,");
++    expect(csv).not.toContain("ZAR");
++
++    const g = goal({ target_amount: 1000, current_amount: 250 });
++    const goalsCsv = goalsToCSV([g], "USD");
++    expect(goalsCsv).toContain("USD");
++    expect(goalsCsv).not.toContain("ZAR");
++  });
+ });
+ 
+ describe("buildAnnualReport", () => {
+@@ -145,22 +165,37 @@
+ import { annualReportMonthlyToCSV, annualReportCategoryToCSV, milestonesToCSV } from "@/lib/exportCenter";
+ 
+ describe("annualReportMonthlyToCSV", () => {
+-  it("includes all 12 zero-filled months with their totals and deposit counts", () => {
++  it("includes all 12 zero-filled months with their totals, currency, and deposit counts", () => {
+     const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+     const txs = [tx({ created_at: "2026-03-15T00:00:00Z", amount: 100 }), tx({ created_at: "2026-03-20T00:00:00Z", amount: 50 })];
+     const report = buildAnnualReport({ profile, goals: [], transactions: txs, year: 2026 });
+ 
+     const csv = annualReportMonthlyToCSV(report);
+     const lines = csv.split("\r\n");
+-    expect(lines[0]).toBe("Month,Total saved,Deposits");
++    expect(lines[0]).toBe("Month,Total saved,Currency,Deposits");
+     expect(lines.length).toBe(13); // header + 12 months
+-    expect(csv).toContain("2026-03,150,2");
+-    expect(csv).toContain("2026-01,0,0");
++    expect(csv).toContain("2026-03,150,ZAR,2");
++    expect(csv).toContain("2026-01,0,ZAR,0");
++  });
++
++  it("defaults the Currency column to ZAR when no currencyCode is passed (previous behavior's implicit currency, now explicit)", () => {
++    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
++    const report = buildAnnualReport({ profile, goals: [], transactions: [], year: 2026 });
++    expect(annualReportMonthlyToCSV(report).split("\r\n")[0]).toBe("Month,Total saved,Currency,Deposits");
++  });
++
++  it("uses the passed currencyCode for every row", () => {
++    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
++    const txs = [tx({ created_at: "2026-03-15T00:00:00Z", amount: 100 })];
++    const report = buildAnnualReport({ profile, goals: [], transactions: txs, year: 2026 });
++    const csv = annualReportMonthlyToCSV(report, "USD");
++    expect(csv).toContain("2026-03,100,USD,1");
++    expect(csv).not.toContain("ZAR");
+   });
+ });
+ 
+ describe("annualReportCategoryToCSV", () => {
+-  it("includes each category's total and percent-of-year-total, rounded to 1 decimal", () => {
++  it("includes each category's total, currency, and percent-of-year-total, rounded to 1 decimal", () => {
+     const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+     const g = goal({ id: "g1", category: "home", created_at: "2025-06-01T00:00:00Z" });
+     const txs = [tx({ goal_id: "g1", created_at: "2026-01-01T00:00:00Z", amount: 100 })];
+@@ -168,8 +203,9 @@
+ 
+     const csv = annualReportCategoryToCSV(report);
+     const lines = csv.split("\r\n");
+-    expect(lines[0]).toBe("Category,Total saved,% of year total");
++    expect(lines[0]).toBe("Category,Total saved,Currency,% of year total");
+     expect(csv).toContain("100");
++    expect(csv).toContain("ZAR");
+   });
+ 
+   it("zero-fills every category (all show 0) when there's no deposit activity, rather than omitting them", () => {
+@@ -178,7 +214,7 @@
+     const csv = annualReportCategoryToCSV(report);
+     const lines = csv.split("\r\n");
+     expect(lines.length).toBeGreaterThan(1);
+-    expect(lines.slice(1).every((line) => line.endsWith(",0,0"))).toBe(true);
++    expect(lines.slice(1).every((line) => line.endsWith(",ZAR,0"))).toBe(true);
+   });
+ });

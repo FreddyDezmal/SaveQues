@@ -43,6 +43,7 @@ import type { SavingsGoal, Transaction, Profile } from "@/lib/types";
 import { getDeposits, monthlyTotals, getGoalCompletionTimestamp } from "@/lib/analyticsEngine";
 import { buildJourneyHighlights, type JourneyHighlight } from "@/lib/journeyHighlights";
 import { GOAL_CATEGORIES, type GoalCategory } from "@/lib/utils";
+import { DEFAULT_CURRENCY } from "@/lib/currency";
 
 // ── Generic CSV builder ──────────────────────────────────────────────────
 
@@ -75,7 +76,11 @@ export function toCSV<T>(rows: T[], columns: CSVColumn<T>[]): string {
 
 // ── Transaction / goal exports ───────────────────────────────────────────
 
-export function transactionsToCSV(transactions: Transaction[], goals: Pick<SavingsGoal, "id" | "title" | "category">[]): string {
+export function transactionsToCSV(
+  transactions: Transaction[],
+  goals: Pick<SavingsGoal, "id" | "title" | "category">[],
+  currencyCode: string = DEFAULT_CURRENCY
+): string {
   const goalById = new Map(goals.map((g) => [g.id, g]));
   const sorted = [...transactions].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
@@ -83,18 +88,26 @@ export function transactionsToCSV(transactions: Transaction[], goals: Pick<Savin
     { header: "Date",         value: (t) => t.created_at },
     { header: "Type",         value: (t) => t.transaction_type },
     { header: "Amount",       value: (t) => String(Number(t.amount)) },
+    // Sprint 31 — Phase 10: a bare numeric Amount column is ambiguous on
+    // a multi-currency platform. Kept as a separate column (not folded
+    // into "Amount" as a symbol/prefix) so the Amount column stays a
+    // clean number a spreadsheet can sum directly — the same reasoning
+    // toCSV's own docstring gives for RFC 4180 quoting: this is the part
+    // of "export" that has to stay genuinely spreadsheet-usable.
+    { header: "Currency",     value: () => currencyCode },
     { header: "Goal",         value: (t) => goalById.get(t.goal_id)?.title ?? "(deleted goal)" },
     { header: "Category",     value: (t) => goalById.get(t.goal_id)?.category ?? "" },
     { header: "Note",         value: (t) => t.note ?? "" },
   ]);
 }
 
-export function goalsToCSV(goals: SavingsGoal[]): string {
+export function goalsToCSV(goals: SavingsGoal[], currencyCode: string = DEFAULT_CURRENCY): string {
   return toCSV(goals, [
     { header: "Title",          value: (g) => g.title },
     { header: "Category",       value: (g) => g.category },
     { header: "Target amount",  value: (g) => String(Number(g.target_amount)) },
     { header: "Current amount", value: (g) => String(Number(g.current_amount)) },
+    { header: "Currency",       value: () => currencyCode },
     { header: "Progress (%)",   value: (g) => String(Number(g.target_amount) > 0 ? Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100) : 0) },
     { header: "Target date",    value: (g) => g.target_date ?? "" },
     { header: "Complete",       value: (g) => (g.is_complete ? "Yes" : "No") },
@@ -153,7 +166,7 @@ function categoryTotalsForYear(
 }
 
 export interface AnnualReportInputs {
-  profile: Pick<Profile, "created_at" | "xp_total">;
+  profile: Pick<Profile, "created_at" | "xp_total"> & Partial<Pick<Profile, "currency_code" | "locale">>;
   goals: SavingsGoal[];
   transactions: Transaction[];
   year: number;
@@ -205,18 +218,20 @@ export function buildAnnualReport({ profile, goals, transactions, year, now = ne
   };
 }
 
-export function annualReportMonthlyToCSV(report: AnnualReport): string {
+export function annualReportMonthlyToCSV(report: AnnualReport, currencyCode: string = DEFAULT_CURRENCY): string {
   return toCSV(report.monthlyBreakdown, [
     { header: "Month",    value: (m) => m.monthKey },
     { header: "Total saved", value: (m) => String(m.total) },
+    { header: "Currency", value: () => currencyCode },
     { header: "Deposits", value: (m) => String(m.count) },
   ]);
 }
 
-export function annualReportCategoryToCSV(report: AnnualReport): string {
+export function annualReportCategoryToCSV(report: AnnualReport, currencyCode: string = DEFAULT_CURRENCY): string {
   return toCSV(report.categoryBreakdown, [
     { header: "Category",       value: (c) => c.label },
     { header: "Total saved",    value: (c) => String(c.totalSaved) },
+    { header: "Currency",       value: () => currencyCode },
     { header: "% of year total", value: (c) => String(Math.round(c.percentOfYearTotal * 10) / 10) },
   ]);
 }

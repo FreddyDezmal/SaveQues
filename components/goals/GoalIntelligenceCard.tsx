@@ -19,6 +19,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import type { GoalForecast } from "@/lib/forecast";
 import type { GoalHealth } from "@/lib/goalHealth";
 import type { CoachingMessage } from "@/lib/coaching";
+import { formatDateLong } from "@/lib/dateFormat";
 
 interface Props {
   forecast: GoalForecast;
@@ -36,7 +37,7 @@ const STATUS_COLOR: Record<GoalHealth["status"], string> = {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return formatDateLong(new Date(iso + "T00:00:00Z"));
 }
 
 export default function GoalIntelligenceCard({ forecast, health, coaching, formatAmount }: Props) {

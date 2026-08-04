@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { GOAL_CATEGORIES, GOAL_EMOJIS } from "@/lib/utils";
+import { GOAL_CATEGORIES, GOAL_EMOJIS, formatCurrency } from "@/lib/utils";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
+import { formatDateLong } from "@/lib/dateFormat";
 
 type Step = 1 | 2 | 3;
 
@@ -18,6 +20,22 @@ export default function NewGoalPage() {
   const [targetDate, setTargetDate] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // Sprint 31 — Phase 12: this page previously hardcoded "R" and "en-ZA"
+  // regardless of the signed-in user's real currency/locale. Defaults
+  // match the previous hardcoded behavior exactly until the profile
+  // fetch resolves — zero visible change for existing ZAR users.
+  const [currencyCode, setCurrencyCode] = useState("ZAR");
+  const [locale, setLocale] = useState("en-ZA");
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return;
+      const { data } = await supabase.from("profiles").select("currency_code, locale").eq("id", user.id).single();
+      if (data?.currency_code) setCurrencyCode(data.currency_code);
+      if (data?.locale) setLocale(data.locale);
+    });
+  }, []);
 
   const selectedCategory = GOAL_CATEGORIES.find(c => c.id === category) ?? GOAL_CATEGORIES[GOAL_CATEGORIES.length - 1];
 
@@ -204,13 +222,13 @@ export default function NewGoalPage() {
             <div className="space-y-1">
               <div className="flex justify-between text-sm">
                 <span className="text-white/40">Target</span>
-                <span className="font-bold text-white">R{targetAmount || "0"}</span>
+                <span className="font-bold text-white">{formatCurrency(Number(targetAmount) || 0, currencyCode, locale)}</span>
               </div>
               {targetDate && (
                 <div className="flex justify-between text-sm">
                   <span className="text-white/40">Deadline</span>
                   <span className="text-white/70">
-                    {new Date(targetDate).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" })}
+                    {formatDateLong(new Date(targetDate), locale)}
                   </span>
                 </div>
               )}

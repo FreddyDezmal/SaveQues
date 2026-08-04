@@ -75,6 +75,35 @@ describe("transactionsToCSV / goalsToCSV", () => {
     expect(csv).toContain("25");
     expect(csv).toContain("No");
   });
+
+  it("shows 0% progress (not NaN or Infinity) for a zero-target goal, per Phase 15's explicit zero-value edge case", () => {
+    const g = goal({ target_amount: 0, current_amount: 0 });
+    const csv = goalsToCSV([g]);
+    expect(csv).not.toContain("NaN");
+    expect(csv).not.toContain("Infinity");
+    const dataLine = csv.split("\r\n")[1];
+    expect(dataLine).toBeDefined();
+  });
+
+  it("defaults the Currency column to ZAR when no currencyCode is passed (Sprint 31, Phase 10)", () => {
+    const txs = [tx({ goal_id: "g1", amount: 250 })];
+    expect(transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }]).split("\r\n")[0]).toContain("Currency");
+    expect(transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }])).toContain(",ZAR,");
+    const g = goal({ target_amount: 1000, current_amount: 250 });
+    expect(goalsToCSV([g])).toContain("ZAR");
+  });
+
+  it("uses the passed currencyCode instead of the ZAR default", () => {
+    const txs = [tx({ goal_id: "g1", amount: 250 })];
+    const csv = transactionsToCSV(txs, [{ id: "g1", title: "Trip", category: "travel" }], "USD");
+    expect(csv).toContain(",USD,");
+    expect(csv).not.toContain("ZAR");
+
+    const g = goal({ target_amount: 1000, current_amount: 250 });
+    const goalsCsv = goalsToCSV([g], "USD");
+    expect(goalsCsv).toContain("USD");
+    expect(goalsCsv).not.toContain("ZAR");
+  });
 });
 
 describe("buildAnnualReport", () => {
@@ -145,22 +174,37 @@ import type { JourneyHighlight } from "@/lib/journeyHighlights";
 import { annualReportMonthlyToCSV, annualReportCategoryToCSV, milestonesToCSV } from "@/lib/exportCenter";
 
 describe("annualReportMonthlyToCSV", () => {
-  it("includes all 12 zero-filled months with their totals and deposit counts", () => {
+  it("includes all 12 zero-filled months with their totals, currency, and deposit counts", () => {
     const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
     const txs = [tx({ created_at: "2026-03-15T00:00:00Z", amount: 100 }), tx({ created_at: "2026-03-20T00:00:00Z", amount: 50 })];
     const report = buildAnnualReport({ profile, goals: [], transactions: txs, year: 2026 });
 
     const csv = annualReportMonthlyToCSV(report);
     const lines = csv.split("\r\n");
-    expect(lines[0]).toBe("Month,Total saved,Deposits");
+    expect(lines[0]).toBe("Month,Total saved,Currency,Deposits");
     expect(lines.length).toBe(13); // header + 12 months
-    expect(csv).toContain("2026-03,150,2");
-    expect(csv).toContain("2026-01,0,0");
+    expect(csv).toContain("2026-03,150,ZAR,2");
+    expect(csv).toContain("2026-01,0,ZAR,0");
+  });
+
+  it("defaults the Currency column to ZAR when no currencyCode is passed (previous behavior's implicit currency, now explicit)", () => {
+    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+    const report = buildAnnualReport({ profile, goals: [], transactions: [], year: 2026 });
+    expect(annualReportMonthlyToCSV(report).split("\r\n")[0]).toBe("Month,Total saved,Currency,Deposits");
+  });
+
+  it("uses the passed currencyCode for every row", () => {
+    const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
+    const txs = [tx({ created_at: "2026-03-15T00:00:00Z", amount: 100 })];
+    const report = buildAnnualReport({ profile, goals: [], transactions: txs, year: 2026 });
+    const csv = annualReportMonthlyToCSV(report, "USD");
+    expect(csv).toContain("2026-03,100,USD,1");
+    expect(csv).not.toContain("ZAR");
   });
 });
 
 describe("annualReportCategoryToCSV", () => {
-  it("includes each category's total and percent-of-year-total, rounded to 1 decimal", () => {
+  it("includes each category's total, currency, and percent-of-year-total, rounded to 1 decimal", () => {
     const profile: Pick<Profile, "created_at" | "xp_total"> = { created_at: "2025-06-01T00:00:00Z", xp_total: 0 };
     const g = goal({ id: "g1", category: "home", created_at: "2025-06-01T00:00:00Z" });
     const txs = [tx({ goal_id: "g1", created_at: "2026-01-01T00:00:00Z", amount: 100 })];
@@ -168,8 +212,9 @@ describe("annualReportCategoryToCSV", () => {
 
     const csv = annualReportCategoryToCSV(report);
     const lines = csv.split("\r\n");
-    expect(lines[0]).toBe("Category,Total saved,% of year total");
+    expect(lines[0]).toBe("Category,Total saved,Currency,% of year total");
     expect(csv).toContain("100");
+    expect(csv).toContain("ZAR");
   });
 
   it("zero-fills every category (all show 0) when there's no deposit activity, rather than omitting them", () => {
@@ -178,7 +223,7 @@ describe("annualReportCategoryToCSV", () => {
     const csv = annualReportCategoryToCSV(report);
     const lines = csv.split("\r\n");
     expect(lines.length).toBeGreaterThan(1);
-    expect(lines.slice(1).every((line) => line.endsWith(",0,0"))).toBe(true);
+    expect(lines.slice(1).every((line) => line.endsWith(",ZAR,0"))).toBe(true);
   });
 });
 

@@ -17,6 +17,7 @@
 import Link from "next/link";
 import { ArrowLeft, Target, Flame, Trophy, TrendingUp, TrendingDown } from "lucide-react";
 import { formatAmount } from "@/lib/currency";
+import { formatDateShort } from "@/lib/dateFormat";
 
 interface Props {
   digestType: "weekly" | "monthly";
@@ -27,11 +28,10 @@ interface Props {
   locale: string;
 }
 
-function formatPeriodLabel(start: string, end: string): string {
+function formatPeriodLabel(start: string, end: string, locale: string): string {
   const s = new Date(`${start}T00:00:00.000Z`);
   const e = new Date(`${end}T00:00:00.000Z`);
-  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-  return `${s.toLocaleDateString("en-US", opts)} – ${e.toLocaleDateString("en-US", opts)}`;
+  return `${formatDateShort(s, locale)} – ${formatDateShort(e, locale)}`;
 }
 
 function StatCard({ label, value }: { label: string; value: string }) {
@@ -59,14 +59,15 @@ function StatCard({ label, value }: { label: string; value: string }) {
  * visually-hidden (`sr-only`) data table with the same per-day values
  * the sighted bar chart shows, for anyone who wants the detail.
  */
-export function BarSeries({ points, colorClass, seriesLabel }: { points: { date: string; value: number }[]; colorClass: string; seriesLabel: string }) {
+export function BarSeries({ points, colorClass, seriesLabel, formatValue }: { points: { date: string; value: number }[]; colorClass: string; seriesLabel: string; formatValue?: (n: number) => string }) {
   if (points.length === 0) {
     return <p className="text-xs text-white/50 py-4 text-center">No activity in this period yet.</p>;
   }
+  const fmt = formatValue ?? ((n: number) => n.toLocaleString());
   const max = Math.max(...points.map((p) => p.value), 1);
   const total = points.reduce((sum, p) => sum + p.value, 0);
   const peak = points.reduce((best, p) => (p.value > best.value ? p : best), points[0]);
-  const summary = `${seriesLabel}: ${total.toLocaleString()} total across ${points.length} days. Highest day: ${peak.date} at ${peak.value.toLocaleString()}.`;
+  const summary = `${seriesLabel}: ${fmt(total)} total across ${points.length} days. Highest day: ${peak.date} at ${fmt(peak.value)}.`;
 
   return (
     <div role="img" aria-label={summary}>
@@ -87,7 +88,7 @@ export function BarSeries({ points, colorClass, seriesLabel }: { points: { date:
         </thead>
         <tbody>
           {points.map((p) => (
-            <tr key={p.date}><td>{p.date}</td><td>{p.value.toLocaleString()}</td></tr>
+            <tr key={p.date}><td>{p.date}</td><td>{fmt(p.value)}</td></tr>
           ))}
         </tbody>
       </table>
@@ -108,7 +109,7 @@ export default function DigestClient({ digestType, periodStart, periodEnd, paylo
           {digestType === "weekly" ? "Weekly Recap" : "Monthly Recap"}
         </h1>
       </div>
-      <p className="text-xs text-white/50 mb-6 ml-9">{formatPeriodLabel(periodStart, periodEnd)}</p>
+      <p className="text-xs text-white/50 mb-6 ml-9">{formatPeriodLabel(periodStart, periodEnd, locale)}</p>
 
       {digestType === "weekly" ? (
         <WeeklyView payload={payload} fc={fc} />
@@ -181,7 +182,7 @@ function MonthlyView({ payload, fc }: { payload: any; fc: (n: number) => string 
 
       <div className="card p-4">
         <p className="text-xs font-medium text-white mb-3">Savings this month</p>
-        <BarSeries points={payload.dailySavings} colorClass="bg-brand-500/70" seriesLabel="Savings" />
+        <BarSeries points={payload.dailySavings} colorClass="bg-brand-500/70" seriesLabel="Savings" formatValue={fc} />
       </div>
 
       <div className="card p-4">

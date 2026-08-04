@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
 
   const [{ data: profileData, error: profileError }, { data: goalData, error: goalError }, { data: txData, error: txError }] =
     await Promise.all([
-      supabase.from("profiles").select("created_at, xp_total").eq("id", user.id).single(),
+      supabase.from("profiles").select("created_at, xp_total, currency_code, locale").eq("id", user.id).single(),
       supabase
         .from("savings_goals")
         .select("id, user_id, title, category, goal_emoji, target_amount, current_amount, target_date, is_complete, created_at")
@@ -101,9 +101,9 @@ export async function GET(req: NextRequest) {
   if (blocked) return blocked;
 
   const csv =
-    section === "category" ? annualReportCategoryToCSV(report) :
+    section === "category" ? annualReportCategoryToCSV(report, profileData?.currency_code ?? "ZAR") :
     section === "milestones" ? milestonesToCSV(report.milestones) :
-    annualReportMonthlyToCSV(report);
+    annualReportMonthlyToCSV(report, profileData?.currency_code ?? "ZAR");
 
   await recordUsage(user.id, "exports_limit");
 

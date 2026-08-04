@@ -38,7 +38,7 @@ export default async function AdminPage() {
     dailyQuestLogsRes,
     chainProgressRes,
   ] = await Promise.all([
-    service.from("profiles").select("id, display_name, avatar_emoji, xp_total, current_level, streak_days, longest_streak, last_active_date, is_admin, country_code, created_at").order("created_at", { ascending: false }),
+    service.from("profiles").select("id, display_name, avatar_emoji, xp_total, current_level, streak_days, longest_streak, last_active_date, is_admin, country_code, currency_code, locale, created_at").order("created_at", { ascending: false }),
     service.from("savings_goals").select("id, user_id, title, category, target_amount, current_amount, is_complete, created_at"),
     service.from("transactions").select("id, user_id, amount, created_at, transaction_type"),
     service.from("challenges").select("*").order("xp_reward", { ascending: false }),

@@ -18,6 +18,7 @@ import Link from "next/link";
 import { ArrowLeft, Crown, Loader2, ExternalLink } from "lucide-react";
 import PremiumBadge from "@/components/billing/PremiumBadge";
 import PlanComparisonDialog from "@/components/billing/PlanComparisonDialog";
+import { formatDateNumeric } from "@/lib/dateFormat";
 import { useBillingStatus } from "@/lib/hooks/useBillingStatus";
 
 const USAGE_LABELS: Record<string, string> = {
@@ -72,7 +73,7 @@ export default function BillingClient() {
 
             {status.subscription?.cancelAtPeriodEnd && status.subscription.currentPeriodEnd && (
               <p className="text-xs text-amber-300 mb-3">
-                Cancels on {new Date(status.subscription.currentPeriodEnd).toLocaleDateString()} — you&apos;ll keep Premium until then.
+                Cancels on {formatDateNumeric(status.subscription.currentPeriodEnd)} — you&apos;ll keep Premium until then.
               </p>
             )}
             {status.subscription?.status === "past_due" && (

@@ -1,0 +1,421 @@
+=== NEW FILE: supabase/migrations/072_shared_goal_currency_awareness.sql ===
+--- /dev/null	2026-07-23 23:39:52.405474745 +0000
++++ "/home/claude/savequest/savequest backup/supabase/migrations/072_shared_goal_currency_awareness.sql"	2026-08-03 22:35:36.416778127 +0000
+@@ -0,0 +1,136 @@
++-- 072_shared_goal_currency_awareness.sql
++--
++-- Sprint 31 — Phase 9: Social Feature Compatibility.
++--
++-- AUDIT FINDING (see Phase 9 design note): group_contributions.amount had
++-- no currency_code of its own, and get_shared_goal_detail() (049) did a
++-- plain SUM(gc.amount) across ALL contributors regardless of currency —
++-- so a ZAR contributor's 500 and a USD contributor's 500 were silently
++-- summed as if they were the same money.
++--
++-- FIX, two parts:
++--   1. currency_code added to group_contributions, captured at insert
++--      time from the contributor's own profile (app layer — see
++--      app/api/shared-goals/contribute/route.ts). DEFAULT 'ZAR' is not a
++--      guess for existing rows: this has been a single-currency ZAR
++--      platform up to this sprint, so every existing contribution really
++--      was ZAR.
++--   2. get_shared_goal_detail() no longer does a cross-currency SUM at
++--      all — SQL only ever sums amounts that share a currency_code
++--      (safe), returning a per-currency breakdown instead of one
++--      collapsed total. The actual cross-currency normalization (via
++--      lib/currencyConversion.ts, Phase 7) happens in
++--      app/api/shared-goals/detail/route.ts, in Node, where the
++--      exchange-rate cache actually lives — never in SQL, and never in
++--      the client component. Also adds the owner's currency_code/locale
++--      to the response, closing the separate "formatCurrency() called
++--      with no currency code, defaulted to ZAR display" bug in
++--      SharedGoalDetailClient.tsx.
++
++ALTER TABLE public.group_contributions
++  ADD COLUMN IF NOT EXISTS currency_code text NOT NULL DEFAULT 'ZAR'
++    CHECK (currency_code IN (
++      'ZAR', 'NGN', 'GHS', 'KES', 'EGP', 'MAD', 'DZD', 'TND',
++      'ETB', 'UGX', 'TZS', 'RWF', 'ZMW', 'BWP', 'MUR', 'XOF',
++      'XAF', 'MZN', 'AOA', 'NAD', 'SZL', 'LSL', 'MWK', 'SDG',
++      'LYD', 'CDF', 'SOS', 'AED', 'SAR', 'QAR', 'KWD', 'BHD',
++      'OMR', 'ILS', 'JOD', 'LBP', 'IQD', 'TRY', 'INR', 'PKR',
++      'BDT', 'LKR', 'NPR', 'CNY', 'JPY', 'KRW', 'HKD', 'TWD',
++      'SGD', 'MYR', 'THB', 'IDR', 'PHP', 'VND', 'MMK', 'KHR',
++      'LAK', 'MNT', 'BND', 'KZT', 'UZS', 'AZN', 'GEL', 'AMD',
++      'EUR', 'GBP', 'CHF', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK',
++      'HUF', 'RON', 'BGN', 'UAH', 'RSD', 'ISK', 'ALL', 'MKD',
++      'BAM', 'MDL', 'BYN', 'AUD', 'NZD', 'FJD', 'PGK', 'WST',
++      'TOP', 'SBD', 'VUV', 'USD', 'CAD', 'MXN', 'BRL', 'ARS',
++      'CLP', 'COP', 'PEN', 'UYU', 'PYG', 'BOB', 'GTQ', 'HNL',
++      'NIO', 'CRC', 'PAB', 'DOP', 'JMD', 'TTD', 'BBD', 'BSD',
++      'BZD', 'GYD', 'SRD', 'HTG'
++    ));
++
++-- Replaces the 049 version. Same signature, same auth/visibility checks
++-- (can_view_shared_goal) — only the members[].total_contributed and
++-- total_group_contributions shapes change (see file header), plus the
++-- owner's currency_code/locale are now included.
++CREATE OR REPLACE FUNCTION public.get_shared_goal_detail(p_shared_goal_id UUID)
++RETURNS JSONB
++LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
++DECLARE
++  v_caller UUID := auth.uid();
++  v_sg     RECORD;
++  v_goal   RECORD;
++BEGIN
++  IF v_caller IS NULL THEN
++    RAISE EXCEPTION 'unauthorized' USING ERRCODE = 'insufficient_privilege';
++  END IF;
++
++  IF NOT public.can_view_shared_goal(p_shared_goal_id, v_caller) THEN
++    RETURN NULL;
++  END IF;
++
++  SELECT * INTO v_sg FROM public.shared_goals WHERE id = p_shared_goal_id;
++  SELECT * INTO v_goal FROM public.savings_goals WHERE id = v_sg.goal_id;
++
++  RETURN jsonb_build_object(
++    'shared_goal_id', v_sg.id,
++    'goal_id', v_goal.id,
++    'title', v_goal.title,
++    'goal_emoji', v_goal.goal_emoji,
++    'category', v_goal.category,
++    'target_amount', v_goal.target_amount,
++    'current_amount', v_goal.current_amount,
++    'target_date', v_goal.target_date,
++    'is_complete', v_goal.is_complete,
++    'goal_status', v_goal.goal_status,
++    'created_at', v_sg.created_at,
++    'owner', (
++      SELECT jsonb_build_object(
++        'id', p.id, 'username', p.username, 'display_name', p.display_name, 'avatar_emoji', p.avatar_emoji,
++        'currency_code', p.currency_code, 'locale', p.locale
++      )
++      FROM public.profiles p WHERE p.id = v_sg.owner_id
++    ),
++    'group', (
++      CASE WHEN v_sg.group_id IS NULL THEN NULL ELSE (
++        SELECT jsonb_build_object('id', g.id, 'name', g.name, 'emoji', g.emoji)
++        FROM public.groups g WHERE g.id = v_sg.group_id
++      ) END
++    ),
++    'members', (
++      SELECT COALESCE(jsonb_agg(jsonb_build_object(
++        'member_id', sgm.id,
++        'user_id', p.id,
++        'username', p.username,
++        'display_name', p.display_name,
++        'avatar_emoji', p.avatar_emoji,
++        'status', sgm.status,
++        -- Per-currency breakdown, NOT a single cross-currency total — see
++        -- file header. Each element only ever sums amounts that share a
++        -- currency_code, which is always a safe SQL SUM. Converting and
++        -- combining these into one number happens in Node
++        -- (app/api/shared-goals/detail/route.ts), not here.
++        'contributions_by_currency', COALESCE((
++          SELECT jsonb_agg(jsonb_build_object('currency_code', gc.currency_code, 'amount', gc.total))
++          FROM (
++            SELECT currency_code, SUM(amount) AS total
++            FROM public.group_contributions
++            WHERE shared_goal_id = v_sg.id AND user_id = sgm.user_id
++            GROUP BY currency_code
++          ) gc
++        ), '[]'::jsonb)
++      ) ORDER BY sgm.created_at ASC), '[]'::jsonb)
++      FROM public.shared_goal_members sgm
++      JOIN public.profiles p ON p.id = sgm.user_id
++      WHERE sgm.shared_goal_id = v_sg.id
++    ),
++    'total_group_contributions_by_currency', COALESCE((
++      SELECT jsonb_agg(jsonb_build_object('currency_code', t.currency_code, 'amount', t.total))
++      FROM (
++        SELECT currency_code, SUM(amount) AS total
++        FROM public.group_contributions
++        WHERE shared_goal_id = v_sg.id
++        GROUP BY currency_code
++      ) t
++    ), '[]'::jsonb)
++  );
++END;
++$$;
+--- "/home/claude/savequest_orig/savequest backup/app/api/shared-goals/contribute/route.ts"	2026-07-31 18:40:48.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/api/shared-goals/contribute/route.ts"	2026-08-03 22:35:45.211622573 +0000
+@@ -52,10 +52,27 @@
+     return NextResponse.json({ error: limit.message }, { status: 429 });
+   }
+ 
++  // Sprint 31 — Phase 9: record the currency this contribution was
++  // actually made in (defaults to the column's own 'ZAR' default if this
++  // lookup somehow comes back empty — matches every other currency_code
++  // fallback in this codebase, never silently guesses a DIFFERENT
++  // currency than "unknown").
++  const { data: contributorProfile } = await supabase
++    .from("profiles")
++    .select("currency_code")
++    .eq("id", user.id)
++    .single();
++
+   const { data, error } = await supabase
+     .from("group_contributions")
+-    .insert({ shared_goal_id: sharedGoalId, user_id: user.id, amount: Math.round(amount * 100) / 100, note })
+-    .select("id, amount, note, created_at")
++    .insert({
++      shared_goal_id: sharedGoalId,
++      user_id: user.id,
++      amount: Math.round(amount * 100) / 100,
++      currency_code: contributorProfile?.currency_code ?? "ZAR",
++      note,
++    })
++    .select("id, amount, currency_code, note, created_at")
+     .single();
+ 
+   if (error) {
+--- "/home/claude/savequest_orig/savequest backup/app/api/shared-goals/detail/route.ts"	2026-07-31 18:40:48.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/api/shared-goals/detail/route.ts"	2026-08-03 22:36:39.018170989 +0000
+@@ -1,39 +1,125 @@
+-/**
+- * app/api/shared-goals/detail/route.ts
+- *
+- * Full detail for one shared goal via public.get_shared_goal_detail()
+- * (049) — real target/current amounts, owner + group cards, per-member
+- * contribution totals. See that migration's file header for why exposing
+- * real amounts here is a deliberate, scoped exception to the feed's
+- * no-amounts rule. Returns 404 for both "doesn't exist" and "you can't
+- * see this" — the RPC itself doesn't distinguish them.
+- */
+-
+-import { createClient } from "@/lib/supabase/server";
+-import { NextRequest, NextResponse } from "next/server";
+-import { createLogger } from "@/lib/logger";
+-
+-const log = createLogger("sharedGoals.detail");
+-
+-export async function GET(req: NextRequest) {
+-  const supabase = createClient();
+-  const { data: { user } } = await supabase.auth.getUser();
+-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+-
+-  const sharedGoalId = req.nextUrl.searchParams.get("sharedGoalId");
+-  if (!sharedGoalId) {
+-    return NextResponse.json({ error: "sharedGoalId required" }, { status: 400 });
+-  }
+-
+-  const { data, error } = await supabase.rpc("get_shared_goal_detail", { p_shared_goal_id: sharedGoalId });
+-
+-  if (error) {
+-    log.error("get_shared_goal_detail RPC failed", { user_id: user.id, shared_goal_id: sharedGoalId, error: error.message });
+-    return NextResponse.json({ error: "Something went wrong" }, { status: 500 });
+-  }
+-  if (!data) {
+-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+-  }
+-
+-  return NextResponse.json(data);
+-}
+\ No newline at end of file
++/**
++ * app/api/shared-goals/detail/route.ts
++ *
++ * Full detail for one shared goal via public.get_shared_goal_detail()
++ * (049, reshaped by 072) — real target/current amounts, owner + group
++ * cards, per-member contribution totals. See 049's file header for why
++ * exposing real amounts here is a deliberate, scoped exception to the
++ * feed's no-amounts rule. Returns 404 for both "doesn't exist" and "you
++ * can't see this" — the RPC itself doesn't distinguish them.
++ *
++ * SPRINT 31 — PHASE 9: the RPC (072) intentionally stops at a
++ * per-currency breakdown — SQL only ever sums amounts that share a
++ * currency_code (safe). Converting those groups into one number in the
++ * goal owner's currency happens HERE, via lib/currencyConversion.ts
++ * (Phase 7) — this is the one place that conversion is allowed to
++ * happen for this feature. Never in the RPC (no exchange-rate cache
++ * access from SQL), never in SharedGoalDetailClient.tsx (no business
++ * logic in the UI layer, per the sprint's own principle).
++ */
++
++import { createClient } from "@/lib/supabase/server";
++import { NextRequest, NextResponse } from "next/server";
++import { createLogger } from "@/lib/logger";
++import { convertAmountsTo } from "@/lib/currencyConversion";
++
++const log = createLogger("sharedGoals.detail");
++
++interface CurrencyAmount {
++  currency_code: string;
++  amount: number;
++}
++
++interface RawMember {
++  member_id: string;
++  user_id: string;
++  username: string | null;
++  display_name: string;
++  avatar_emoji: string | null;
++  status: string;
++  contributions_by_currency: CurrencyAmount[];
++}
++
++/**
++ * Converts a list of {currency_code, amount} groups into one total in
++ * toCurrency, via the Phase 7 engine. Skips the conversion call entirely
++ * when everything is already in toCurrency (the common case today, since
++ * this has been a single-currency platform) — same "don't pay for a
++ * conversion nothing needs" instinct as createZarConverter's ZAR
++ * shortcut.
++ */
++async function sumInCurrency(groups: CurrencyAmount[], toCurrency: string): Promise<number> {
++  if (groups.length === 0) return 0;
++  if (groups.every((g) => g.currency_code === toCurrency)) {
++    return groups.reduce((sum, g) => sum + g.amount, 0);
++  }
++  const converted = await convertAmountsTo(
++    groups.map((g) => ({ amount: g.amount, currencyCode: g.currency_code })),
++    toCurrency
++  );
++  return converted.reduce((sum, c) => sum + c.amount, 0);
++}
++
++export async function GET(req: NextRequest) {
++  const supabase = createClient();
++  const { data: { user } } = await supabase.auth.getUser();
++  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++
++  const sharedGoalId = req.nextUrl.searchParams.get("sharedGoalId");
++  if (!sharedGoalId) {
++    return NextResponse.json({ error: "sharedGoalId required" }, { status: 400 });
++  }
++
++  const { data, error } = await supabase.rpc("get_shared_goal_detail", { p_shared_goal_id: sharedGoalId });
++
++  if (error) {
++    log.error("get_shared_goal_detail RPC failed", { user_id: user.id, shared_goal_id: sharedGoalId, error: error.message });
++    return NextResponse.json({ error: "Something went wrong" }, { status: 500 });
++  }
++  if (!data) {
++    return NextResponse.json({ error: "Not found" }, { status: 404 });
++  }
++
++  const ownerCurrency = data.owner?.currency_code ?? "ZAR";
++  const members: RawMember[] = data.members ?? [];
++  const totalGroupContributionsByCurrency: CurrencyAmount[] = data.total_group_contributions_by_currency ?? [];
++
++  const distinctCurrencies = new Set([
++    ...totalGroupContributionsByCurrency.map((g) => g.currency_code),
++    ...members.flatMap((m) => m.contributions_by_currency.map((g) => g.currency_code)),
++  ]);
++  // Only worth telling the client "these were converted" when there's
++  // actually more than one currency in play, or the one currency present
++  // isn't already the owner's — avoids a conversion note appearing for
++  // every single-currency (today, the vast majority of) shared goals.
++  const involvesConversion = Array.from(distinctCurrencies).some((c) => c !== ownerCurrency);
++
++  try {
++    const [totalGroupContributions, membersWithTotals] = await Promise.all([
++      sumInCurrency(totalGroupContributionsByCurrency, ownerCurrency),
++      Promise.all(
++        members.map(async (m) => ({
++          ...m,
++          total_contributed: await sumInCurrency(m.contributions_by_currency, ownerCurrency),
++        }))
++      ),
++    ]);
++
++    return NextResponse.json({
++      ...data,
++      members: membersWithTotals,
++      total_group_contributions: totalGroupContributions,
++      involves_currency_conversion: involvesConversion,
++    });
++  } catch (err) {
++    // Exchange-rate lookup failed with no fallback available (see
++    // lib/exchangeRates/cache.ts's documented fallback order) — fail
++    // closed rather than show a wrong or partially-converted total.
++    log.error("Currency normalization failed for shared goal detail", {
++      user_id: user.id,
++      shared_goal_id: sharedGoalId,
++      error: err instanceof Error ? err.message : String(err),
++    });
++    return NextResponse.json({ error: "Couldn't load contribution totals right now — try again shortly" }, { status: 503 });
++  }
++}
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/shared-goals/[sharedGoalId]/SharedGoalDetailClient.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/shared-goals/[sharedGoalId]/SharedGoalDetailClient.tsx"	2026-08-03 22:39:07.582951931 +0000
+@@ -33,10 +33,15 @@
+ interface Detail {
+   shared_goal_id: string; goal_id: string; title: string; goal_emoji: string;
+   target_amount: number; current_amount: number; is_complete: boolean;
+-  owner: { id: string; username: string | null; display_name: string | null; avatar_emoji: string | null };
++  owner: { id: string; username: string | null; display_name: string | null; avatar_emoji: string | null; currency_code: string; locale: string };
+   group: { id: string; name: string; emoji: string } | null;
+   members: Member[];
+   total_group_contributions: number;
++  /** Sprint 31 — Phase 9. True only when at least one contribution was
++   *  made in a different currency than the owner's — most shared goals
++   *  today are single-currency, so this only shows a conversion note
++   *  when it's actually relevant. */
++  involves_currency_conversion: boolean;
+ }
+ 
+ export default function SharedGoalDetailClient({ sharedGoalId }: { sharedGoalId: string }) {
+@@ -66,7 +71,7 @@
+ 
+       const { data: rawContributions } = await supabase
+         .from("group_contributions")
+-        .select("id, user_id, amount, note, created_at")
++        .select("id, user_id, amount, currency_code, note, created_at")
+         .eq("shared_goal_id", sharedGoalId)
+         .order("created_at", { ascending: false })
+         .limit(50);
+@@ -132,7 +137,10 @@
+         >
+           <div className="h-full bg-brand-500 rounded-full transition-all" style={{ width: `${percent}%` }} />
+         </div>
+-        <p className="text-sm text-white/60">{formatCurrency(detail.current_amount)} of {formatCurrency(detail.target_amount)}</p>
++        <p className="text-sm text-white/60">{formatCurrency(detail.current_amount, detail.owner.currency_code, detail.owner.locale)} of {formatCurrency(detail.target_amount, detail.owner.currency_code, detail.owner.locale)}</p>
++        {detail.involves_currency_conversion && (
++          <p className="text-xs text-white/30 mt-1">Converted to {detail.owner.currency_code} at today&apos;s rate — contributors&apos; own amounts are shown in their history below.</p>
++        )}
+ 
+         {!isOwner && activeMembers.some((m) => m.user_id === myUserId) && (
+           <button type="button" onClick={() => setContributeOpen(true)} className="btn-primary w-full mt-4 flex items-center justify-center gap-1.5 text-sm">
+@@ -162,7 +170,7 @@
+             <div key={m.member_id} className="card p-4 flex items-center gap-3">
+               <UserAvatar emoji={m.avatar_emoji} />
+               <UserName displayName={m.display_name} username={m.username} className="flex-1 min-w-0" />
+-              <span className="text-xs text-white/50">{formatCurrency(m.total_contributed)}</span>
++              <span className="text-xs text-white/50">{formatCurrency(m.total_contributed, detail.owner.currency_code, detail.owner.locale)}</span>
+               {isOwner && (
+                 <button
+                   type="button"
+--- "/home/claude/savequest_orig/savequest backup/components/social/ContributionCard.tsx"	2026-07-31 18:40:52.000000000 +0000
++++ "/home/claude/savequest/savequest backup/components/social/ContributionCard.tsx"	2026-08-03 22:37:19.263215365 +0000
+@@ -11,11 +11,20 @@
+  */
+ 
+ import { formatCurrency } from "@/lib/utils";
++import { getCurrencyConfig } from "@/lib/currency";
+ 
+ export interface Contribution {
+   id: string;
+   user_id: string;
+   amount: number;
++  /** Sprint 31 — Phase 9. The currency THIS contribution was actually
++   *  made in — deliberately NOT converted here. Each line item is one
++   *  contributor's own money in their own currency; only the aggregate
++   *  totals (SharedGoalDetailClient's total_contributed /
++   *  total_group_contributions) get converted into the goal owner's
++   *  currency. Showing this line converted would hide what the
++   *  contributor actually typed. */
++  currency_code: string;
+   note: string | null;
+   created_at: string;
+   contributor_name?: string;
+@@ -26,7 +35,7 @@
+     <div className="flex items-center gap-3 py-2.5 border-b border-surface-border last:border-0">
+       <div className="flex-1 min-w-0">
+         <p className="text-sm text-white">
+-          <span className="font-medium">{contribution.contributor_name || "A contributor"}</span> added {formatCurrency(contribution.amount)}
++          <span className="font-medium">{contribution.contributor_name || "A contributor"}</span> added {formatCurrency(contribution.amount, contribution.currency_code, getCurrencyConfig(contribution.currency_code).locale)}
+         </p>
+         {contribution.note && <p className="text-xs text-white/40 truncate">{contribution.note}</p>}
+       </div>

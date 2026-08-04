@@ -46,13 +46,14 @@ export async function GET(req: NextRequest) {
   const { blocked } = await enforceUsageLimit(user.id, "exports_limit", "monthly export");
   if (blocked) return blocked;
 
-  const [{ data: txData, error: txError }, { data: goalData, error: goalError }] = await Promise.all([
+  const [{ data: txData, error: txError }, { data: goalData, error: goalError }, { data: profileData }] = await Promise.all([
     supabase
       .from("transactions")
       .select("id, user_id, goal_id, amount, note, transaction_type, created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false }),
     supabase.from("savings_goals").select("id, title, category").eq("user_id", user.id),
+    supabase.from("profiles").select("currency_code").eq("id", user.id).single(),
   ]);
 
   if (txError || goalError) {
@@ -60,7 +61,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Couldn't build that export right now." }, { status: 500 });
   }
 
-  const csv = transactionsToCSV((txData ?? []) as Transaction[], (goalData ?? []) as Pick<SavingsGoal, "id" | "title" | "category">[]);
+  const csv = transactionsToCSV(
+    (txData ?? []) as Transaction[],
+    (goalData ?? []) as Pick<SavingsGoal, "id" | "title" | "category">[],
+    profileData?.currency_code ?? "ZAR"
+  );
 
   await recordUsage(user.id, "exports_limit");
 

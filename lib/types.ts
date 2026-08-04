@@ -22,6 +22,16 @@ export interface Database {
           quest_chains_completed: number;
           is_admin: boolean;
           created_at: string;
+          // AUDIT NOTE (Sprint 31, Phase 5): these two columns have existed
+          // in the DB since migration 014_consolidated_schema.sql (currency_code
+          // TEXT NOT NULL DEFAULT 'ZAR', locale TEXT NOT NULL DEFAULT 'en-ZA')
+          // and are already read all over the app (profile.currency_code), but
+          // were missing from this hand-maintained type — meaning every one of
+          // those reads was untyped. Adding them here so Pick<Profile, ...>
+          // call sites (lib/achievements.ts, lib/journeyHighlights.ts,
+          // lib/exportCenter.ts) can safely include them.
+          currency_code: string;
+          locale: string;
         };
         Insert: Omit<Database["public"]["Tables"]["profiles"]["Row"], "created_at">;
         Update: Partial<Database["public"]["Tables"]["profiles"]["Insert"]>;

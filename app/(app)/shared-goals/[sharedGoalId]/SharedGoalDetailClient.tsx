@@ -33,10 +33,15 @@ interface Member {
 interface Detail {
   shared_goal_id: string; goal_id: string; title: string; goal_emoji: string;
   target_amount: number; current_amount: number; is_complete: boolean;
-  owner: { id: string; username: string | null; display_name: string | null; avatar_emoji: string | null };
+  owner: { id: string; username: string | null; display_name: string | null; avatar_emoji: string | null; currency_code: string; locale: string };
   group: { id: string; name: string; emoji: string } | null;
   members: Member[];
   total_group_contributions: number;
+  /** Sprint 31 — Phase 9. True only when at least one contribution was
+   *  made in a different currency than the owner's — most shared goals
+   *  today are single-currency, so this only shows a conversion note
+   *  when it's actually relevant. */
+  involves_currency_conversion: boolean;
 }
 
 export default function SharedGoalDetailClient({ sharedGoalId }: { sharedGoalId: string }) {
@@ -66,7 +71,7 @@ export default function SharedGoalDetailClient({ sharedGoalId }: { sharedGoalId:
 
       const { data: rawContributions } = await supabase
         .from("group_contributions")
-        .select("id, user_id, amount, note, created_at")
+        .select("id, user_id, amount, currency_code, note, created_at")
         .eq("shared_goal_id", sharedGoalId)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -132,7 +137,10 @@ export default function SharedGoalDetailClient({ sharedGoalId }: { sharedGoalId:
         >
           <div className="h-full bg-brand-500 rounded-full transition-all" style={{ width: `${percent}%` }} />
         </div>
-        <p className="text-sm text-white/60">{formatCurrency(detail.current_amount)} of {formatCurrency(detail.target_amount)}</p>
+        <p className="text-sm text-white/60">{formatCurrency(detail.current_amount, detail.owner.currency_code, detail.owner.locale)} of {formatCurrency(detail.target_amount, detail.owner.currency_code, detail.owner.locale)}</p>
+        {detail.involves_currency_conversion && (
+          <p className="text-xs text-white/30 mt-1">Converted to {detail.owner.currency_code} at today&apos;s rate — contributors&apos; own amounts are shown in their history below.</p>
+        )}
 
         {!isOwner && activeMembers.some((m) => m.user_id === myUserId) && (
           <button type="button" onClick={() => setContributeOpen(true)} className="btn-primary w-full mt-4 flex items-center justify-center gap-1.5 text-sm">
@@ -162,7 +170,7 @@ export default function SharedGoalDetailClient({ sharedGoalId }: { sharedGoalId:
             <div key={m.member_id} className="card p-4 flex items-center gap-3">
               <UserAvatar emoji={m.avatar_emoji} />
               <UserName displayName={m.display_name} username={m.username} className="flex-1 min-w-0" />
-              <span className="text-xs text-white/50">{formatCurrency(m.total_contributed)}</span>
+              <span className="text-xs text-white/50">{formatCurrency(m.total_contributed, detail.owner.currency_code, detail.owner.locale)}</span>
               {isOwner && (
                 <button
                   type="button"

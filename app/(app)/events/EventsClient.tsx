@@ -6,6 +6,7 @@ import { STATIC_EVENTS } from "@/lib/events";
 import EventCard from "@/components/events/EventCard";
 import EmptyState from "@/components/ui/EmptyState";
 import { Calendar, Clock, Trophy } from "lucide-react";
+import { formatDateLong } from "@/lib/dateFormat";
 
 interface Props {
   events: (SaveQuestEvent & { window: EventWindow })[];
@@ -145,9 +146,7 @@ export default function EventsClient({ events, participationMap, history, userId
                         <p className="text-sm font-medium text-white">{title}</p>
                         {h.completed_at && (
                           <p className="text-xs text-white/30 mt-0.5">
-                            {new Date(h.completed_at).toLocaleDateString("en", {
-                              day: "numeric", month: "short", year: "numeric",
-                            })}
+                            {formatDateLong(h.completed_at)}
                           </p>
                         )}
                       </div>

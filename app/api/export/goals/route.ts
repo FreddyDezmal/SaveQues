@@ -38,18 +38,21 @@ export async function GET(req: NextRequest) {
   const { blocked } = await enforceUsageLimit(user.id, "exports_limit", "monthly export");
   if (blocked) return blocked;
 
-  const { data, error } = await supabase
-    .from("savings_goals")
-    .select("id, user_id, title, category, goal_emoji, target_amount, current_amount, target_date, is_complete, created_at")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
+  const [{ data, error }, { data: profileData }] = await Promise.all([
+    supabase
+      .from("savings_goals")
+      .select("id, user_id, title, category, goal_emoji, target_amount, current_amount, target_date, is_complete, created_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false }),
+    supabase.from("profiles").select("currency_code").eq("id", user.id).single(),
+  ]);
 
   if (error) {
     log.error("export.goals failed", { user_id: user.id, error: error.message });
     return NextResponse.json({ error: "Couldn't build that export right now." }, { status: 500 });
   }
 
-  const csv = goalsToCSV((data ?? []) as SavingsGoal[]);
+  const csv = goalsToCSV((data ?? []) as SavingsGoal[], profileData?.currency_code ?? "ZAR");
 
   await recordUsage(user.id, "exports_limit");
 

@@ -18,6 +18,7 @@
 
 import { getDeposits } from "@/lib/analyticsEngine";
 import { getLevelFromXP } from "@/lib/xp";
+import { formatAmount, DEFAULT_CURRENCY, DEFAULT_LOCALE } from "@/lib/currency";
 import type { Profile, SavingsGoal, Transaction } from "@/lib/types";
 
 export type JourneyHighlightType =
@@ -38,12 +39,14 @@ export interface JourneyHighlight {
 const ROUND_NUMBER_STEP = 1000; // e.g. R1,000 / R2,000 ... crossed in *total saved*
 
 export interface JourneyHighlightInputs {
-  profile: Pick<Profile, "created_at" | "xp_total">;
+  profile: Pick<Profile, "created_at" | "xp_total"> & Partial<Pick<Profile, "currency_code" | "locale">>;
   goals: Pick<SavingsGoal, "id" | "title" | "created_at">[];
   transactions: Transaction[];
 }
 
 export function buildJourneyHighlights({ profile, goals, transactions }: JourneyHighlightInputs): JourneyHighlight[] {
+  const currencyCode = profile.currency_code ?? DEFAULT_CURRENCY;
+  const locale        = profile.locale ?? DEFAULT_LOCALE;
   const highlights: JourneyHighlight[] = [];
 
   // ── Account created ──────────────────────────────────────────────────────
@@ -82,7 +85,7 @@ export function buildJourneyHighlights({ profile, goals, transactions }: Journey
       id: `highest_deposit_${highest.id}`,
       type: "highest_deposit",
       timestamp: highest.created_at,
-      label: `Highest single deposit so far: ${Number(highest.amount).toLocaleString()}`,
+      label: `Highest single deposit so far: ${formatAmount(Number(highest.amount), currencyCode, locale)}`,
     });
 
     // Walk deposits in order, tracking running total, and record the
@@ -96,7 +99,7 @@ export function buildJourneyHighlights({ profile, goals, transactions }: Journey
           id: `round_${nextThreshold}`,
           type: "round_number_milestone",
           timestamp: d.created_at,
-          label: `Passed ${nextThreshold.toLocaleString()} saved in total`,
+          label: `Passed ${formatAmount(nextThreshold, currencyCode, locale)} saved in total`,
         });
         nextThreshold += ROUND_NUMBER_STEP;
       }

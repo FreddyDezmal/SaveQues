@@ -53,6 +53,58 @@ describe("formatAmount", () => {
     const result = formatAmount(99.6, "USD", "en-US");
     expect(result).toContain("100"); // 99.6 rounds up to 100, not 99 or 99.6
   });
+
+  // ── Sprint 31, Phase 5: opt-in `precise` mode ──────────────────────────
+  // formatAmount's DEFAULT output (asserted above) must stay whole-unit for
+  // every currency — that's the existing, load-bearing app-wide behavior.
+  // `precise: true` is purely additive and must never change the default.
+  it("precise mode is opt-in only — default output is unchanged for JPY/BHD", () => {
+    expect(formatAmount(1234.5, "JPY", "ja-JP")).toBe(formatAmount(1234.5, "JPY", "ja-JP", { precise: false }));
+    expect(formatAmount(1234.5, "BHD", "ar-BH")).toBe(formatAmount(1234.5, "BHD", "ar-BH", { precise: false }));
+  });
+
+  it("precise mode shows 0 decimals for JPY (a zero-decimal ISO currency)", () => {
+    const result = formatAmount(1234.5, "JPY", "ja-JP", { precise: true });
+    expect(result).not.toMatch(/\.\d/); // no decimal point followed by digits
+  });
+
+  it("precise mode shows 3 decimals for BHD (a three-decimal ISO currency)", () => {
+    const result = formatAmount(1234.5, "BHD", "en-US", { precise: true });
+    expect(result).toContain("1,234.500");
+  });
+
+  it("precise mode shows 2 decimals for USD", () => {
+    const result = formatAmount(1234.5, "USD", "en-US", { precise: true });
+    expect(result).toContain("1,234.50");
+  });
+
+  it("never throws in precise mode for any currency in SUPPORTED_CURRENCIES", () => {
+    for (const { code, locale } of SUPPORTED_CURRENCIES) {
+      expect(() => formatAmount(1234.56, code, locale, { precise: true })).not.toThrow();
+    }
+  });
+});
+
+describe("SUPPORTED_CURRENCIES decimals field", () => {
+  it("every currency has a non-negative integer decimals value", () => {
+    for (const c of SUPPORTED_CURRENCIES) {
+      expect(Number.isInteger(c.decimals)).toBe(true);
+      expect(c.decimals).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("JPY is a zero-decimal currency", () => {
+    expect(getCurrencyConfig("JPY").decimals).toBe(0);
+  });
+
+  it("BHD is a three-decimal currency", () => {
+    expect(getCurrencyConfig("BHD").decimals).toBe(3);
+  });
+
+  it("ZAR and USD are two-decimal currencies", () => {
+    expect(getCurrencyConfig("ZAR").decimals).toBe(2);
+    expect(getCurrencyConfig("USD").decimals).toBe(2);
+  });
 });
 
 describe("formatAmountCompact", () => {

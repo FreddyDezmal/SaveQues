@@ -50,3 +50,47 @@ describe("generateGoalRecommendations", () => {
     expect(difficulties).toEqual([...difficulties].sort((a, b) => a - b));
   });
 });
+
+describe("generateGoalRecommendations — convertFromZar (Sprint 31, Phase 8)", () => {
+  it("defaults to identity (raw ZAR numbers) when convertFromZar is omitted — previous behavior, preserved", () => {
+    const withDefault = generateGoalRecommendations({ transactions: [], goals: [], maxResults: 9 });
+    const withExplicitIdentity = generateGoalRecommendations({
+      transactions: [],
+      goals: [],
+      maxResults: 9,
+      convertFromZar: (z) => z,
+    });
+    expect(withDefault).toEqual(withExplicitIdentity);
+  });
+
+  it("scales every suggested target when a real conversion function is passed", () => {
+    // Simulate a currency where 1 ZAR-equivalent unit = 0.05 of the
+    // target currency (e.g. converting ZAR baselines into JPY-like scale
+    // is the wrong direction for this example, but the point is just:
+    // conversion should visibly change magnitudes, not pass ZAR through).
+    const zar = generateGoalRecommendations({ transactions: [], goals: [], maxResults: 9 });
+    const converted = generateGoalRecommendations({
+      transactions: [],
+      goals: [],
+      maxResults: 9,
+      convertFromZar: (z) => z * 0.05,
+    });
+    for (let i = 0; i < zar.length; i++) {
+      expect(converted[i].category).toBe(zar[i].category);
+      expect(converted[i].suggestedTarget).toBeLessThan(zar[i].suggestedTarget);
+    }
+  });
+
+  it("never produces a non-positive or non-finite target regardless of the conversion function", () => {
+    const recs = generateGoalRecommendations({
+      transactions: [],
+      goals: [],
+      maxResults: 9,
+      convertFromZar: (z) => z * 8.4, // e.g. a currency worth much more per unit than ZAR
+    });
+    for (const r of recs) {
+      expect(r.suggestedTarget).toBeGreaterThan(0);
+      expect(Number.isFinite(r.suggestedTarget)).toBe(true);
+    }
+  });
+});

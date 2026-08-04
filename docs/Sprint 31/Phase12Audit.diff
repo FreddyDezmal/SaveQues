@@ -1,0 +1,519 @@
+=== NEW FILE: lib/dateFormat.ts ===
+--- /dev/null	2026-08-04 06:24:59.999749395 +0000
++++ "/home/claude/savequest/savequest backup/lib/dateFormat.ts"	2026-08-04 05:54:06.232076936 +0000
+@@ -0,0 +1,79 @@
++/**
++ * lib/dateFormat.ts
++ * ─────────────────────────────────────────────────────────────
++ * Sprint 31 — Phase 12: Localization Readiness.
++ *
++ * Distinct from lib/dateUtils.ts on purpose: dateUtils.ts is about WHICH
++ * calendar date something is (a data-integrity concern — activity_log
++ * writes/reads agreeing on "today"). This file is about how a date is
++ * DISPLAYED to a person — a UI-formatting concern, same category as
++ * lib/currency.ts's formatAmount. The two should never be merged: mixing
++ * "what date is this" logic with "how do we show it" logic is exactly
++ * the kind of blending Phase 12 asks to avoid.
++ *
++ * AUDIT FINDING this file fixes: before this phase, ~15 components each
++ * called `new Date(x).toLocaleDateString(...)` directly, with locale
++ * handling that was inconsistent in three different ways — hardcoded to
++ * the wrong thing ("en-ZA" in goals/new/page.tsx, "en-US" in
++ * DigestClient.tsx, "en" in EventsClient.tsx/QuestsClient.tsx — all
++ * wrong for a non-ZAR/non-US/non-English-default user), left as the
++ * browser's own runtime default (BillingClient.tsx, InvitesClient.tsx,
++ * GroupQuestCard.tsx — inconsistent between server and client rendering,
++ * and unrelated to the user's actual chosen locale), or — in the two
++ * report clients — already correctly using the real user locale, just
++ * with the formatting options re-typed at every call site instead of
++ * shared.
++ *
++ * Fix: every date-formatting call site now goes through one of the
++ * functions below, which all default to DEFAULT_LOCALE (this app's
++ * historical de facto locale — see lib/currency.ts's own DEFAULT_LOCALE
++ * for why that's the correct, zero-regression default rather than
++ * something like "en-US") and accept the real user locale as an
++ * optional override wherever a caller already has it in scope.
++ *
++ * HONEST LIMITATION (documented per the sprint's "known limitations, be
++ * honest" principle, not silently left as a gap): components that don't
++ * currently receive the viewing user's locale as a prop at all
++ * (ScenarioSimulatorCard, GoalIntelligenceCard, PortfolioIntelligenceCard,
++ * ActivityFeedCard, ContributionCard, GroupQuestCard, QuestsClient,
++ * EventsClient, InvitesClient, BillingClient) now render dates
++ * consistently in DEFAULT_LOCALE rather than each other's differing,
++ * uncoordinated defaults — a real improvement — but NOT yet in each
++ * individual viewer's own chosen locale, since that would require
++ * threading a new `locale` prop through each of those components' call
++ * chains, which is genuinely new plumbing work, not a formatting fix.
++ * Deferred as explicit future work rather than bundled into this phase.
++ */
++
++import { DEFAULT_LOCALE } from "@/lib/currency";
++
++/**
++ * "15 Mar 2026" — day, short month, year. For content where the year
++ * matters (goal target dates, report timestamps, historical entries).
++ */
++export function formatDateLong(date: Date | string, locale: string = DEFAULT_LOCALE): string {
++  const d = typeof date === "string" ? new Date(date) : date;
++  return d.toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" });
++}
++
++/**
++ * "15 Mar" — short month, day, no year. For compact UI where the
++ * current year is implied (activity feeds, quest end dates, timestamps
++ * on things that happened recently).
++ */
++export function formatDateShort(date: Date | string, locale: string = DEFAULT_LOCALE): string {
++  const d = typeof date === "string" ? new Date(date) : date;
++  return d.toLocaleDateString(locale, { month: "short", day: "numeric" });
++}
++
++/**
++ * The locale's own native numeric date format (e.g. "2026/03/15" for
++ * en-ZA, "3/15/2026" for en-US) — no explicit options, matching what
++ * every "no options passed" call site was already visually going for,
++ * just now with a consistent, intentional locale instead of an
++ * uncoordinated runtime default.
++ */
++export function formatDateNumeric(date: Date | string, locale: string = DEFAULT_LOCALE): string {
++  const d = typeof date === "string" ? new Date(date) : date;
++  return d.toLocaleDateString(locale);
++}
+=== NEW FILE: tests/unit/dateFormat.test.ts ===
+--- /dev/null	2026-08-04 06:24:59.999749395 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/dateFormat.test.ts"	2026-08-04 08:50:52.952760212 +0000
+@@ -0,0 +1,58 @@
++/**
++ * tests/unit/dateFormat.test.ts
++ * Sprint 31 — Phase 12 (Localization Readiness).
++ */
++import { describe, it, expect } from "vitest";
++import { formatDateLong, formatDateShort, formatDateNumeric } from "@/lib/dateFormat";
++
++const iso = "2026-03-15T00:00:00.000Z";
++
++describe("formatDateLong", () => {
++  it("includes day, short month, and year", () => {
++    const result = formatDateLong(iso, "en-ZA");
++    expect(result).toMatch(/15/);
++    expect(result).toMatch(/Mar/);
++    expect(result).toMatch(/2026/);
++  });
++
++  it("defaults to DEFAULT_LOCALE (en-ZA) when no locale is passed", () => {
++    expect(formatDateLong(iso)).toBe(formatDateLong(iso, "en-ZA"));
++  });
++
++  it("accepts a Date object as well as an ISO string", () => {
++    expect(formatDateLong(new Date(iso), "en-US")).toBe(formatDateLong(iso, "en-US"));
++  });
++
++  it("respects a different locale (formatting genuinely changes)", () => {
++    const enUS = formatDateLong(iso, "en-US");
++    const jaJP = formatDateLong(iso, "ja-JP");
++    expect(enUS).not.toBe(jaJP);
++  });
++});
++
++describe("formatDateShort", () => {
++  it("includes short month and day, but not the year", () => {
++    const result = formatDateShort(iso, "en-ZA");
++    expect(result).toMatch(/15/);
++    expect(result).toMatch(/Mar/);
++    expect(result).not.toMatch(/2026/);
++  });
++
++  it("defaults to DEFAULT_LOCALE (en-ZA) when no locale is passed", () => {
++    expect(formatDateShort(iso)).toBe(formatDateShort(iso, "en-ZA"));
++  });
++});
++
++describe("formatDateNumeric", () => {
++  it("produces the locale's native numeric date format", () => {
++    // en-ZA and en-US order day/month differently — proves no options
++    // are forcing a fixed style, and that locale really is being used.
++    const zaResult = formatDateNumeric(iso, "en-ZA");
++    const usResult = formatDateNumeric(iso, "en-US");
++    expect(zaResult).not.toBe(usResult);
++  });
++
++  it("defaults to DEFAULT_LOCALE (en-ZA) when no locale is passed", () => {
++    expect(formatDateNumeric(iso)).toBe(formatDateNumeric(iso, "en-ZA"));
++  });
++});
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/goals/new/page.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/goals/new/page.tsx"	2026-08-04 05:55:25.928414472 +0000
+@@ -1,10 +1,12 @@
+ "use client";
+ 
+-import { useState } from "react";
++import { useEffect, useState } from "react";
+ import { useRouter } from "next/navigation";
+-import { GOAL_CATEGORIES, GOAL_EMOJIS } from "@/lib/utils";
++import { GOAL_CATEGORIES, GOAL_EMOJIS, formatCurrency } from "@/lib/utils";
+ import { ArrowLeft } from "lucide-react";
+ import Link from "next/link";
++import { createClient } from "@/lib/supabase/client";
++import { formatDateLong } from "@/lib/dateFormat";
+ 
+ type Step = 1 | 2 | 3;
+ 
+@@ -18,6 +20,22 @@
+   const [targetDate, setTargetDate] = useState("");
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState("");
++  // Sprint 31 — Phase 12: this page previously hardcoded "R" and "en-ZA"
++  // regardless of the signed-in user's real currency/locale. Defaults
++  // match the previous hardcoded behavior exactly until the profile
++  // fetch resolves — zero visible change for existing ZAR users.
++  const [currencyCode, setCurrencyCode] = useState("ZAR");
++  const [locale, setLocale] = useState("en-ZA");
++
++  useEffect(() => {
++    const supabase = createClient();
++    supabase.auth.getUser().then(async ({ data: { user } }) => {
++      if (!user) return;
++      const { data } = await supabase.from("profiles").select("currency_code, locale").eq("id", user.id).single();
++      if (data?.currency_code) setCurrencyCode(data.currency_code);
++      if (data?.locale) setLocale(data.locale);
++    });
++  }, []);
+ 
+   const selectedCategory = GOAL_CATEGORIES.find(c => c.id === category) ?? GOAL_CATEGORIES[GOAL_CATEGORIES.length - 1];
+ 
+@@ -204,13 +222,13 @@
+             <div className="space-y-1">
+               <div className="flex justify-between text-sm">
+                 <span className="text-white/40">Target</span>
+-                <span className="font-bold text-white">R{targetAmount || "0"}</span>
++                <span className="font-bold text-white">{formatCurrency(Number(targetAmount) || 0, currencyCode, locale)}</span>
+               </div>
+               {targetDate && (
+                 <div className="flex justify-between text-sm">
+                   <span className="text-white/40">Deadline</span>
+                   <span className="text-white/70">
+-                    {new Date(targetDate).toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric" })}
++                    {formatDateLong(new Date(targetDate), locale)}
+                   </span>
+                 </div>
+               )}
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/digest/[id]/DigestClient.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/digest/[id]/DigestClient.tsx"	2026-08-04 05:55:58.222866738 +0000
+@@ -17,6 +17,7 @@
+ import Link from "next/link";
+ import { ArrowLeft, Target, Flame, Trophy, TrendingUp, TrendingDown } from "lucide-react";
+ import { formatAmount } from "@/lib/currency";
++import { formatDateShort } from "@/lib/dateFormat";
+ 
+ interface Props {
+   digestType: "weekly" | "monthly";
+@@ -27,11 +28,10 @@
+   locale: string;
+ }
+ 
+-function formatPeriodLabel(start: string, end: string): string {
++function formatPeriodLabel(start: string, end: string, locale: string): string {
+   const s = new Date(`${start}T00:00:00.000Z`);
+   const e = new Date(`${end}T00:00:00.000Z`);
+-  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+-  return `${s.toLocaleDateString("en-US", opts)} – ${e.toLocaleDateString("en-US", opts)}`;
++  return `${formatDateShort(s, locale)} – ${formatDateShort(e, locale)}`;
+ }
+ 
+ function StatCard({ label, value }: { label: string; value: string }) {
+@@ -59,14 +59,15 @@
+  * visually-hidden (`sr-only`) data table with the same per-day values
+  * the sighted bar chart shows, for anyone who wants the detail.
+  */
+-export function BarSeries({ points, colorClass, seriesLabel }: { points: { date: string; value: number }[]; colorClass: string; seriesLabel: string }) {
++export function BarSeries({ points, colorClass, seriesLabel, formatValue }: { points: { date: string; value: number }[]; colorClass: string; seriesLabel: string; formatValue?: (n: number) => string }) {
+   if (points.length === 0) {
+     return <p className="text-xs text-white/50 py-4 text-center">No activity in this period yet.</p>;
+   }
++  const fmt = formatValue ?? ((n: number) => n.toLocaleString());
+   const max = Math.max(...points.map((p) => p.value), 1);
+   const total = points.reduce((sum, p) => sum + p.value, 0);
+   const peak = points.reduce((best, p) => (p.value > best.value ? p : best), points[0]);
+-  const summary = `${seriesLabel}: ${total.toLocaleString()} total across ${points.length} days. Highest day: ${peak.date} at ${peak.value.toLocaleString()}.`;
++  const summary = `${seriesLabel}: ${fmt(total)} total across ${points.length} days. Highest day: ${peak.date} at ${fmt(peak.value)}.`;
+ 
+   return (
+     <div role="img" aria-label={summary}>
+@@ -87,7 +88,7 @@
+         </thead>
+         <tbody>
+           {points.map((p) => (
+-            <tr key={p.date}><td>{p.date}</td><td>{p.value.toLocaleString()}</td></tr>
++            <tr key={p.date}><td>{p.date}</td><td>{fmt(p.value)}</td></tr>
+           ))}
+         </tbody>
+       </table>
+@@ -108,7 +109,7 @@
+           {digestType === "weekly" ? "Weekly Recap" : "Monthly Recap"}
+         </h1>
+       </div>
+-      <p className="text-xs text-white/50 mb-6 ml-9">{formatPeriodLabel(periodStart, periodEnd)}</p>
++      <p className="text-xs text-white/50 mb-6 ml-9">{formatPeriodLabel(periodStart, periodEnd, locale)}</p>
+ 
+       {digestType === "weekly" ? (
+         <WeeklyView payload={payload} fc={fc} />
+@@ -181,7 +182,7 @@
+ 
+       <div className="card p-4">
+         <p className="text-xs font-medium text-white mb-3">Savings this month</p>
+-        <BarSeries points={payload.dailySavings} colorClass="bg-brand-500/70" seriesLabel="Savings" />
++        <BarSeries points={payload.dailySavings} colorClass="bg-brand-500/70" seriesLabel="Savings" formatValue={fc} />
+       </div>
+ 
+       <div className="card p-4">
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/events/EventsClient.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/events/EventsClient.tsx"	2026-08-04 05:56:18.449702824 +0000
+@@ -6,6 +6,7 @@
+ import EventCard from "@/components/events/EventCard";
+ import EmptyState from "@/components/ui/EmptyState";
+ import { Calendar, Clock, Trophy } from "lucide-react";
++import { formatDateLong } from "@/lib/dateFormat";
+ 
+ interface Props {
+   events: (SaveQuestEvent & { window: EventWindow })[];
+@@ -145,9 +146,7 @@
+                         <p className="text-sm font-medium text-white">{title}</p>
+                         {h.completed_at && (
+                           <p className="text-xs text-white/30 mt-0.5">
+-                            {new Date(h.completed_at).toLocaleDateString("en", {
+-                              day: "numeric", month: "short", year: "numeric",
+-                            })}
++                            {formatDateLong(h.completed_at)}
+                           </p>
+                         )}
+                       </div>
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/settings/billing/BillingClient.tsx"	2026-08-01 03:09:30.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/settings/billing/BillingClient.tsx"	2026-08-04 05:56:29.651799197 +0000
+@@ -18,6 +18,7 @@
+ import { ArrowLeft, Crown, Loader2, ExternalLink } from "lucide-react";
+ import PremiumBadge from "@/components/billing/PremiumBadge";
+ import PlanComparisonDialog from "@/components/billing/PlanComparisonDialog";
++import { formatDateNumeric } from "@/lib/dateFormat";
+ import { useBillingStatus } from "@/lib/hooks/useBillingStatus";
+ 
+ const USAGE_LABELS: Record<string, string> = {
+@@ -72,7 +73,7 @@
+ 
+             {status.subscription?.cancelAtPeriodEnd && status.subscription.currentPeriodEnd && (
+               <p className="text-xs text-amber-300 mb-3">
+-                Cancels on {new Date(status.subscription.currentPeriodEnd).toLocaleDateString()} — you&apos;ll keep Premium until then.
++                Cancels on {formatDateNumeric(status.subscription.currentPeriodEnd)} — you&apos;ll keep Premium until then.
+               </p>
+             )}
+             {status.subscription?.status === "past_due" && (
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/quests/QuestsClient.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/quests/QuestsClient.tsx"	2026-08-04 05:56:51.504219655 +0000
+@@ -8,6 +8,7 @@
+ import Link from "next/link";
+ import { Zap, CheckCircle, Clock, Trophy, Calendar, Sparkles, Timer } from "lucide-react";
+ import EmptyState from "@/components/ui/EmptyState";
++import { formatDateShort } from "@/lib/dateFormat";
+ 
+ interface Props {
+   allChallenges: any[];
+@@ -467,7 +468,7 @@
+                             <p className="text-xs text-white/40 mt-0.5">{ch.description}</p>
+                             {ch.end_date && (
+                               <p className="text-xs text-white/30 mt-1">
+-                                🍂 Ends {new Date(ch.end_date).toLocaleDateString("en", { day: "numeric", month: "short" })}
++                                🍂 Ends {formatDateShort(ch.end_date)}
+                               </p>
+                             )}
+                           </div>
+@@ -517,7 +518,7 @@
+                           <p className="text-xs text-white/40">{ch.description}</p>
+                           {ch.end_date && (
+                             <p className="text-xs text-white/30 mt-1">
+-                              🍂 Ends {new Date(ch.end_date).toLocaleDateString("en", { day: "numeric", month: "short" })}
++                              🍂 Ends {formatDateShort(ch.end_date)}
+                             </p>
+                           )}
+                         </div>
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/invites/InvitesClient.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/invites/InvitesClient.tsx"	2026-08-04 05:57:08.143033377 +0000
+@@ -22,6 +22,7 @@
+ import ShareButton from "@/components/sharing/ShareButton";
+ import StatusBadge, { type BadgeStatus } from "@/components/ui/StatusBadge";
+ import EmptyState from "@/components/ui/EmptyState";
++import { formatDateNumeric } from "@/lib/dateFormat";
+ import ErrorState from "@/components/ui/ErrorState";
+ import Skeleton from "@/components/ui/Skeleton";
+ import ConfirmationModal from "@/components/ui/ConfirmationModal";
+@@ -188,7 +189,7 @@
+                       {inv.context_type === "group" && <span className="text-white/40"> · group invite</span>}
+                     </p>
+                     <p className="text-xs text-white/40 mt-0.5">
+-                      Sent {new Date(inv.created_at).toLocaleDateString()}
++                      Sent {formatDateNumeric(inv.created_at)}
+                     </p>
+                   </div>
+                   <StatusBadge status={displayStatus(inv)} />
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/reports/annual/AnnualReportClient.tsx"	2026-08-02 11:12:39.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/reports/annual/AnnualReportClient.tsx"	2026-08-04 05:57:24.423029502 +0000
+@@ -13,6 +13,7 @@
+ import Link from "next/link";
+ import { useRouter } from "next/navigation";
+ import { formatCurrency } from "@/lib/utils";
++import { formatDateNumeric } from "@/lib/dateFormat";
+ import { useGatedDownload } from "@/lib/hooks/useGatedDownload";
+ import UpgradePrompt from "@/components/billing/UpgradePrompt";
+ import type { AnnualReport } from "@/lib/exportCenter";
+@@ -64,7 +65,7 @@
+       {/* ── Report content ─────────────────────────────────────────────── */}
+       <header className="mb-6">
+         <h1 className="text-2xl font-bold text-white print:text-black">{report.year} Savings Report</h1>
+-        <p className="text-sm text-white/60 print:text-black/60">Generated {new Date(report.generatedAt).toLocaleDateString(locale)}</p>
++        <p className="text-sm text-white/60 print:text-black/60">Generated {formatDateNumeric(report.generatedAt, locale)}</p>
+       </header>
+ 
+       <section className="card p-4 mb-4 print:border print:border-black/20" aria-labelledby="totals-heading">
+@@ -138,7 +139,7 @@
+               <li key={h.id} className="text-sm text-white/85 print:text-black flex items-baseline justify-between gap-3">
+                 <span>{h.label}</span>
+                 <span className="text-white/50 print:text-black/60 whitespace-nowrap">
+-                  {new Date(h.timestamp).toLocaleDateString(locale)}
++                  {formatDateNumeric(h.timestamp, locale)}
+                 </span>
+               </li>
+             ))}
+--- "/home/claude/savequest_orig/savequest backup/components/goals/ScenarioSimulatorCard.tsx"	2026-08-03 05:46:27.000000000 +0000
++++ "/home/claude/savequest/savequest backup/components/goals/ScenarioSimulatorCard.tsx"	2026-08-04 05:58:00.892932130 +0000
+@@ -35,6 +35,7 @@
+ import { useRouter } from "next/navigation";
+ import { ChevronDown, ChevronUp, Bookmark, Trash2 } from "lucide-react";
+ import { simulateScenario, simulateStandardScenarios, type ScenarioResult, type ScenarioType } from "@/lib/scenarioSimulator";
++import { formatDateLong } from "@/lib/dateFormat";
+ import UpgradePrompt from "@/components/billing/UpgradePrompt";
+ import type { SavingsGoal, Transaction } from "@/lib/types";
+ 
+@@ -56,7 +57,7 @@
+ 
+ function formatDate(iso: string | null): string {
+   if (!iso) return "—";
+-  return new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
++  return formatDateLong(new Date(iso + "T00:00:00Z"));
+ }
+ 
+ function DeltaBadge({ deltaDays }: { deltaDays: number | null }) {
+--- "/home/claude/savequest_orig/savequest backup/components/goals/GoalIntelligenceCard.tsx"	2026-07-31 18:40:52.000000000 +0000
++++ "/home/claude/savequest/savequest backup/components/goals/GoalIntelligenceCard.tsx"	2026-08-04 05:58:05.631614709 +0000
+@@ -19,6 +19,7 @@
+ import type { GoalForecast } from "@/lib/forecast";
+ import type { GoalHealth } from "@/lib/goalHealth";
+ import type { CoachingMessage } from "@/lib/coaching";
++import { formatDateLong } from "@/lib/dateFormat";
+ 
+ interface Props {
+   forecast: GoalForecast;
+@@ -36,7 +37,7 @@
+ 
+ function formatDate(iso: string | null): string {
+   if (!iso) return "—";
+-  return new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
++  return formatDateLong(new Date(iso + "T00:00:00Z"));
+ }
+ 
+ export default function GoalIntelligenceCard({ forecast, health, coaching, formatAmount }: Props) {
+--- "/home/claude/savequest_orig/savequest backup/components/insights/PortfolioIntelligenceCard.tsx"	2026-07-31 18:40:54.000000000 +0000
++++ "/home/claude/savequest/savequest backup/components/insights/PortfolioIntelligenceCard.tsx"	2026-08-04 05:58:09.319242516 +0000
+@@ -14,6 +14,7 @@
+ 
+ import Link from "next/link";
+ import type { PortfolioIntelligence } from "@/lib/portfolioIntelligence";
++import { formatDateLong } from "@/lib/dateFormat";
+ 
+ interface Props {
+   data: PortfolioIntelligence;
+@@ -21,7 +22,7 @@
+ }
+ 
+ function formatDate(iso: string): string {
+-  return new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
++  return formatDateLong(new Date(iso + "T00:00:00Z"));
+ }
+ 
+ export default function PortfolioIntelligenceCard({ data, formatAmount }: Props) {
+--- "/home/claude/savequest_orig/savequest backup/components/social/ActivityFeedCard.tsx"	2026-07-31 18:40:52.000000000 +0000
++++ "/home/claude/savequest/savequest backup/components/social/ActivityFeedCard.tsx"	2026-08-04 08:47:39.378407374 +0000
+@@ -14,6 +14,7 @@
+ import { useState } from "react";
+ import { Target, TrendingUp, Award, Flame, Users, Trophy, X } from "lucide-react";
+ import UserAvatar from "./UserAvatar";
++import { formatDateShort } from "@/lib/dateFormat";
+ 
+ export interface FeedItem {
+   id: string;
+@@ -68,7 +69,7 @@
+         <p className="text-sm text-white leading-snug">{describe(item)}</p>
+         <div className="flex items-center gap-1.5 mt-1 text-xs text-white/40">
+           <Icon size={11} aria-hidden="true" />
+-          <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>
++          <time dateTime={item.created_at}>{formatDateShort(item.created_at)}</time>
+         </div>
+       </div>
+       {isOwn && (
+--- "/home/claude/savequest_orig/savequest backup/components/social/GroupQuestCard.tsx"	2026-07-31 18:40:52.000000000 +0000
++++ "/home/claude/savequest/savequest backup/components/social/GroupQuestCard.tsx"	2026-08-04 08:47:48.960106094 +0000
+@@ -13,6 +13,7 @@
+ import { useState } from "react";
+ import { ChevronDown, Trophy } from "lucide-react";
+ import StatusBadge, { type BadgeStatus } from "@/components/ui/StatusBadge";
++import { formatDateNumeric } from "@/lib/dateFormat";
+ 
+ export interface GroupQuest {
+   id: string;
+@@ -84,7 +85,7 @@
+         </div>
+         <div className="flex-1 min-w-0">
+           <p className="text-sm font-medium text-white truncate">{quest.title}</p>
+-          <p className="text-xs text-white/40">{quest.xp_reward} XP · ends {new Date(quest.end_date).toLocaleDateString()}</p>
++          <p className="text-xs text-white/40">{quest.xp_reward} XP · ends {formatDateNumeric(quest.end_date)}</p>
+         </div>
+         <StatusBadge status={quest.status as BadgeStatus} />
+         <ChevronDown size={16} className={`text-white/30 transition-transform shrink-0 ${expanded ? "rotate-180" : ""}`} aria-hidden="true" />
+--- "/home/claude/savequest_orig/savequest backup/components/social/ContributionCard.tsx"	2026-07-31 18:40:52.000000000 +0000
++++ "/home/claude/savequest/savequest backup/components/social/ContributionCard.tsx"	2026-08-04 08:48:04.361333544 +0000
+@@ -11,11 +11,21 @@
+  */
+ 
+ import { formatCurrency } from "@/lib/utils";
++import { getCurrencyConfig } from "@/lib/currency";
++import { formatDateShort } from "@/lib/dateFormat";
+ 
+ export interface Contribution {
+   id: string;
+   user_id: string;
+   amount: number;
++  /** Sprint 31 — Phase 9. The currency THIS contribution was actually
++   *  made in — deliberately NOT converted here. Each line item is one
++   *  contributor's own money in their own currency; only the aggregate
++   *  totals (SharedGoalDetailClient's total_contributed /
++   *  total_group_contributions) get converted into the goal owner's
++   *  currency. Showing this line converted would hide what the
++   *  contributor actually typed. */
++  currency_code: string;
+   note: string | null;
+   created_at: string;
+   contributor_name?: string;
+@@ -26,12 +36,12 @@
+     <div className="flex items-center gap-3 py-2.5 border-b border-surface-border last:border-0">
+       <div className="flex-1 min-w-0">
+         <p className="text-sm text-white">
+-          <span className="font-medium">{contribution.contributor_name || "A contributor"}</span> added {formatCurrency(contribution.amount)}
++          <span className="font-medium">{contribution.contributor_name || "A contributor"}</span> added {formatCurrency(contribution.amount, contribution.currency_code, getCurrencyConfig(contribution.currency_code).locale)}
+         </p>
+         {contribution.note && <p className="text-xs text-white/40 truncate">{contribution.note}</p>}
+       </div>
+       <time dateTime={contribution.created_at} className="text-xs text-white/30 shrink-0">
+-        {new Date(contribution.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
++        {formatDateShort(contribution.created_at, getCurrencyConfig(contribution.currency_code).locale)}
+       </time>
+     </div>
+   );

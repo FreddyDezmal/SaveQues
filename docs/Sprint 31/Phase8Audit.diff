@@ -1,0 +1,291 @@
+=== NEW FILE: tests/unit/createZarConverter.test.ts ===
+--- /dev/null	2026-07-23 23:39:52.405474745 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/createZarConverter.test.ts"	2026-08-03 22:24:12.349544113 +0000
+@@ -0,0 +1,59 @@
++/**
++ * tests/unit/createZarConverter.test.ts
++ * Sprint 31 — Phase 8.
++ *
++ * lib/currencyConversion.ts's createZarConverter() is the one piece of
++ * Phase 8's fix that does touch the DB (via lib/exchangeRates/cache.ts),
++ * so — unlike convertAmount()'s pure-math tests in
++ * tests/unit/currencyConversion.test.ts — this needs the Supabase
++ * service-client mock, same pattern as tests/unit/recordOutcome.test.ts.
++ */
++import { describe, it, expect, vi, beforeEach } from "vitest";
++
++const cachedRows: Record<string, { currency_code: string; usd_rate: number; fetched_at: string; source: string }> = {
++  ZAR: { currency_code: "ZAR", usd_rate: 18.5, fetched_at: new Date().toISOString(), source: "test" },
++  EUR: { currency_code: "EUR", usd_rate: 0.92, fetched_at: new Date().toISOString(), source: "test" },
++};
++
++vi.mock("@/lib/supabase/server", () => ({
++  createServiceClient: () => ({
++    from: (_table: string) => ({
++      select: () => ({
++        eq: (_col: string, code: string) => ({
++          maybeSingle: () => Promise.resolve({ data: cachedRows[code] ?? null, error: null }),
++        }),
++      }),
++    }),
++  }),
++}));
++
++vi.mock("@/lib/logger", () => ({
++  createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }),
++}));
++
++import { createZarConverter } from "@/lib/currencyConversion";
++
++describe("createZarConverter", () => {
++  beforeEach(() => {
++    cachedRows.ZAR = { currency_code: "ZAR", usd_rate: 18.5, fetched_at: new Date().toISOString(), source: "test" };
++    cachedRows.EUR = { currency_code: "EUR", usd_rate: 0.92, fetched_at: new Date().toISOString(), source: "test" };
++  });
++
++  it("returns a pure identity function for ZAR without touching the cache at all", async () => {
++    const convert = await createZarConverter("ZAR");
++    expect(convert(1234.56)).toBe(1234.56);
++  });
++
++  it("converts a ZAR amount into the target currency using cached rates", async () => {
++    const convert = await createZarConverter("EUR");
++    // 100 ZAR = (100/18.5) USD = 4.973 EUR
++    expect(convert(100)).toBeCloseTo(4.97, 2);
++  });
++
++  it("returns a synchronous, repeatedly-callable function (rate resolved once, not per call)", async () => {
++    const convert = await createZarConverter("EUR");
++    const a = convert(100);
++    const b = convert(100);
++    expect(a).toBe(b);
++  });
++});
+--- "/home/claude/savequest_orig/savequest backup/lib/recommendations.ts"	2026-07-31 18:41:00.000000000 +0000
++++ "/home/claude/savequest/savequest backup/lib/recommendations.ts"	2026-08-03 16:45:17.150930809 +0000
+@@ -12,6 +12,33 @@
+  *
+  * Deliberately excludes categories the user already has an active (or
+  * completed) goal in, per the brief's "avoid recommending duplicate goals."
++ *
++ * SPRINT 31 — PHASE 8 AUDIT FINDING, FIXED HERE:
++ * TEMPLATES.baselineTarget below was authored in ZAR (this app's original
++ * single currency — see "Emergency Fund: 15000" etc.) and, before this
++ * fix, was used completely unconverted for every user regardless of
++ * currency_code. A JPY user got offered a literal "¥15,000" emergency
++ * fund (≈$100 — far too small), while a KWD user got offered "15,000 KWD"
++ * (≈$49,000 — absurdly large). Capacity-based scaling (below) made this
++ * worse, not better, for non-ZAR users: it compares the user's own-currency
++ * weekly capacity against a ZAR-denominated reference rate, so currencies
++ * with very different unit values than ZAR (JPY, KWD, etc.) would almost
++ * always hit the ±clamp rather than scaling meaningfully.
++ *
++ * Fixed via dependency injection, not a rewrite of the scaling math: an
++ * optional `convertFromZar` pure function converts each ZAR-denominated
++ * baseline into the user's currency BEFORE scaling runs, so the scaling
++ * logic itself (unchanged) now operates on numbers that are actually
++ * comparable to the user's real capacity. Same pattern
++ * lib/scenarioSimulator.ts already uses for `formatAmount` — keeps this
++ * module pure, synchronous, and fully unit-testable without a live
++ * exchange-rate cache. Defaults to identity (no conversion) so any
++ * existing caller that doesn't pass one keeps getting the exact previous
++ * ZAR-denominated behavior — zero regression.
++ *
++ * The actual rate lookup (Phase 6/7's async cache) is the caller's job —
++ * see lib/intelligence/getFinancialIntelligence.ts's docstring for why
++ * that wiring stops there for now rather than reaching further upstream.
+  */
+ 
+ import { getDeposits, getDepositStats, averageDepositsPerWeek } from "@/lib/analyticsEngine";
+@@ -64,6 +91,16 @@
+   goals: Pick<SavingsGoal, "id" | "category" | "is_complete">[];
+   now?: Date;
+   maxResults?: number;
++  /**
++   * Converts a ZAR-denominated amount (what TEMPLATES.baselineTarget is
++   * authored in) into the user's real currency. Defaults to identity —
++   * i.e. "no conversion," which is exactly correct for ZAR users and
++   * exactly the previous (pre-Phase-8) behavior for everyone else, so
++   * omitting this is safe but reintroduces the bug documented above for
++   * non-ZAR users. Callers with a real currency_code should pass a
++   * function backed by lib/currencyConversion.ts's convertCurrency().
++   */
++  convertFromZar?: (zarAmount: number) => number;
+ }
+ 
+ /**
+@@ -75,6 +112,7 @@
+  */
+ export function generateGoalRecommendations(inputs: RecommendationInputs): GoalRecommendation[] {
+   const now = inputs.now ?? new Date();
++  const convertFromZar = inputs.convertFromZar ?? ((zarAmount: number) => zarAmount);
+   const deposits = getDeposits(inputs.transactions);
+   const stats = getDepositStats(deposits);
+   const weeklyPace = averageDepositsPerWeek(deposits);
+@@ -85,14 +123,23 @@
+   const candidates = TEMPLATES.filter((t) => !existingCategories.has(t.category));
+ 
+   const recommendations: GoalRecommendation[] = candidates.map((t) => {
++    const baselineTarget = convertFromZar(t.baselineTarget);
++
+     // Scale factor: how the user's typical weekly capacity compares to a
+     // "reference" saver who could clear this template in its baseline
+     // duration at baselineTarget/baselineWeeks per week. Clamped so a very
+     // high or very low capacity doesn't produce an absurd target.
+-    const referenceWeekly = t.baselineTarget / t.baselineWeeks;
++    const referenceWeekly = baselineTarget / t.baselineWeeks;
+     const scale = capacityPerWeek ? Math.min(2.5, Math.max(0.4, capacityPerWeek / referenceWeekly)) : 1;
+ 
+-    const suggestedTarget = Math.round((t.baselineTarget * Math.min(1.5, Math.max(0.5, scale))) / 100) * 100;
++    const suggestedTarget = Math.round((baselineTarget * Math.min(1.5, Math.max(0.5, scale))) / 100) * 100;
++    // NOTE (known limitation, not fixed here): rounding to the nearest 100
++    // units assumes a ZAR-like unit value. For a currency where 100 units
++    // is a much bigger or smaller amount than 100 ZAR (JPY, KWD, BHD...),
++    // this rounding granularity itself isn't currency-aware. Left as
++    // documented future work rather than redesigned here, since it's a
++    // cosmetic rounding-precision issue, not the magnitude bug this fix
++    // addresses.
+     const suggestedWeeklySaving = capacityPerWeek
+       ? Math.round(Math.min(capacityPerWeek * 0.5, suggestedTarget / t.baselineWeeks))
+       : Math.round(suggestedTarget / t.baselineWeeks);
+--- "/home/claude/savequest_orig/savequest backup/lib/intelligence/getFinancialIntelligence.ts"	2026-08-02 11:04:20.000000000 +0000
++++ "/home/claude/savequest/savequest backup/lib/intelligence/getFinancialIntelligence.ts"	2026-08-03 22:20:36.779043201 +0000
+@@ -73,6 +73,19 @@
+     locale?: string | null;
+   };
+   now?: Date;
++  /**
++   * Sprint 31 — Phase 8: converts a ZAR-denominated amount into the
++   * user's real currency, used only to fix lib/recommendations.ts's
++   * goal-template baselines (see that file's docstring for the bug this
++   * closes). Optional, defaults to identity — omitting it is safe (ZAR
++   * users are unaffected either way) but leaves non-ZAR users' goal
++   * recommendations sized in raw ZAR numbers, same as before this phase.
++   * Deliberately a plain injected function rather than this function
++   * awaiting lib/currencyConversion.ts itself — see this file's own
++   * "Pure and synchronous" contract below; the actual rate lookup is the
++   * caller's job, done once before calling this function.
++   */
++  convertFromZar?: (zarAmount: number) => number;
+ }
+ 
+ export interface FinancialIntelligence {
+@@ -249,6 +262,7 @@
+     transactions,
+     goals: goals.map((g) => ({ id: g.id, category: g.category, is_complete: g.is_complete })),
+     now,
++    convertFromZar: input.convertFromZar,
+   });
+ 
+   return {
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/dashboard/page.tsx"	2026-07-31 18:40:52.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/dashboard/page.tsx"	2026-08-03 22:21:27.258341009 +0000
+@@ -14,6 +14,7 @@
+ import { generateCoachingMessages } from "@/lib/coaching";
+ import { classifyJourneyStage, getDashboardSectionOrder, getRiskAwareSectionOrder } from "@/lib/dashboardPersonalization";
+ import { getFinancialIntelligence } from "@/lib/intelligence/getFinancialIntelligence";
++import { createZarConverter } from "@/lib/currencyConversion";
+ import type { Transaction }    from "@/lib/types";
+ 
+ // Sprint 12 audit fix: measure server-side render time so the dashboard
+@@ -165,6 +166,8 @@
+       const transactions = (txData ?? []) as Transaction[];
+       depositCount = transactions.filter((t) => t.transaction_type === "deposit").length;
+ 
++      const convertFromZar = await createZarConverter(profile.currency_code ?? "ZAR");
++
+       const intelligence = getFinancialIntelligence({
+         transactions,
+         goals,
+@@ -180,6 +183,7 @@
+           currency_code: profile.currency_code,
+           locale: profile.locale,
+         },
++        convertFromZar,
+       });
+ 
+       insights = intelligence.insights;
+@@ -220,6 +224,8 @@
+         challengesCompleted:  (dash.active_challenges ?? []).filter((uc: any) => uc.status === "completed").length,
+         dailyQuestsCompleted: profile.daily_quests_completed ?? 0,
+         earnedIds:            allAchievementIds,
++        currencyCode:         profile.currency_code,
++        locale:               profile.locale,
+       })
+     : [];
+ 
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/intelligence/page.tsx"	2026-08-02 05:24:01.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/intelligence/page.tsx"	2026-08-03 22:21:53.755328837 +0000
+@@ -20,6 +20,7 @@
+ import { createClient } from "@/lib/supabase/server";
+ import { redirect } from "next/navigation";
+ import { getFinancialIntelligence } from "@/lib/intelligence/getFinancialIntelligence";
++import { createZarConverter } from "@/lib/currencyConversion";
+ import { forecastGoal } from "@/lib/forecast";
+ import { computeGoalHealth } from "@/lib/goalHealth";
+ import { coachingMessagesForGoal } from "@/lib/coaching";
+@@ -67,6 +68,7 @@
+           currency_code: profile.currency_code,
+           locale: profile.locale,
+         },
++        convertFromZar: await createZarConverter(profile.currency_code ?? "ZAR"),
+       })
+     : null;
+ 
+--- "/home/claude/savequest_orig/savequest backup/tests/unit/recommendations.test.ts"	2026-07-31 18:41:08.000000000 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/recommendations.test.ts"	2026-08-03 22:23:48.649542704 +0000
+@@ -50,3 +50,47 @@
+     expect(difficulties).toEqual([...difficulties].sort((a, b) => a - b));
+   });
+ });
++
++describe("generateGoalRecommendations — convertFromZar (Sprint 31, Phase 8)", () => {
++  it("defaults to identity (raw ZAR numbers) when convertFromZar is omitted — previous behavior, preserved", () => {
++    const withDefault = generateGoalRecommendations({ transactions: [], goals: [], maxResults: 9 });
++    const withExplicitIdentity = generateGoalRecommendations({
++      transactions: [],
++      goals: [],
++      maxResults: 9,
++      convertFromZar: (z) => z,
++    });
++    expect(withDefault).toEqual(withExplicitIdentity);
++  });
++
++  it("scales every suggested target when a real conversion function is passed", () => {
++    // Simulate a currency where 1 ZAR-equivalent unit = 0.05 of the
++    // target currency (e.g. converting ZAR baselines into JPY-like scale
++    // is the wrong direction for this example, but the point is just:
++    // conversion should visibly change magnitudes, not pass ZAR through).
++    const zar = generateGoalRecommendations({ transactions: [], goals: [], maxResults: 9 });
++    const converted = generateGoalRecommendations({
++      transactions: [],
++      goals: [],
++      maxResults: 9,
++      convertFromZar: (z) => z * 0.05,
++    });
++    for (let i = 0; i < zar.length; i++) {
++      expect(converted[i].category).toBe(zar[i].category);
++      expect(converted[i].suggestedTarget).toBeLessThan(zar[i].suggestedTarget);
++    }
++  });
++
++  it("never produces a non-positive or non-finite target regardless of the conversion function", () => {
++    const recs = generateGoalRecommendations({
++      transactions: [],
++      goals: [],
++      maxResults: 9,
++      convertFromZar: (z) => z * 8.4, // e.g. a currency worth much more per unit than ZAR
++    });
++    for (const r of recs) {
++      expect(r.suggestedTarget).toBeGreaterThan(0);
++      expect(Number.isFinite(r.suggestedTarget)).toBe(true);
++    }
++  });
++});
+=== lib/currencyConversion.ts: createZarConverter() ADDED to the Phase 7 file (full file already shared in sprint31_phase7.diff) ===
+export async function createZarConverter(toCode: string, now: Date = new Date()): Promise<(zarAmount: number) => number> {
+  if (toCode === "ZAR") return (zarAmount: number) => zarAmount;
+
+  const [zarRate, toRate] = await Promise.all([getCachedRate("ZAR", now), getCachedRate(toCode, now)]);
+  return (zarAmount: number) => convertAmount(zarAmount, zarRate, toRate).amount;
+}

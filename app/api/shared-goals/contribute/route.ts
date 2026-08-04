@@ -52,10 +52,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: limit.message }, { status: 429 });
   }
 
+  // Sprint 31 — Phase 9: record the currency this contribution was
+  // actually made in (defaults to the column's own 'ZAR' default if this
+  // lookup somehow comes back empty — matches every other currency_code
+  // fallback in this codebase, never silently guesses a DIFFERENT
+  // currency than "unknown").
+  const { data: contributorProfile } = await supabase
+    .from("profiles")
+    .select("currency_code")
+    .eq("id", user.id)
+    .single();
+
   const { data, error } = await supabase
     .from("group_contributions")
-    .insert({ shared_goal_id: sharedGoalId, user_id: user.id, amount: Math.round(amount * 100) / 100, note })
-    .select("id, amount, note, created_at")
+    .insert({
+      shared_goal_id: sharedGoalId,
+      user_id: user.id,
+      amount: Math.round(amount * 100) / 100,
+      currency_code: contributorProfile?.currency_code ?? "ZAR",
+      note,
+    })
+    .select("id, amount, currency_code, note, created_at")
     .single();
 
   if (error) {

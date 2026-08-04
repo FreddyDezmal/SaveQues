@@ -20,6 +20,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { getFinancialIntelligence } from "@/lib/intelligence/getFinancialIntelligence";
+import { createZarConverter } from "@/lib/currencyConversion";
 import { forecastGoal } from "@/lib/forecast";
 import { computeGoalHealth } from "@/lib/goalHealth";
 import { coachingMessagesForGoal } from "@/lib/coaching";
@@ -67,6 +68,7 @@ export default async function IntelligencePage() {
           currency_code: profile.currency_code,
           locale: profile.locale,
         },
+        convertFromZar: await createZarConverter(profile.currency_code ?? "ZAR"),
       })
     : null;
 

@@ -33,9 +33,14 @@
  *   SettingsClient.tsx and ProfileClient.tsx are updated to call this
  *   route instead of `supabase.from("profiles").update(...)` directly.
  *
- * Validation (mirrors DB constraints in 025_validation_constraints.sql):
+ * Validation (mirrors DB constraints in 025_validation_constraints.sql,
+ *   expanded by 056_expand_currency_codes.sql):
  *  • display_name: 1-60 characters
- *  • currency_code: must be one of the 10 SUPPORTED_CURRENCIES codes
+ *  • currency_code: must be one of lib/currency.ts's SUPPORTED_CURRENCIES
+ *    codes (116 ISO-4217 currencies as of Sprint 31 Phase 3 — this comment
+ *    said "10" until Sprint 31's Phase 14 security audit caught it; the
+ *    validation itself (VALID_CURRENCY_CODES below) was already correctly
+ *    derived from SUPPORTED_CURRENCIES, only this comment was stale)
  *  • avatar_emoji: must be one of the curated AVATAR_OPTIONS (mirrored
  *    here from ProfileClient.tsx — see inline constant)
  */

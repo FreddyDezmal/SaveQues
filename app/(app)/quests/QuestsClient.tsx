@@ -8,6 +8,7 @@ import CelebrationOverlay from "@/components/gamification/CelebrationOverlay";
 import Link from "next/link";
 import { Zap, CheckCircle, Clock, Trophy, Calendar, Sparkles, Timer } from "lucide-react";
 import EmptyState from "@/components/ui/EmptyState";
+import { formatDateShort } from "@/lib/dateFormat";
 
 interface Props {
   allChallenges: any[];
@@ -467,7 +468,7 @@ export default function QuestsClient({
                             <p className="text-xs text-white/40 mt-0.5">{ch.description}</p>
                             {ch.end_date && (
                               <p className="text-xs text-white/30 mt-1">
-                                🍂 Ends {new Date(ch.end_date).toLocaleDateString("en", { day: "numeric", month: "short" })}
+                                🍂 Ends {formatDateShort(ch.end_date)}
                               </p>
                             )}
                           </div>
@@ -517,7 +518,7 @@ export default function QuestsClient({
                           <p className="text-xs text-white/40">{ch.description}</p>
                           {ch.end_date && (
                             <p className="text-xs text-white/30 mt-1">
-                              🍂 Ends {new Date(ch.end_date).toLocaleDateString("en", { day: "numeric", month: "short" })}
+                              🍂 Ends {formatDateShort(ch.end_date)}
                             </p>
                           )}
                         </div>

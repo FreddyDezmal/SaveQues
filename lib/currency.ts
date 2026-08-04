@@ -7,6 +7,16 @@ export interface CurrencyConfig {
   locale: string;
   label: string;
   country: string;
+  /**
+   * ISO-4217 minor unit count for this currency (e.g. 2 for USD/ZAR/EUR,
+   * 0 for JPY/KRW, 3 for BHD/KWD/OMR). NOT used by default in formatAmount —
+   * default display across the app intentionally shows whole units with no
+   * decimals for every currency (a deliberate product choice, not a bug).
+   * This field exists so callers that need precise/exact amounts (e.g. a
+   * future ledger export) can opt in via formatAmount's `precise` option
+   * instead of each call site re-deriving the correct decimal count itself.
+   */
+  decimals: number;
 }
 
 // AUDIT NOTE: profiles.currency_code has a DB CHECK constraint
@@ -17,132 +27,132 @@ export interface CurrencyConfig {
 // the pattern to follow for any future changes.
 export const SUPPORTED_CURRENCIES: CurrencyConfig[] = [
   // ── Africa ──────────────────────────────────────────────────
-  { code: "ZAR", locale: "en-ZA", country: "ZA", label: "South African Rand (R)" },
-  { code: "NGN", locale: "en-NG", country: "NG", label: "Nigerian Naira (₦)" },
-  { code: "GHS", locale: "en-GH", country: "GH", label: "Ghanaian Cedi (₵)" },
-  { code: "KES", locale: "sw-KE", country: "KE", label: "Kenyan Shilling (KSh)" },
-  { code: "EGP", locale: "ar-EG", country: "EG", label: "Egyptian Pound (E£)" },
-  { code: "MAD", locale: "ar-MA", country: "MA", label: "Moroccan Dirham (MAD)" },
-  { code: "DZD", locale: "ar-DZ", country: "DZ", label: "Algerian Dinar (DZD)" },
-  { code: "TND", locale: "ar-TN", country: "TN", label: "Tunisian Dinar (TND)" },
-  { code: "ETB", locale: "en-ET", country: "ET", label: "Ethiopian Birr (Br)" },
-  { code: "UGX", locale: "en-UG", country: "UG", label: "Ugandan Shilling (USh)" },
-  { code: "TZS", locale: "sw-TZ", country: "TZ", label: "Tanzanian Shilling (TSh)" },
-  { code: "RWF", locale: "en-RW", country: "RW", label: "Rwandan Franc (RF)" },
-  { code: "ZMW", locale: "en-ZM", country: "ZM", label: "Zambian Kwacha (ZK)" },
-  { code: "BWP", locale: "en-BW", country: "BW", label: "Botswana Pula (P)" },
-  { code: "MUR", locale: "en-MU", country: "MU", label: "Mauritian Rupee (₨)" },
-  { code: "XOF", locale: "fr-SN", country: "SN", label: "West African CFA Franc (CFA)" },
-  { code: "XAF", locale: "fr-CM", country: "CM", label: "Central African CFA Franc (FCFA)" },
-  { code: "MZN", locale: "pt-MZ", country: "MZ", label: "Mozambican Metical (MT)" },
-  { code: "AOA", locale: "pt-AO", country: "AO", label: "Angolan Kwanza (Kz)" },
-  { code: "NAD", locale: "en-NA", country: "NA", label: "Namibian Dollar (N$)" },
-  { code: "SZL", locale: "en-SZ", country: "SZ", label: "Eswatini Lilangeni (L)" },
-  { code: "LSL", locale: "en-LS", country: "LS", label: "Lesotho Loti (L)" },
-  { code: "MWK", locale: "en-MW", country: "MW", label: "Malawian Kwacha (MK)" },
-  { code: "SDG", locale: "ar-SD", country: "SD", label: "Sudanese Pound (SDG)" },
-  { code: "LYD", locale: "ar-LY", country: "LY", label: "Libyan Dinar (LD)" },
-  { code: "CDF", locale: "fr-CD", country: "CD", label: "Congolese Franc (FC)" },
-  { code: "SOS", locale: "so-SO", country: "SO", label: "Somali Shilling (Sh)" },
+  { code: "ZAR", locale: "en-ZA", country: "ZA", label: "South African Rand (R)", decimals: 2 },
+  { code: "NGN", locale: "en-NG", country: "NG", label: "Nigerian Naira (₦)", decimals: 2 },
+  { code: "GHS", locale: "en-GH", country: "GH", label: "Ghanaian Cedi (₵)", decimals: 2 },
+  { code: "KES", locale: "sw-KE", country: "KE", label: "Kenyan Shilling (KSh)", decimals: 2 },
+  { code: "EGP", locale: "ar-EG", country: "EG", label: "Egyptian Pound (E£)", decimals: 2 },
+  { code: "MAD", locale: "ar-MA", country: "MA", label: "Moroccan Dirham (MAD)", decimals: 2 },
+  { code: "DZD", locale: "ar-DZ", country: "DZ", label: "Algerian Dinar (DZD)", decimals: 2 },
+  { code: "TND", locale: "ar-TN", country: "TN", label: "Tunisian Dinar (TND)", decimals: 3 },
+  { code: "ETB", locale: "en-ET", country: "ET", label: "Ethiopian Birr (Br)", decimals: 2 },
+  { code: "UGX", locale: "en-UG", country: "UG", label: "Ugandan Shilling (USh)", decimals: 0 },
+  { code: "TZS", locale: "sw-TZ", country: "TZ", label: "Tanzanian Shilling (TSh)", decimals: 2 },
+  { code: "RWF", locale: "en-RW", country: "RW", label: "Rwandan Franc (RF)", decimals: 0 },
+  { code: "ZMW", locale: "en-ZM", country: "ZM", label: "Zambian Kwacha (ZK)", decimals: 2 },
+  { code: "BWP", locale: "en-BW", country: "BW", label: "Botswana Pula (P)", decimals: 2 },
+  { code: "MUR", locale: "en-MU", country: "MU", label: "Mauritian Rupee (₨)", decimals: 2 },
+  { code: "XOF", locale: "fr-SN", country: "SN", label: "West African CFA Franc (CFA)", decimals: 0 },
+  { code: "XAF", locale: "fr-CM", country: "CM", label: "Central African CFA Franc (FCFA)", decimals: 0 },
+  { code: "MZN", locale: "pt-MZ", country: "MZ", label: "Mozambican Metical (MT)", decimals: 2 },
+  { code: "AOA", locale: "pt-AO", country: "AO", label: "Angolan Kwanza (Kz)", decimals: 2 },
+  { code: "NAD", locale: "en-NA", country: "NA", label: "Namibian Dollar (N$)", decimals: 2 },
+  { code: "SZL", locale: "en-SZ", country: "SZ", label: "Eswatini Lilangeni (L)", decimals: 2 },
+  { code: "LSL", locale: "en-LS", country: "LS", label: "Lesotho Loti (L)", decimals: 2 },
+  { code: "MWK", locale: "en-MW", country: "MW", label: "Malawian Kwacha (MK)", decimals: 2 },
+  { code: "SDG", locale: "ar-SD", country: "SD", label: "Sudanese Pound (SDG)", decimals: 2 },
+  { code: "LYD", locale: "ar-LY", country: "LY", label: "Libyan Dinar (LD)", decimals: 3 },
+  { code: "CDF", locale: "fr-CD", country: "CD", label: "Congolese Franc (FC)", decimals: 2 },
+  { code: "SOS", locale: "so-SO", country: "SO", label: "Somali Shilling (Sh)", decimals: 2 },
 
   // ── Middle East ─────────────────────────────────────────────
-  { code: "AED", locale: "ar-AE", country: "AE", label: "UAE Dirham (AED)" },
-  { code: "SAR", locale: "ar-SA", country: "SA", label: "Saudi Riyal (SAR)" },
-  { code: "QAR", locale: "ar-QA", country: "QA", label: "Qatari Riyal (QAR)" },
-  { code: "KWD", locale: "ar-KW", country: "KW", label: "Kuwaiti Dinar (KWD)" },
-  { code: "BHD", locale: "ar-BH", country: "BH", label: "Bahraini Dinar (BHD)" },
-  { code: "OMR", locale: "ar-OM", country: "OM", label: "Omani Rial (OMR)" },
-  { code: "ILS", locale: "he-IL", country: "IL", label: "Israeli New Shekel (₪)" },
-  { code: "JOD", locale: "ar-JO", country: "JO", label: "Jordanian Dinar (JOD)" },
-  { code: "LBP", locale: "ar-LB", country: "LB", label: "Lebanese Pound (L£)" },
-  { code: "IQD", locale: "ar-IQ", country: "IQ", label: "Iraqi Dinar (IQD)" },
-  { code: "TRY", locale: "tr-TR", country: "TR", label: "Turkish Lira (₺)" },
+  { code: "AED", locale: "ar-AE", country: "AE", label: "UAE Dirham (AED)", decimals: 2 },
+  { code: "SAR", locale: "ar-SA", country: "SA", label: "Saudi Riyal (SAR)", decimals: 2 },
+  { code: "QAR", locale: "ar-QA", country: "QA", label: "Qatari Riyal (QAR)", decimals: 2 },
+  { code: "KWD", locale: "ar-KW", country: "KW", label: "Kuwaiti Dinar (KWD)", decimals: 3 },
+  { code: "BHD", locale: "ar-BH", country: "BH", label: "Bahraini Dinar (BHD)", decimals: 3 },
+  { code: "OMR", locale: "ar-OM", country: "OM", label: "Omani Rial (OMR)", decimals: 3 },
+  { code: "ILS", locale: "he-IL", country: "IL", label: "Israeli New Shekel (₪)", decimals: 2 },
+  { code: "JOD", locale: "ar-JO", country: "JO", label: "Jordanian Dinar (JOD)", decimals: 3 },
+  { code: "LBP", locale: "ar-LB", country: "LB", label: "Lebanese Pound (L£)", decimals: 2 },
+  { code: "IQD", locale: "ar-IQ", country: "IQ", label: "Iraqi Dinar (IQD)", decimals: 3 },
+  { code: "TRY", locale: "tr-TR", country: "TR", label: "Turkish Lira (₺)", decimals: 2 },
 
   // ── Asia ────────────────────────────────────────────────────
-  { code: "INR", locale: "en-IN", country: "IN", label: "Indian Rupee (₹)" },
-  { code: "PKR", locale: "ur-PK", country: "PK", label: "Pakistani Rupee (₨)" },
-  { code: "BDT", locale: "bn-BD", country: "BD", label: "Bangladeshi Taka (৳)" },
-  { code: "LKR", locale: "si-LK", country: "LK", label: "Sri Lankan Rupee (₨)" },
-  { code: "NPR", locale: "ne-NP", country: "NP", label: "Nepalese Rupee (₨)" },
-  { code: "CNY", locale: "zh-CN", country: "CN", label: "Chinese Yuan (¥)" },
-  { code: "JPY", locale: "ja-JP", country: "JP", label: "Japanese Yen (¥)" },
-  { code: "KRW", locale: "ko-KR", country: "KR", label: "South Korean Won (₩)" },
-  { code: "HKD", locale: "zh-HK", country: "HK", label: "Hong Kong Dollar (HK$)" },
-  { code: "TWD", locale: "zh-TW", country: "TW", label: "New Taiwan Dollar (NT$)" },
-  { code: "SGD", locale: "en-SG", country: "SG", label: "Singapore Dollar (S$)" },
-  { code: "MYR", locale: "ms-MY", country: "MY", label: "Malaysian Ringgit (RM)" },
-  { code: "THB", locale: "th-TH", country: "TH", label: "Thai Baht (฿)" },
-  { code: "IDR", locale: "id-ID", country: "ID", label: "Indonesian Rupiah (Rp)" },
-  { code: "PHP", locale: "en-PH", country: "PH", label: "Philippine Peso (₱)" },
-  { code: "VND", locale: "vi-VN", country: "VN", label: "Vietnamese Dong (₫)" },
-  { code: "MMK", locale: "my-MM", country: "MM", label: "Myanmar Kyat (K)" },
-  { code: "KHR", locale: "km-KH", country: "KH", label: "Cambodian Riel (៛)" },
-  { code: "LAK", locale: "lo-LA", country: "LA", label: "Lao Kip (₭)" },
-  { code: "MNT", locale: "mn-MN", country: "MN", label: "Mongolian Tugrik (₮)" },
-  { code: "BND", locale: "ms-BN", country: "BN", label: "Brunei Dollar (B$)" },
-  { code: "KZT", locale: "kk-KZ", country: "KZ", label: "Kazakhstani Tenge (₸)" },
-  { code: "UZS", locale: "uz-UZ", country: "UZ", label: "Uzbekistani Som (UZS)" },
-  { code: "AZN", locale: "az-AZ", country: "AZ", label: "Azerbaijani Manat (₼)" },
-  { code: "GEL", locale: "ka-GE", country: "GE", label: "Georgian Lari (₾)" },
-  { code: "AMD", locale: "hy-AM", country: "AM", label: "Armenian Dram (֏)" },
+  { code: "INR", locale: "en-IN", country: "IN", label: "Indian Rupee (₹)", decimals: 2 },
+  { code: "PKR", locale: "ur-PK", country: "PK", label: "Pakistani Rupee (₨)", decimals: 2 },
+  { code: "BDT", locale: "bn-BD", country: "BD", label: "Bangladeshi Taka (৳)", decimals: 2 },
+  { code: "LKR", locale: "si-LK", country: "LK", label: "Sri Lankan Rupee (₨)", decimals: 2 },
+  { code: "NPR", locale: "ne-NP", country: "NP", label: "Nepalese Rupee (₨)", decimals: 2 },
+  { code: "CNY", locale: "zh-CN", country: "CN", label: "Chinese Yuan (¥)", decimals: 2 },
+  { code: "JPY", locale: "ja-JP", country: "JP", label: "Japanese Yen (¥)", decimals: 0 },
+  { code: "KRW", locale: "ko-KR", country: "KR", label: "South Korean Won (₩)", decimals: 0 },
+  { code: "HKD", locale: "zh-HK", country: "HK", label: "Hong Kong Dollar (HK$)", decimals: 2 },
+  { code: "TWD", locale: "zh-TW", country: "TW", label: "New Taiwan Dollar (NT$)", decimals: 2 },
+  { code: "SGD", locale: "en-SG", country: "SG", label: "Singapore Dollar (S$)", decimals: 2 },
+  { code: "MYR", locale: "ms-MY", country: "MY", label: "Malaysian Ringgit (RM)", decimals: 2 },
+  { code: "THB", locale: "th-TH", country: "TH", label: "Thai Baht (฿)", decimals: 2 },
+  { code: "IDR", locale: "id-ID", country: "ID", label: "Indonesian Rupiah (Rp)", decimals: 2 },
+  { code: "PHP", locale: "en-PH", country: "PH", label: "Philippine Peso (₱)", decimals: 2 },
+  { code: "VND", locale: "vi-VN", country: "VN", label: "Vietnamese Dong (₫)", decimals: 0 },
+  { code: "MMK", locale: "my-MM", country: "MM", label: "Myanmar Kyat (K)", decimals: 2 },
+  { code: "KHR", locale: "km-KH", country: "KH", label: "Cambodian Riel (៛)", decimals: 2 },
+  { code: "LAK", locale: "lo-LA", country: "LA", label: "Lao Kip (₭)", decimals: 2 },
+  { code: "MNT", locale: "mn-MN", country: "MN", label: "Mongolian Tugrik (₮)", decimals: 2 },
+  { code: "BND", locale: "ms-BN", country: "BN", label: "Brunei Dollar (B$)", decimals: 2 },
+  { code: "KZT", locale: "kk-KZ", country: "KZ", label: "Kazakhstani Tenge (₸)", decimals: 2 },
+  { code: "UZS", locale: "uz-UZ", country: "UZ", label: "Uzbekistani Som (UZS)", decimals: 0 },
+  { code: "AZN", locale: "az-AZ", country: "AZ", label: "Azerbaijani Manat (₼)", decimals: 2 },
+  { code: "GEL", locale: "ka-GE", country: "GE", label: "Georgian Lari (₾)", decimals: 2 },
+  { code: "AMD", locale: "hy-AM", country: "AM", label: "Armenian Dram (֏)", decimals: 2 },
 
   // ── Europe ──────────────────────────────────────────────────
-  { code: "EUR", locale: "de-DE", country: "DE", label: "Euro (€)" },
-  { code: "GBP", locale: "en-GB", country: "GB", label: "British Pound (£)" },
-  { code: "CHF", locale: "de-CH", country: "CH", label: "Swiss Franc (CHF)" },
-  { code: "SEK", locale: "sv-SE", country: "SE", label: "Swedish Krona (kr)" },
-  { code: "NOK", locale: "nb-NO", country: "NO", label: "Norwegian Krone (kr)" },
-  { code: "DKK", locale: "da-DK", country: "DK", label: "Danish Krone (kr)" },
-  { code: "PLN", locale: "pl-PL", country: "PL", label: "Polish Zloty (zł)" },
-  { code: "CZK", locale: "cs-CZ", country: "CZ", label: "Czech Koruna (Kč)" },
-  { code: "HUF", locale: "hu-HU", country: "HU", label: "Hungarian Forint (Ft)" },
-  { code: "RON", locale: "ro-RO", country: "RO", label: "Romanian Leu (lei)" },
-  { code: "BGN", locale: "bg-BG", country: "BG", label: "Bulgarian Lev (лв)" },
-  { code: "UAH", locale: "uk-UA", country: "UA", label: "Ukrainian Hryvnia (₴)" },
-  { code: "RSD", locale: "sr-RS", country: "RS", label: "Serbian Dinar (дин)" },
-  { code: "ISK", locale: "is-IS", country: "IS", label: "Icelandic Krona (kr)" },
-  { code: "ALL", locale: "sq-AL", country: "AL", label: "Albanian Lek (L)" },
-  { code: "MKD", locale: "mk-MK", country: "MK", label: "Macedonian Denar (ден)" },
-  { code: "BAM", locale: "bs-BA", country: "BA", label: "Bosnia-Herzegovina Mark (KM)" },
-  { code: "MDL", locale: "ro-MD", country: "MD", label: "Moldovan Leu (MDL)" },
-  { code: "BYN", locale: "be-BY", country: "BY", label: "Belarusian Ruble (Br)" },
+  { code: "EUR", locale: "de-DE", country: "DE", label: "Euro (€)", decimals: 2 },
+  { code: "GBP", locale: "en-GB", country: "GB", label: "British Pound (£)", decimals: 2 },
+  { code: "CHF", locale: "de-CH", country: "CH", label: "Swiss Franc (CHF)", decimals: 2 },
+  { code: "SEK", locale: "sv-SE", country: "SE", label: "Swedish Krona (kr)", decimals: 2 },
+  { code: "NOK", locale: "nb-NO", country: "NO", label: "Norwegian Krone (kr)", decimals: 2 },
+  { code: "DKK", locale: "da-DK", country: "DK", label: "Danish Krone (kr)", decimals: 2 },
+  { code: "PLN", locale: "pl-PL", country: "PL", label: "Polish Zloty (zł)", decimals: 2 },
+  { code: "CZK", locale: "cs-CZ", country: "CZ", label: "Czech Koruna (Kč)", decimals: 2 },
+  { code: "HUF", locale: "hu-HU", country: "HU", label: "Hungarian Forint (Ft)", decimals: 2 },
+  { code: "RON", locale: "ro-RO", country: "RO", label: "Romanian Leu (lei)", decimals: 2 },
+  { code: "BGN", locale: "bg-BG", country: "BG", label: "Bulgarian Lev (лв)", decimals: 2 },
+  { code: "UAH", locale: "uk-UA", country: "UA", label: "Ukrainian Hryvnia (₴)", decimals: 2 },
+  { code: "RSD", locale: "sr-RS", country: "RS", label: "Serbian Dinar (дин)", decimals: 2 },
+  { code: "ISK", locale: "is-IS", country: "IS", label: "Icelandic Krona (kr)", decimals: 0 },
+  { code: "ALL", locale: "sq-AL", country: "AL", label: "Albanian Lek (L)", decimals: 2 },
+  { code: "MKD", locale: "mk-MK", country: "MK", label: "Macedonian Denar (ден)", decimals: 2 },
+  { code: "BAM", locale: "bs-BA", country: "BA", label: "Bosnia-Herzegovina Mark (KM)", decimals: 2 },
+  { code: "MDL", locale: "ro-MD", country: "MD", label: "Moldovan Leu (MDL)", decimals: 2 },
+  { code: "BYN", locale: "be-BY", country: "BY", label: "Belarusian Ruble (Br)", decimals: 2 },
 
   // ── Oceania ─────────────────────────────────────────────────
-  { code: "AUD", locale: "en-AU", country: "AU", label: "Australian Dollar (A$)" },
-  { code: "NZD", locale: "en-NZ", country: "NZ", label: "New Zealand Dollar (NZ$)" },
-  { code: "FJD", locale: "en-FJ", country: "FJ", label: "Fijian Dollar (FJ$)" },
-  { code: "PGK", locale: "en-PG", country: "PG", label: "Papua New Guinean Kina (K)" },
-  { code: "WST", locale: "en-WS", country: "WS", label: "Samoan Tala (WS$)" },
-  { code: "TOP", locale: "en-TO", country: "TO", label: "Tongan Paʻanga (T$)" },
-  { code: "SBD", locale: "en-SB", country: "SB", label: "Solomon Islands Dollar (SI$)" },
-  { code: "VUV", locale: "en-VU", country: "VU", label: "Vanuatu Vatu (VT)" },
+  { code: "AUD", locale: "en-AU", country: "AU", label: "Australian Dollar (A$)", decimals: 2 },
+  { code: "NZD", locale: "en-NZ", country: "NZ", label: "New Zealand Dollar (NZ$)", decimals: 2 },
+  { code: "FJD", locale: "en-FJ", country: "FJ", label: "Fijian Dollar (FJ$)", decimals: 2 },
+  { code: "PGK", locale: "en-PG", country: "PG", label: "Papua New Guinean Kina (K)", decimals: 2 },
+  { code: "WST", locale: "en-WS", country: "WS", label: "Samoan Tala (WS$)", decimals: 2 },
+  { code: "TOP", locale: "en-TO", country: "TO", label: "Tongan Paʻanga (T$)", decimals: 2 },
+  { code: "SBD", locale: "en-SB", country: "SB", label: "Solomon Islands Dollar (SI$)", decimals: 2 },
+  { code: "VUV", locale: "en-VU", country: "VU", label: "Vanuatu Vatu (VT)", decimals: 0 },
 
   // ── Americas ────────────────────────────────────────────────
-  { code: "USD", locale: "en-US", country: "US", label: "US Dollar ($)" },
-  { code: "CAD", locale: "en-CA", country: "CA", label: "Canadian Dollar (C$)" },
-  { code: "MXN", locale: "es-MX", country: "MX", label: "Mexican Peso (Mex$)" },
-  { code: "BRL", locale: "pt-BR", country: "BR", label: "Brazilian Real (R$)" },
-  { code: "ARS", locale: "es-AR", country: "AR", label: "Argentine Peso (AR$)" },
-  { code: "CLP", locale: "es-CL", country: "CL", label: "Chilean Peso (CL$)" },
-  { code: "COP", locale: "es-CO", country: "CO", label: "Colombian Peso (CO$)" },
-  { code: "PEN", locale: "es-PE", country: "PE", label: "Peruvian Sol (S/)" },
-  { code: "UYU", locale: "es-UY", country: "UY", label: "Uruguayan Peso (UY$)" },
-  { code: "PYG", locale: "es-PY", country: "PY", label: "Paraguayan Guarani (₲)" },
-  { code: "BOB", locale: "es-BO", country: "BO", label: "Bolivian Boliviano (Bs)" },
-  { code: "GTQ", locale: "es-GT", country: "GT", label: "Guatemalan Quetzal (Q)" },
-  { code: "HNL", locale: "es-HN", country: "HN", label: "Honduran Lempira (L)" },
-  { code: "NIO", locale: "es-NI", country: "NI", label: "Nicaraguan Cordoba (C$)" },
-  { code: "CRC", locale: "es-CR", country: "CR", label: "Costa Rican Colon (₡)" },
-  { code: "PAB", locale: "es-PA", country: "PA", label: "Panamanian Balboa (B/.)" },
-  { code: "DOP", locale: "es-DO", country: "DO", label: "Dominican Peso (RD$)" },
-  { code: "JMD", locale: "en-JM", country: "JM", label: "Jamaican Dollar (J$)" },
-  { code: "TTD", locale: "en-TT", country: "TT", label: "Trinidad & Tobago Dollar (TT$)" },
-  { code: "BBD", locale: "en-BB", country: "BB", label: "Barbadian Dollar (Bds$)" },
-  { code: "BSD", locale: "en-BS", country: "BS", label: "Bahamian Dollar (B$)" },
-  { code: "BZD", locale: "en-BZ", country: "BZ", label: "Belize Dollar (BZ$)" },
-  { code: "GYD", locale: "en-GY", country: "GY", label: "Guyanese Dollar (G$)" },
-  { code: "SRD", locale: "nl-SR", country: "SR", label: "Surinamese Dollar (Sr$)" },
-  { code: "HTG", locale: "fr-HT", country: "HT", label: "Haitian Gourde (G)" },
+  { code: "USD", locale: "en-US", country: "US", label: "US Dollar ($)", decimals: 2 },
+  { code: "CAD", locale: "en-CA", country: "CA", label: "Canadian Dollar (C$)", decimals: 2 },
+  { code: "MXN", locale: "es-MX", country: "MX", label: "Mexican Peso (Mex$)", decimals: 2 },
+  { code: "BRL", locale: "pt-BR", country: "BR", label: "Brazilian Real (R$)", decimals: 2 },
+  { code: "ARS", locale: "es-AR", country: "AR", label: "Argentine Peso (AR$)", decimals: 2 },
+  { code: "CLP", locale: "es-CL", country: "CL", label: "Chilean Peso (CL$)", decimals: 0 },
+  { code: "COP", locale: "es-CO", country: "CO", label: "Colombian Peso (CO$)", decimals: 2 },
+  { code: "PEN", locale: "es-PE", country: "PE", label: "Peruvian Sol (S/)", decimals: 2 },
+  { code: "UYU", locale: "es-UY", country: "UY", label: "Uruguayan Peso (UY$)", decimals: 2 },
+  { code: "PYG", locale: "es-PY", country: "PY", label: "Paraguayan Guarani (₲)", decimals: 0 },
+  { code: "BOB", locale: "es-BO", country: "BO", label: "Bolivian Boliviano (Bs)", decimals: 2 },
+  { code: "GTQ", locale: "es-GT", country: "GT", label: "Guatemalan Quetzal (Q)", decimals: 2 },
+  { code: "HNL", locale: "es-HN", country: "HN", label: "Honduran Lempira (L)", decimals: 2 },
+  { code: "NIO", locale: "es-NI", country: "NI", label: "Nicaraguan Cordoba (C$)", decimals: 2 },
+  { code: "CRC", locale: "es-CR", country: "CR", label: "Costa Rican Colon (₡)", decimals: 2 },
+  { code: "PAB", locale: "es-PA", country: "PA", label: "Panamanian Balboa (B/.)", decimals: 2 },
+  { code: "DOP", locale: "es-DO", country: "DO", label: "Dominican Peso (RD$)", decimals: 2 },
+  { code: "JMD", locale: "en-JM", country: "JM", label: "Jamaican Dollar (J$)", decimals: 2 },
+  { code: "TTD", locale: "en-TT", country: "TT", label: "Trinidad & Tobago Dollar (TT$)", decimals: 2 },
+  { code: "BBD", locale: "en-BB", country: "BB", label: "Barbadian Dollar (Bds$)", decimals: 2 },
+  { code: "BSD", locale: "en-BS", country: "BS", label: "Bahamian Dollar (B$)", decimals: 2 },
+  { code: "BZD", locale: "en-BZ", country: "BZ", label: "Belize Dollar (BZ$)", decimals: 2 },
+  { code: "GYD", locale: "en-GY", country: "GY", label: "Guyanese Dollar (G$)", decimals: 2 },
+  { code: "SRD", locale: "nl-SR", country: "SR", label: "Surinamese Dollar (Sr$)", decimals: 2 },
+  { code: "HTG", locale: "fr-HT", country: "HT", label: "Haitian Gourde (G)", decimals: 2 },
 ];
 
 export const DEFAULT_CURRENCY = "ZAR";
@@ -161,14 +171,20 @@ export const DEFAULT_LOCALE   = "en-ZA";
 export function formatAmount(
   amount: number,
   currencyCode = DEFAULT_CURRENCY,
-  locale = DEFAULT_LOCALE
+  locale = DEFAULT_LOCALE,
+  options?: { precise?: boolean }
 ): string {
+  // Default (unchanged): every currency displays as whole units, no
+  // decimals — this is the existing behavior for all current callers and
+  // must not change. `precise: true` is opt-in only, for callers that need
+  // the currency's real minor-unit precision (e.g. BHD's 3 decimals).
+  const fractionDigits = options?.precise ? getCurrencyConfig(currencyCode).decimals : 0;
   try {
     return new Intl.NumberFormat(locale, {
       style: "currency",
       currency: currencyCode,
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
     }).format(amount);
   } catch {
     // Fallback if locale/currency combo is unsupported in the runtime
@@ -198,14 +214,19 @@ export function formatAmountCompact(
   }
 }
 
+// Sprint 31 — Phase 13 (Performance Audit): getCurrencyConfig() is called
+// from formatAmount (every money display in the app) and directly in
+// several list-rendering components (e.g. ContributionCard, once per
+// row). SUPPORTED_CURRENCIES.find() re-scanned all 116 entries on every
+// single call. SUPPORTED_CURRENCIES is a static const, so this Map is
+// built exactly once at module load and every lookup after that is O(1).
+const CURRENCY_CONFIG_BY_CODE = new Map(SUPPORTED_CURRENCIES.map((c) => [c.code, c]));
+
 /**
  * Get a currency config by code. Falls back to ZAR.
  */
 export function getCurrencyConfig(code: string): CurrencyConfig {
-  return (
-    SUPPORTED_CURRENCIES.find(c => c.code === code) ??
-    SUPPORTED_CURRENCIES[0]
-  );
+  return CURRENCY_CONFIG_BY_CODE.get(code) ?? SUPPORTED_CURRENCIES[0];
 }
 
 /**

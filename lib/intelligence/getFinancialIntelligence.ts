@@ -73,6 +73,19 @@ export interface FinancialIntelligenceInput {
     locale?: string | null;
   };
   now?: Date;
+  /**
+   * Sprint 31 — Phase 8: converts a ZAR-denominated amount into the
+   * user's real currency, used only to fix lib/recommendations.ts's
+   * goal-template baselines (see that file's docstring for the bug this
+   * closes). Optional, defaults to identity — omitting it is safe (ZAR
+   * users are unaffected either way) but leaves non-ZAR users' goal
+   * recommendations sized in raw ZAR numbers, same as before this phase.
+   * Deliberately a plain injected function rather than this function
+   * awaiting lib/currencyConversion.ts itself — see this file's own
+   * "Pure and synchronous" contract below; the actual rate lookup is the
+   * caller's job, done once before calling this function.
+   */
+  convertFromZar?: (zarAmount: number) => number;
 }
 
 export interface FinancialIntelligence {
@@ -249,6 +262,7 @@ export function getFinancialIntelligence(input: FinancialIntelligenceInput): Fin
     transactions,
     goals: goals.map((g) => ({ id: g.id, category: g.category, is_complete: g.is_complete })),
     now,
+    convertFromZar: input.convertFromZar,
   });
 
   return {

@@ -1,0 +1,337 @@
+=== NEW FILE: lib/currencyConversion.ts ===
+--- /dev/null	2026-08-03 05:30:31.405893670 +0000
++++ "/home/claude/savequest/savequest backup/lib/currencyConversion.ts"	2026-08-03 12:20:19.989723428 +0000
+@@ -0,0 +1,165 @@
++/**
++ * lib/currencyConversion.ts
++ * ─────────────────────────────────────────────────────────────────────────────
++ * Sprint 31 — Phase 7: Currency Conversion Engine.
++ *
++ * Same pure-function-vs-I/O split as lib/financialHealthScore.ts (pure) vs
++ * lib/financialHealthSnapshot.ts (I/O), and lib/digest.ts vs
++ * lib/notifications.ts:
++ *
++ *   convertAmount()   — pure, deterministic, decimal-safe. No I/O, no
++ *                        Date.now(), no randomness. Same inputs always
++ *                        produce the exact same output. Fully unit-testable
++ *                        with hand-constructed ExchangeRate objects, no DB
++ *                        or network required.
++ *
++ *   convertCurrency()  /
++ *   convertAmountsTo() — thin async wrappers that fetch rates via
++ *                        lib/exchangeRates/cache.ts's getCachedRate() and
++ *                        hand them to convertAmount(). This is the ONLY
++ *                        place in the app allowed to call getCachedRate
++ *                        for conversion purposes — per the Phase 7 brief,
++ *                        "No UI should perform conversions. No business
++ *                        logic should perform conversions." Every caller
++ *                        that needs a converted amount goes through this
++ *                        file, not lib/exchangeRates directly.
++ *
++ * DECIMAL SAFETY
++ *   This app stores and displays money as plain JS numbers throughout (no
++ *   fixed-point/decimal library in package.json, no cents-as-integer
++ *   convention anywhere in the schema) — matching that existing
++ *   convention rather than introducing a new one for this module alone.
++ *   "Decimal-safe" here means: every result is rounded exactly once, at
++ *   the end of the conversion, to the TARGET currency's real ISO-4217
++ *   minor-unit count (lib/currency.ts's `decimals` field, added Phase 5 —
++ *   0 for JPY, 3 for BHD, 2 for most others), using an epsilon-corrected
++ *   rounding helper that avoids the classic `Math.round(1.005 * 100)`
++ *   floating-point misround. It does NOT mean arbitrary-precision
++ *   arithmetic — if this engine is ever used for a context where
++ *   sub-cent precision is legally significant (e.g. billing), that would
++ *   need a real fixed-point library, which is intentionally called out
++ *   here as future work rather than silently assumed to already be safe
++ *   enough for that.
++ *
++ * NOT IN SCOPE FOR PHASE 7
++ *   No UI component or business-logic module is wired up to call this
++ *   engine yet — that happens per-consumer (Phase 9's social/leaderboard
++ *   comparisons is the first real one). This phase is the engine itself,
++ *   thoroughly tested in isolation, same as Phase 6 shipped inert until
++ *   this phase existed to consume it.
++ */
++
++import { getCurrencyConfig } from "@/lib/currency";
++import { getCachedRate } from "@/lib/exchangeRates/cache";
++import type { ExchangeRate } from "@/lib/exchangeRates/types";
++
++export interface ConvertedAmount {
++  /** The converted amount, rounded to toCurrency's real decimal precision. */
++  amount: number;
++  fromCurrency: string;
++  toCurrency: string;
++  /** Effective fromCurrency → toCurrency rate used for this conversion
++   *  (1 unit of fromCurrency = this many units of toCurrency). */
++  rate: number;
++  /** When the rate(s) behind this conversion were fetched. When the two
++   *  currencies' rates were fetched at different times, this is the OLDER
++   *  of the two — the more conservative (more likely to already be
++   *  flagged stale by a caller checking it) of the two timestamps. */
++  asOf: string;
++}
++
++/**
++ * Epsilon-corrected rounding to a fixed number of decimal places. Plain
++ * `Math.round(value * factor) / factor` misrounds some values (e.g.
++ * 1.005 * 100 is actually 100.49999999999999 in IEEE 754 double
++ * precision, so Math.round alone gives 100, not 101) — adding
++ * Number.EPSILON before rounding corrects for that without needing a
++ * decimal library.
++ */
++export function roundToDecimals(value: number, decimals: number): number {
++  const factor = 10 ** decimals;
++  return Math.round((value + Number.EPSILON * Math.sign(value || 1)) * factor) / factor;
++}
++
++/**
++ * Pure conversion math. Rates are priced against USD (see
++ * lib/exchangeRates/types.ts) — converting A → B goes through USD as a
++ * pivot: amountInUsd = amount / rate(A); result = amountInUsd * rate(B).
++ * Never mutates fromRate/toRate.
++ */
++export function convertAmount(amount: number, fromRate: ExchangeRate, toRate: ExchangeRate): ConvertedAmount {
++  const toDecimals = getCurrencyConfig(toRate.currencyCode).decimals;
++
++  if (fromRate.currencyCode === toRate.currencyCode) {
++    return {
++      amount: roundToDecimals(amount, toDecimals),
++      fromCurrency: fromRate.currencyCode,
++      toCurrency: toRate.currencyCode,
++      rate: 1,
++      asOf: fromRate.fetchedAt,
++    };
++  }
++
++  const amountInUsd = amount / fromRate.usdRate;
++  const converted = amountInUsd * toRate.usdRate;
++  const rate = toRate.usdRate / fromRate.usdRate;
++  const asOf = fromRate.fetchedAt < toRate.fetchedAt ? fromRate.fetchedAt : toRate.fetchedAt;
++
++  return {
++    amount: roundToDecimals(converted, toDecimals),
++    fromCurrency: fromRate.currencyCode,
++    toCurrency: toRate.currencyCode,
++    rate,
++    asOf,
++  };
++}
++
++/**
++ * Async wrapper: fetches both currencies' cached rates and converts.
++ * Skips the rate fetch entirely when fromCode === toCode (common case —
++ * most users never trigger a real cross-currency conversion) rather than
++ * doing two cache reads to reach the same trivially-known answer.
++ */
++export async function convertCurrency(
++  amount: number,
++  fromCode: string,
++  toCode: string,
++  now: Date = new Date()
++): Promise<ConvertedAmount> {
++  if (fromCode === toCode) {
++    const decimals = getCurrencyConfig(toCode).decimals;
++    return { amount: roundToDecimals(amount, decimals), fromCurrency: fromCode, toCurrency: toCode, rate: 1, asOf: now.toISOString() };
++  }
++
++  const [fromRate, toRate] = await Promise.all([getCachedRate(fromCode, now), getCachedRate(toCode, now)]);
++  return convertAmount(amount, fromRate, toRate);
++}
++
++/**
++ * Batch conversion: converts many (amount, currencyCode) pairs to one
++ * target currency, fetching each DISTINCT source currency's rate exactly
++ * once — not once per item. Built for exactly the shape Phase 9's
++ * mixed-currency leaderboards/groups will need (many users, few distinct
++ * currencies among them), so that feature doesn't end up calling
++ * convertCurrency() in a loop and re-fetching the same rate repeatedly.
++ */
++export async function convertAmountsTo(
++  items: { amount: number; currencyCode: string }[],
++  toCode: string,
++  now: Date = new Date()
++): Promise<(ConvertedAmount & { originalAmount: number })[]> {
++  const distinctFromCodes = Array.from(new Set(items.map((i) => i.currencyCode)));
++  const toRate = await getCachedRate(toCode, now);
++
++  const fromRates = new Map<string, ExchangeRate>();
++  await Promise.all(
++    distinctFromCodes.map(async (code) => {
++      fromRates.set(code, code === toCode ? toRate : await getCachedRate(code, now));
++    })
++  );
++
++  return items.map((item) => {
++    const fromRate = fromRates.get(item.currencyCode)!;
++    return { ...convertAmount(item.amount, fromRate, toRate), originalAmount: item.amount };
++  });
++}
+=== NEW FILE: tests/unit/currencyConversion.test.ts ===
+--- /dev/null	2026-08-03 05:30:31.405893670 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/currencyConversion.test.ts"	2026-08-03 12:23:04.479499291 +0000
+@@ -0,0 +1,164 @@
++/**
++ * tests/unit/currencyConversion.test.ts
++ * Sprint 31 — Phase 7 (Currency Conversion Engine).
++ *
++ * Same testing boundary as tests/unit/financialHealthScore.test.ts (pure
++ * function gets full unit coverage) vs. lib/financialHealthSnapshot.ts
++ * (I/O wrapper, no dedicated unit test file — needs a live/mocked DB,
++ * which is an integration-test concern). convertCurrency() and
++ * convertAmountsTo() here are the equivalent I/O wrappers and are left
++ * to integration tests for the same reason.
++ */
++import { describe, it, expect } from "vitest";
++import { convertAmount, roundToDecimals } from "@/lib/currencyConversion";
++import type { ExchangeRate } from "@/lib/exchangeRates/types";
++
++const usd = (usdRate: number, fetchedAt = "2026-08-01T00:00:00.000Z"): ExchangeRate => ({
++  currencyCode: "USD",
++  usdRate,
++  fetchedAt,
++  source: "test",
++});
++const rate = (code: string, usdRate: number, fetchedAt = "2026-08-01T00:00:00.000Z"): ExchangeRate => ({
++  currencyCode: code,
++  usdRate,
++  fetchedAt,
++  source: "test",
++});
++
++describe("roundToDecimals", () => {
++  it("rounds to the given number of decimal places", () => {
++    expect(roundToDecimals(1.2345, 2)).toBe(1.23);
++    expect(roundToDecimals(1.2355, 2)).toBe(1.24);
++  });
++
++  it("rounds to zero decimals cleanly (JPY-style)", () => {
++    expect(roundToDecimals(1234.5, 0)).toBe(1235);
++    expect(roundToDecimals(1234.4, 0)).toBe(1234);
++  });
++
++  it("rounds to three decimals cleanly (BHD-style)", () => {
++    expect(roundToDecimals(1.2345, 3)).toBe(1.235);
++    expect(roundToDecimals(1.2344, 3)).toBe(1.234);
++  });
++
++  it("handles zero", () => {
++    expect(roundToDecimals(0, 2)).toBe(0);
++    expect(roundToDecimals(-0, 2)).toBe(0);
++  });
++
++  it("handles negative values", () => {
++    expect(roundToDecimals(-1.005, 2)).toBe(-1.01);
++    expect(roundToDecimals(-99.999, 2)).toBe(-100);
++  });
++
++  it("handles the classic floating-point misround case (1.005 → 1.01, not 1.00)", () => {
++    expect(roundToDecimals(1.005, 2)).toBe(1.01);
++  });
++
++  it("handles very large values without precision loss at the target scale", () => {
++    expect(roundToDecimals(999999999.456, 2)).toBe(999999999.46);
++  });
++
++  it("handles very small decimals", () => {
++    expect(roundToDecimals(0.001, 2)).toBe(0);
++    expect(roundToDecimals(0.005, 2)).toBe(0.01);
++  });
++});
++
++describe("convertAmount", () => {
++  it("is a pure passthrough (only rounded) when fromCurrency === toCurrency", () => {
++    const zar = rate("ZAR", 18.5);
++    const result = convertAmount(1234.567, zar, zar);
++    expect(result.rate).toBe(1);
++    // Rounds to ZAR's real decimals (2, per Phase 5's SUPPORTED_CURRENCIES
++    // config) — note this is deliberately DIFFERENT from formatAmount's
++    // whole-unit display default; convertAmount always uses real decimals.
++    expect(result.amount).toBe(1234.57);
++  });
++
++  it("converts correctly through the USD pivot (ZAR → EUR via two USD rates)", () => {
++    // 1 USD = 18.50 ZAR, 1 USD = 0.92 EUR → 100 ZAR = (100/18.50) USD = 5.405... USD = 4.973 EUR
++    const zar = rate("ZAR", 18.5);
++    const eur = rate("EUR", 0.92);
++    const result = convertAmount(100, zar, eur);
++    expect(result.amount).toBeCloseTo(4.97, 2);
++    expect(result.fromCurrency).toBe("ZAR");
++    expect(result.toCurrency).toBe("EUR");
++  });
++
++  it("rounds the result to the TARGET currency's decimals, not the source's", () => {
++    const usdRate = usd(1);
++    const jpy = rate("JPY", 155.2);
++    const result = convertAmount(10, usdRate, jpy); // $10 → ¥1552, JPY has 0 decimals
++    expect(Number.isInteger(result.amount)).toBe(true);
++    expect(result.amount).toBe(1552);
++  });
++
++  it("respects BHD's 3-decimal precision on the way in", () => {
++    const usdRate = usd(1);
++    const bhd = rate("BHD", 0.376);
++    const result = convertAmount(100, usdRate, bhd); // $100 → 37.6 BHD
++    expect(result.amount).toBe(37.6);
++  });
++
++  it("computes the correct effective rate (toRate / fromRate)", () => {
++    const zar = rate("ZAR", 18.5);
++    const usdRate = usd(1);
++    const result = convertAmount(1, zar, usdRate);
++    expect(result.rate).toBeCloseTo(1 / 18.5, 6);
++  });
++
++  it("handles zero", () => {
++    const zar = rate("ZAR", 18.5);
++    const eur = rate("EUR", 0.92);
++    expect(convertAmount(0, zar, eur).amount).toBe(0);
++  });
++
++  it("handles negative amounts (e.g. a shortfall figure)", () => {
++    const zar = rate("ZAR", 18.5);
++    const eur = rate("EUR", 0.92);
++    expect(convertAmount(-100, zar, eur).amount).toBeCloseTo(-4.97, 2);
++  });
++
++  it("handles very large amounts", () => {
++    const zar = rate("ZAR", 18.5);
++    const usdRate = usd(1);
++    const result = convertAmount(10_000_000, zar, usdRate);
++    expect(result.amount).toBeCloseTo(540540.54, 2);
++  });
++
++  it("uses the OLDER of the two rates' fetchedAt as asOf", () => {
++    const older = rate("ZAR", 18.5, "2026-07-30T00:00:00.000Z");
++    const newer = rate("EUR", 0.92, "2026-08-01T00:00:00.000Z");
++    expect(convertAmount(100, older, newer).asOf).toBe("2026-07-30T00:00:00.000Z");
++    // Order of arguments shouldn't change which timestamp is "older".
++    expect(convertAmount(100, newer, older).asOf).toBe("2026-07-30T00:00:00.000Z");
++  });
++
++  it("is deterministic — identical inputs always produce identical output", () => {
++    const zar = rate("ZAR", 18.53217);
++    const eur = rate("EUR", 0.91876);
++    const a = convertAmount(1234.56, zar, eur);
++    const b = convertAmount(1234.56, zar, eur);
++    expect(a).toEqual(b);
++  });
++
++  it("never mutates its input ExchangeRate objects", () => {
++    const zar = rate("ZAR", 18.5);
++    const eur = rate("EUR", 0.92);
++    const zarBefore = { ...zar };
++    const eurBefore = { ...eur };
++    convertAmount(100, zar, eur);
++    expect(zar).toEqual(zarBefore);
++    expect(eur).toEqual(eurBefore);
++  });
++
++  it("round-trips A→B→A within the target currencies' rounding precision", () => {
++    const zar = rate("ZAR", 18.5);
++    const usdRate = usd(1);
++    const toUsd = convertAmount(1850, zar, usdRate); // 1850 ZAR → $100
++    const backToZar = convertAmount(toUsd.amount, usdRate, zar);
++    expect(backToZar.amount).toBeCloseTo(1850, 0);
++  });
++});

@@ -14,6 +14,7 @@
 
 import Link from "next/link";
 import type { PortfolioIntelligence } from "@/lib/portfolioIntelligence";
+import { formatDateLong } from "@/lib/dateFormat";
 
 interface Props {
   data: PortfolioIntelligence;
@@ -21,7 +22,7 @@ interface Props {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return formatDateLong(new Date(iso + "T00:00:00Z"));
 }
 
 export default function PortfolioIntelligenceCard({ data, formatAmount }: Props) {

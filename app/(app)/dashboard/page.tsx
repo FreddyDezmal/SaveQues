@@ -14,6 +14,7 @@ import { buildWeeklyReview }   from "@/lib/weeklyReview";
 import { generateCoachingMessages } from "@/lib/coaching";
 import { classifyJourneyStage, getDashboardSectionOrder, getRiskAwareSectionOrder } from "@/lib/dashboardPersonalization";
 import { getFinancialIntelligence } from "@/lib/intelligence/getFinancialIntelligence";
+import { createZarConverter } from "@/lib/currencyConversion";
 import type { Transaction }    from "@/lib/types";
 
 // Sprint 12 audit fix: measure server-side render time so the dashboard
@@ -165,6 +166,8 @@ export default async function DashboardPage() {
       const transactions = (txData ?? []) as Transaction[];
       depositCount = transactions.filter((t) => t.transaction_type === "deposit").length;
 
+      const convertFromZar = await createZarConverter(profile.currency_code ?? "ZAR");
+
       const intelligence = getFinancialIntelligence({
         transactions,
         goals,
@@ -180,6 +183,7 @@ export default async function DashboardPage() {
           currency_code: profile.currency_code,
           locale: profile.locale,
         },
+        convertFromZar,
       });
 
       insights = intelligence.insights;
@@ -220,6 +224,8 @@ export default async function DashboardPage() {
         challengesCompleted:  (dash.active_challenges ?? []).filter((uc: any) => uc.status === "completed").length,
         dailyQuestsCompleted: profile.daily_quests_completed ?? 0,
         earnedIds:            allAchievementIds,
+        currencyCode:         profile.currency_code,
+        locale:               profile.locale,
       })
     : [];
 

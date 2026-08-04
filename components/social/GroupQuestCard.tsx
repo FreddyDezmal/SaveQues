@@ -13,6 +13,7 @@
 import { useState } from "react";
 import { ChevronDown, Trophy } from "lucide-react";
 import StatusBadge, { type BadgeStatus } from "@/components/ui/StatusBadge";
+import { formatDateNumeric } from "@/lib/dateFormat";
 
 export interface GroupQuest {
   id: string;
@@ -84,7 +85,7 @@ export default function GroupQuestCard({ quest, canCheckCompletion, onCompleted 
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-white truncate">{quest.title}</p>
-          <p className="text-xs text-white/40">{quest.xp_reward} XP · ends {new Date(quest.end_date).toLocaleDateString()}</p>
+          <p className="text-xs text-white/40">{quest.xp_reward} XP · ends {formatDateNumeric(quest.end_date)}</p>
         </div>
         <StatusBadge status={quest.status as BadgeStatus} />
         <ChevronDown size={16} className={`text-white/30 transition-transform shrink-0 ${expanded ? "rotate-180" : ""}`} aria-hidden="true" />

@@ -131,6 +131,7 @@ export async function GET(req: NextRequest) {
       last_active_date,
       current_level,
       currency_code,
+      locale,
       timezone
     `)
     .order("created_at", { ascending: false });

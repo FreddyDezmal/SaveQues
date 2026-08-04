@@ -3,6 +3,8 @@
 // (60 through Sprint 18/20 + 5 progressive deposit-count tiers, Sprint 21)
 // ============================================================
 
+import { formatAmount, DEFAULT_CURRENCY, DEFAULT_LOCALE } from "@/lib/currency";
+
 export interface Achievement {
   id: string;
   title: string;
@@ -235,6 +237,10 @@ export function getAlmostMessages(params: {
   challengesCompleted: number;
   dailyQuestsCompleted: number;
   earnedIds: string[];
+  /** Sprint 31 — Phase 5: optional, defaults preserve the exact previous
+   * hardcoded "R" behavior for any existing caller that doesn't pass one. */
+  currencyCode?: string;
+  locale?: string;
 }): { message: string; icon: string }[] {
   const earned = new Set(params.earnedIds);
   const hints: { message: string; icon: string; urgency: number }[] = [];
@@ -254,7 +260,8 @@ export function getAlmostMessages(params: {
     if (!earned.has(id) && params.totalSaved >= target * 0.75 && params.totalSaved < target) {
       const remaining = target - params.totalSaved;
       const a = ACHIEVEMENTS.find(a => a.id === id);
-      hints.push({ message: `R${remaining.toLocaleString()} away from ${a?.title} ${a?.icon}`, icon: "💰", urgency: 1 - remaining / target });
+      const formatted = formatAmount(remaining, params.currencyCode ?? DEFAULT_CURRENCY, params.locale ?? DEFAULT_LOCALE);
+      hints.push({ message: `${formatted} away from ${a?.title} ${a?.icon}`, icon: "💰", urgency: 1 - remaining / target });
       break;
     }
   }

@@ -22,6 +22,7 @@ import { Copy, Check, QrCode, X as XIcon } from "lucide-react";
 import ShareButton from "@/components/sharing/ShareButton";
 import StatusBadge, { type BadgeStatus } from "@/components/ui/StatusBadge";
 import EmptyState from "@/components/ui/EmptyState";
+import { formatDateNumeric } from "@/lib/dateFormat";
 import ErrorState from "@/components/ui/ErrorState";
 import Skeleton from "@/components/ui/Skeleton";
 import ConfirmationModal from "@/components/ui/ConfirmationModal";
@@ -188,7 +189,7 @@ export default function InvitesClient() {
                       {inv.context_type === "group" && <span className="text-white/40"> · group invite</span>}
                     </p>
                     <p className="text-xs text-white/40 mt-0.5">
-                      Sent {new Date(inv.created_at).toLocaleDateString()}
+                      Sent {formatDateNumeric(inv.created_at)}
                     </p>
                   </div>
                   <StatusBadge status={displayStatus(inv)} />

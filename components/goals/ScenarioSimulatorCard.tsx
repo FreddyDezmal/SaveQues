@@ -35,6 +35,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronUp, Bookmark, Trash2 } from "lucide-react";
 import { simulateScenario, simulateStandardScenarios, type ScenarioResult, type ScenarioType } from "@/lib/scenarioSimulator";
+import { formatDateLong } from "@/lib/dateFormat";
 import UpgradePrompt from "@/components/billing/UpgradePrompt";
 import type { SavingsGoal, Transaction } from "@/lib/types";
 
@@ -56,7 +57,7 @@ interface SavedScenarioRow {
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  return new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  return formatDateLong(new Date(iso + "T00:00:00Z"));
 }
 
 function DeltaBadge({ deltaDays }: { deltaDays: number | null }) {

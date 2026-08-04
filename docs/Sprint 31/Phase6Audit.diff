@@ -1,0 +1,594 @@
+=== NEW FILE: lib/exchangeRates/types.ts ===
+--- /dev/null	2026-07-23 23:45:50.173780495 +0000
++++ "/home/claude/savequest/savequest backup/lib/exchangeRates/types.ts"	2026-08-03 07:43:20.422843449 +0000
+@@ -0,0 +1,50 @@
++/**
++ * lib/exchangeRates/types.ts
++ * ─────────────────────────────────────────────────────────────────────────────
++ * Sprint 31 — Phase 6: Exchange Rate Infrastructure.
++ *
++ * Pure types only — zero I/O, same convention as lib/billing/types.ts and
++ * lib/push/types.ts. Rates are stored relative to a single pivot currency
++ * (USD) rather than as one row per currency PAIR: with 116 supported
++ * currencies, a pivot design needs 116 rows total, while a pairwise design
++ * would need up to 116 × 115 rows for full coverage. Converting any A → B
++ * is then just going through the pivot: amountInUsd = amount / rate(A);
++ * result = amountInUsd * rate(B). See lib/exchangeRates/cache.ts and the
++ * (Phase 7) conversion engine for where that math actually happens — this
++ * file only describes the data shape.
++ */
++
++export interface ExchangeRate {
++  /** ISO 4217 code, e.g. "ZAR". Always one of lib/currency.ts's
++   *  SUPPORTED_CURRENCIES — enforced by the exchange_rates table's CHECK
++   *  constraint (migration 071), same pattern as profiles.currency_code. */
++  currencyCode: string;
++  /** Units of this currency per 1 USD. USD itself always has usdRate = 1. */
++  usdRate: number;
++  /** When this rate was fetched from the provider (not when it was read
++   *  from cache — see lib/exchangeRates/cache.ts for that distinction). */
++  fetchedAt: string;
++  /** Provider name this rate came from, e.g. "exchangerate_api" — kept per
++   *  row (not just logged) so a stale/wrong rate can be traced back to its
++   *  source during an incident, without needing to correlate against logs
++   *  that may have already rotated out. */
++  source: string;
++}
++
++export interface ExchangeRateProvider {
++  /** Short identifier for logging and for the `source` field above —
++   *  "exchangerate_api", "identity", etc. */
++  readonly name: string;
++
++  /**
++   * Fetches fresh rates for every supported currency, priced against USD,
++   * in one call. Most providers (including the one this sprint integrates)
++   * price a "get all rates for this base currency" call identically to a
++   * single-pair call, so this avoids 116 separate requests.
++   *
++   * Throws on failure — callers (lib/exchangeRates/cache.ts) decide
++   * fallback behavior (serve a stale cached value, etc.). A provider must
++   * never return a partial or fabricated rate set silently.
++   */
++  getRates(): Promise<ExchangeRate[]>;
++}
+=== NEW FILE: lib/exchangeRates/index.ts ===
+--- /dev/null	2026-07-23 23:45:50.173780495 +0000
++++ "/home/claude/savequest/savequest backup/lib/exchangeRates/index.ts"	2026-08-03 11:39:38.829100335 +0000
+@@ -0,0 +1,51 @@
++/**
++ * lib/exchangeRates/index.ts
++ * ─────────────────────────────────────────────────────────────────────────────
++ * Sprint 31 — Phase 6. Same selector shape as lib/push/index.ts and
++ * lib/email/index.ts, but the "which default is safe" reasoning matches
++ * email's, not push's: there is no pre-existing FX feed in this app to
++ * preserve (unlike push's existing webpush integration), so the honest,
++ * regression-free default is identityProvider — see providers/identity.ts's
++ * file header for why that's "1:1 rates + loud warning," not silence.
++ *
++ * Selection is env-var driven:
++ *   EXCHANGE_RATE_PROVIDER   - "identity" (default) | "exchangerate_api"
++ *   EXCHANGE_RATE_API_KEY    - required only when EXCHANGE_RATE_PROVIDER=exchangerate_api
++ *
++ * Neither is set anywhere in this project as of Phase 6 — confirmed the
++ * same way Phase 9 (email) and Phase 10 (push) confirmed it. Nothing in
++ * the app calls this yet either (see the Phase 6 design note on there
++ * being no consumer until Phase 7/9) — selecting a provider here doesn't,
++ * by itself, cause any conversion to happen anywhere.
++ */
++import type { ExchangeRateProvider } from "./types";
++import { identityProvider } from "./providers/identity";
++import { createExchangeRateApiProvider } from "./providers/exchangerateApi";
++import { createLogger } from "@/lib/logger";
++
++export type { ExchangeRate, ExchangeRateProvider } from "./types";
++
++const log = createLogger("exchange-rates");
++
++export function selectExchangeRateProvider(env: Record<string, string | undefined>): ExchangeRateProvider {
++  const providerName = env.EXCHANGE_RATE_PROVIDER;
++
++  if (!providerName || providerName === "identity") return identityProvider;
++
++  switch (providerName) {
++    case "exchangerate_api": {
++      if (!env.EXCHANGE_RATE_API_KEY) {
++        log.warn('EXCHANGE_RATE_PROVIDER=exchangerate_api set but EXCHANGE_RATE_API_KEY is missing — falling back to identity.');
++        return identityProvider;
++      }
++      return createExchangeRateApiProvider({ apiKey: env.EXCHANGE_RATE_API_KEY });
++    }
++    default:
++      log.warn(`Unknown EXCHANGE_RATE_PROVIDER="${providerName}" — falling back to identity.`);
++      return identityProvider;
++  }
++}
++
++export function getExchangeRateProvider(): ExchangeRateProvider {
++  return selectExchangeRateProvider(process.env as Record<string, string | undefined>);
++}
+=== NEW FILE: lib/exchangeRates/cache.ts ===
+--- /dev/null	2026-07-23 23:45:50.173780495 +0000
++++ "/home/claude/savequest/savequest backup/lib/exchangeRates/cache.ts"	2026-08-03 11:40:33.453158139 +0000
+@@ -0,0 +1,126 @@
++/**
++ * lib/exchangeRates/cache.ts
++ * ─────────────────────────────────────────────────────────────────────────────
++ * Sprint 31 — Phase 6. I/O layer for exchange rates — same split as
++ * lib/financialHealthSnapshot.ts (pure function vs. persistence): the
++ * ExchangeRateProvider implementations are the pure "fetch from a vendor"
++ * layer, this file is where those results actually get read from and
++ * written to the database.
++ *
++ * CACHE LIFETIME: 24 hours. A savings app has no need for intraday FX
++ * precision, and daily granularity keeps this app well inside every
++ * provider's free-tier request limits (one cron run per day, not one
++ * request per page view). Documented here as the single source of truth
++ * for that number — refreshAllRates()'s cron and getCachedRate()'s
++ * staleness check both read from CACHE_TTL_MS below rather than each
++ * hardcoding "24 hours" separately.
++ *
++ * FALLBACK ORDER on a cache read (getCachedRate):
++ *   1. A cached row younger than CACHE_TTL_MS  → use it, no network call.
++ *   2. No fresh row (missing, or older than TTL) → call the live provider.
++ *   3. Live provider call fails AND a stale row exists → serve the stale
++ *      row anyway (with a logged warning noting its age), rather than
++ *      failing the caller entirely. A day-old rate is still far more
++ *      useful than refusing to convert at all.
++ *   4. Live provider call fails AND there is no cached row at all (e.g.
++ *      first deploy before the cron has ever run) → throw. There is
++ *      nothing honest to return at that point; the (Phase 7) conversion
++ *      engine must not guess.
++ */
++import { createServiceClient } from "@/lib/supabase/server";
++import { getExchangeRateProvider } from "./index";
++import type { ExchangeRate } from "./types";
++import { createLogger } from "@/lib/logger";
++
++const log = createLogger("exchange-rates.cache");
++
++export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours — see file header
++
++interface ExchangeRateRow {
++  currency_code: string;
++  usd_rate: number;
++  fetched_at: string;
++  source: string;
++}
++
++function rowToRate(row: ExchangeRateRow): ExchangeRate {
++  return { currencyCode: row.currency_code, usdRate: row.usd_rate, fetchedAt: row.fetched_at, source: row.source };
++}
++
++function isFresh(fetchedAt: string, now: Date): boolean {
++  return now.getTime() - new Date(fetchedAt).getTime() < CACHE_TTL_MS;
++}
++
++/**
++ * Reads one currency's cached rate, refreshing ALL currencies from the
++ * live provider on a miss (not just the one requested) — the provider
++ * call is priced identically either way (see ExchangeRateProvider's file
++ * header), so a miss is the cheapest possible moment to warm the whole
++ * cache rather than only the one row this particular caller needed.
++ */
++export async function getCachedRate(currencyCode: string, now: Date = new Date()): Promise<ExchangeRate> {
++  const supabase = createServiceClient();
++
++  const { data: existing } = await supabase
++    .from("exchange_rates")
++    .select("currency_code, usd_rate, fetched_at, source")
++    .eq("currency_code", currencyCode)
++    .maybeSingle();
++
++  if (existing && isFresh(existing.fetched_at, now)) {
++    return rowToRate(existing as ExchangeRateRow);
++  }
++
++  try {
++    const written = await refreshAllRates(now);
++    const fresh = written.find((r) => r.currencyCode === currencyCode);
++    if (fresh) return fresh;
++    // Provider call succeeded overall but didn't include this specific
++    // currency (see exchangerateApi.ts's "missing" handling) — fall
++    // through to the stale-row check below rather than treating this as
++    // a hard failure.
++    throw new Error(`Provider refresh did not return a rate for ${currencyCode}`);
++  } catch (err) {
++    if (existing) {
++      log.warn("Live rate refresh failed — serving stale cached rate", {
++        currency_code: currencyCode,
++        age_ms: now.getTime() - new Date(existing.fetched_at).getTime(),
++        error: err instanceof Error ? err.message : String(err),
++      });
++      return rowToRate(existing as ExchangeRateRow);
++    }
++    log.error("Live rate refresh failed and no cached rate exists", {
++      currency_code: currencyCode,
++      error: err instanceof Error ? err.message : String(err),
++    });
++    throw err;
++  }
++}
++
++/**
++ * Fetches fresh rates for every supported currency from the configured
++ * provider and upserts them all. Called by both the daily cron (proactive
++ * warm) and getCachedRate() on a miss (reactive warm) — same function
++ * either way, so there is exactly one code path that writes this table.
++ */
++export async function refreshAllRates(now: Date = new Date()): Promise<ExchangeRate[]> {
++  const provider = getExchangeRateProvider();
++  const rates = await provider.getRates();
++
++  const supabase = createServiceClient();
++  const rows: ExchangeRateRow[] = rates.map((r) => ({
++    currency_code: r.currencyCode,
++    usd_rate: r.usdRate,
++    fetched_at: r.fetchedAt,
++    source: r.source,
++  }));
++
++  const { error } = await supabase.from("exchange_rates").upsert(rows, { onConflict: "currency_code" });
++  if (error) {
++    log.error("Failed to write refreshed rates", { action: "upsert_exchange_rates", error: error.message, provider: provider.name });
++    throw new Error(`Failed to persist exchange rates: ${error.message}`);
++  }
++
++  log.info("Refreshed exchange rates", { provider: provider.name, count: rows.length, run_at: now.toISOString() });
++  return rates;
++}
+=== NEW FILE: lib/exchangeRates/providers/identity.ts ===
+--- /dev/null	2026-07-23 23:45:50.173780495 +0000
++++ "/home/claude/savequest/savequest backup/lib/exchangeRates/providers/identity.ts"	2026-08-03 07:43:46.026844971 +0000
+@@ -0,0 +1,51 @@
++/**
++ * lib/exchangeRates/providers/identity.ts
++ * ─────────────────────────────────────────────────────────────────────────────
++ * Sprint 31 — Phase 6. The default provider when EXCHANGE_RATE_PROVIDER is
++ * unset or unconfigured.
++ *
++ * Same philosophy as lib/email/index.ts's Phase 9 default ("defaulting to
++ * null would be a regression... the honest default was send nothing"),
++ * adapted for the one real difference here: push already had a working
++ * production provider to preserve (defaulting to webpush), but there is no
++ * existing FX feed anywhere in this app to preserve. So the honest default
++ * for exchange rates isn't "do nothing" (a provider that throws would break
++ * every caller) — it's "return 1:1 rates for every currency and be loud
++ * about it," so the app keeps functioning exactly as it does today (no
++ * currency actually gets converted anywhere yet — see the Phase 6 design
++ * note) while making it impossible to silently ship inaccurate conversion
++ * math once something DOES start calling this.
++ */
++
++import { SUPPORTED_CURRENCIES } from "@/lib/currency";
++import type { ExchangeRate, ExchangeRateProvider } from "../types";
++import { createLogger } from "@/lib/logger";
++
++const log = createLogger("exchange-rates.identity");
++
++let hasWarned = false;
++
++export const identityProvider: ExchangeRateProvider = {
++  name: "identity",
++
++  async getRates(): Promise<ExchangeRate[]> {
++    // Warn once per process, not once per call — this runs on every cache
++    // miss otherwise, which would spam logs without adding information.
++    if (!hasWarned) {
++      log.warn(
++        "EXCHANGE_RATE_PROVIDER is not configured — serving 1:1 identity rates for all currencies. " +
++          "Cross-currency conversion will be WRONG until a real provider is configured. " +
++          "Set EXCHANGE_RATE_PROVIDER=exchangerate_api and EXCHANGE_RATE_API_KEY to fix this."
++      );
++      hasWarned = true;
++    }
++
++    const fetchedAt = new Date().toISOString();
++    return SUPPORTED_CURRENCIES.map((c) => ({
++      currencyCode: c.code,
++      usdRate: 1,
++      fetchedAt,
++      source: "identity",
++    }));
++  },
++};
+=== NEW FILE: lib/exchangeRates/providers/exchangerateApi.ts ===
+--- /dev/null	2026-07-23 23:45:50.173780495 +0000
++++ "/home/claude/savequest/savequest backup/lib/exchangeRates/providers/exchangerateApi.ts"	2026-08-03 07:44:14.334846654 +0000
+@@ -0,0 +1,88 @@
++/**
++ * lib/exchangeRates/providers/exchangerateApi.ts
++ * ─────────────────────────────────────────────────────────────────────────────
++ * Sprint 31 — Phase 6. Real adapter, plain fetch — same shape as
++ * lib/email/providers/postmark.ts: a pure buildXRequest() (unit-testable
++ * without network) plus a createXProvider(config) factory.
++ *
++ * Provider: exchangerate-api.com's v6 "latest" endpoint. Chosen for the
++ * free tier (1,500 requests/month, no card required) — this app only
++ * needs ~1 request/day via the Phase 6 cron, so free-tier limits are not
++ * a practical constraint. GET
++ * https://v6.exchangerate-api.com/v6/{API_KEY}/latest/USD returns every
++ * supported currency priced against USD in one response — exactly the
++ * "one call covers all 116 currencies" shape ExchangeRateProvider expects.
++ *
++ * INACTIVE BY DEFAULT — selectExchangeRateProvider() (index.ts) only
++ * returns this when EXCHANGE_RATE_PROVIDER=exchangerate_api AND
++ * EXCHANGE_RATE_API_KEY are both set; otherwise identity.ts is used.
++ */
++import { SUPPORTED_CURRENCIES } from "@/lib/currency";
++import type { ExchangeRate, ExchangeRateProvider } from "../types";
++import { createLogger } from "@/lib/logger";
++
++const log = createLogger("exchange-rates.exchangerate-api");
++
++export interface ExchangeRateApiRequest {
++  url: string;
++}
++
++export function buildExchangeRateApiRequest(apiKey: string): ExchangeRateApiRequest {
++  return { url: `https://v6.exchangerate-api.com/v6/${apiKey}/latest/USD` };
++}
++
++interface ExchangeRateApiResponse {
++  result: "success" | "error";
++  "error-type"?: string;
++  time_last_update_utc?: string;
++  conversion_rates?: Record<string, number>;
++}
++
++export function createExchangeRateApiProvider(config: { apiKey: string }): ExchangeRateProvider {
++  return {
++    name: "exchangerate_api",
++
++    async getRates(): Promise<ExchangeRate[]> {
++      const req = buildExchangeRateApiRequest(config.apiKey);
++      const res = await fetch(req.url);
++      const data = (await res.json().catch(() => ({}))) as ExchangeRateApiResponse;
++
++      if (!res.ok || data.result !== "success" || !data.conversion_rates) {
++        throw new Error(`exchangerate_api request failed: ${data["error-type"] ?? res.status}`);
++      }
++
++      const fetchedAt = new Date().toISOString();
++      const rates: ExchangeRate[] = [];
++      const missing: string[] = [];
++
++      // Only return rates for currencies this app actually supports
++      // (lib/currency.ts's SUPPORTED_CURRENCIES is the single source of
++      // truth — never let a provider silently introduce a currency the
++      // rest of the app doesn't know about, or a stale/absent one pass
++      // through unnoticed).
++      for (const { code } of SUPPORTED_CURRENCIES) {
++        const rate = data.conversion_rates[code];
++        if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) {
++          missing.push(code);
++          continue;
++        }
++        rates.push({ currencyCode: code, usdRate: rate, fetchedAt, source: "exchangerate_api" });
++      }
++
++      if (missing.length > 0) {
++        // Not fatal — most of these gaps are for currencies the free API
++        // simply doesn't price (e.g. some CFA franc zone or Pacific island
++        // currencies). The cache layer keeps whatever rate it already has
++        // cached for a currency this fetch didn't return, rather than
++        // wiping it out. Logged so a real, unexpected gap doesn't go
++        // unnoticed for months.
++        log.warn("exchangerate_api response is missing rates for some supported currencies", {
++          missing_count: missing.length,
++          missing_codes: missing.join(","),
++        });
++      }
++
++      return rates;
++    },
++  };
++}
+=== NEW FILE: app/api/cron/exchange-rates/route.ts ===
+--- /dev/null	2026-07-23 23:45:50.173780495 +0000
++++ "/home/claude/savequest/savequest backup/app/api/cron/exchange-rates/route.ts"	2026-08-03 11:40:48.321157799 +0000
+@@ -0,0 +1,47 @@
++/**
++ * app/api/cron/exchange-rates/route.ts
++ * ─────────────────────────────────────────────────────────────────────────────
++ * Sprint 31 — Phase 6: daily exchange rate cache refresh.
++ *
++ * Same CRON_SECRET fail-closed pattern as every other cron route in this
++ * codebase (see app/api/cron/notifications/route.ts's docstring for the
++ * full rationale — not repeated here).
++ *
++ * Schedule: once daily (see vercel.json). Exact time of day isn't load
++ * bearing — see lib/exchangeRates/cache.ts's file header for the 24h TTL
++ * this keeps warm, and its documented fallback order for what happens on
++ * a day this cron fails to run (getCachedRate() self-heals reactively).
++ */
++
++import { NextRequest, NextResponse } from "next/server";
++import { refreshAllRates } from "@/lib/exchangeRates/cache";
++import { createLogger } from "@/lib/logger";
++import { captureError } from "@/lib/monitoring";
++
++const log = createLogger("cron.exchange-rates");
++
++export async function GET(req: NextRequest) {
++  const secret = process.env.CRON_SECRET;
++
++  if (!secret) {
++    log.error("CRON_SECRET environment variable is not set — refusing to run", { action: "config_check" });
++    return NextResponse.json({ error: "Cron endpoint is misconfigured. CRON_SECRET is not set." }, { status: 500 });
++  }
++
++  const authHeader = req.headers.get("authorization");
++  if (authHeader !== `Bearer ${secret}`) {
++    log.warn("Unauthorised cron request", { action: "auth_check" });
++    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
++  }
++
++  try {
++    const rates = await refreshAllRates();
++    log.info("Exchange rate refresh run complete", { count: rates.length });
++    return NextResponse.json({ ok: true, count: rates.length });
++  } catch (err) {
++    const message = err instanceof Error ? err.message : String(err);
++    log.error("Exchange rate refresh run failed", { error: message });
++    captureError(err, { action: "exchange_rates_cron" });
++    return NextResponse.json({ error: "Refresh run failed" }, { status: 500 });
++  }
++}
+=== NEW FILE: supabase/migrations/071_exchange_rates.sql ===
+--- /dev/null	2026-07-23 23:45:50.173780495 +0000
++++ "/home/claude/savequest/savequest backup/supabase/migrations/071_exchange_rates.sql"	2026-08-03 11:40:04.765158795 +0000
+@@ -0,0 +1,53 @@
++-- 071_exchange_rates.sql
++--
++-- Sprint 31 — Phase 6: Exchange Rate Infrastructure.
++--
++-- One row per supported currency (not per pair — see
++-- lib/exchangeRates/types.ts's file header for why), priced against USD.
++-- Populated by the daily cron at app/api/cron/exchange-rates/route.ts and
++-- read by lib/exchangeRates/cache.ts, which falls back to a live provider
++-- call if a row is missing or older than 24h, and to the previous value if
++-- that live call also fails (see cache.ts for the exact fallback order).
++--
++-- currency_code CHECK constraint mirrors profiles_currency_code_check
++-- (migrations 025, 056) against the same lib/currency.ts SUPPORTED_CURRENCIES
++-- list — if a new currency is ever added there, this constraint needs the
++-- same follow-up migration treatment as profiles' does.
++--
++-- RLS: enabled, no policies at all — same pattern as billing_webhook_events
++-- (migration 069). This table is never read or written by an authenticated
++-- user session; only the cron route and lib/exchangeRates/cache.ts via the
++-- service-role client touch it. Directly satisfies Phase 14's "users cannot
++-- manipulate exchange rates."
++
++CREATE TABLE IF NOT EXISTS public.exchange_rates (
++  currency_code  text PRIMARY KEY
++    CHECK (currency_code IN (
++      'ZAR', 'NGN', 'GHS', 'KES', 'EGP', 'MAD', 'DZD', 'TND',
++      'ETB', 'UGX', 'TZS', 'RWF', 'ZMW', 'BWP', 'MUR', 'XOF',
++      'XAF', 'MZN', 'AOA', 'NAD', 'SZL', 'LSL', 'MWK', 'SDG',
++      'LYD', 'CDF', 'SOS', 'AED', 'SAR', 'QAR', 'KWD', 'BHD',
++      'OMR', 'ILS', 'JOD', 'LBP', 'IQD', 'TRY', 'INR', 'PKR',
++      'BDT', 'LKR', 'NPR', 'CNY', 'JPY', 'KRW', 'HKD', 'TWD',
++      'SGD', 'MYR', 'THB', 'IDR', 'PHP', 'VND', 'MMK', 'KHR',
++      'LAK', 'MNT', 'BND', 'KZT', 'UZS', 'AZN', 'GEL', 'AMD',
++      'EUR', 'GBP', 'CHF', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK',
++      'HUF', 'RON', 'BGN', 'UAH', 'RSD', 'ISK', 'ALL', 'MKD',
++      'BAM', 'MDL', 'BYN', 'AUD', 'NZD', 'FJD', 'PGK', 'WST',
++      'TOP', 'SBD', 'VUV', 'USD', 'CAD', 'MXN', 'BRL', 'ARS',
++      'CLP', 'COP', 'PEN', 'UYU', 'PYG', 'BOB', 'GTQ', 'HNL',
++      'NIO', 'CRC', 'PAB', 'DOP', 'JMD', 'TTD', 'BBD', 'BSD',
++      'BZD', 'GYD', 'SRD', 'HTG'
++    )),
++  -- Units of this currency per 1 USD. USD's own row always has usd_rate = 1.
++  usd_rate       numeric NOT NULL CHECK (usd_rate > 0),
++  fetched_at     timestamptz NOT NULL,
++  source         text NOT NULL
++);
++
++ALTER TABLE public.exchange_rates ENABLE ROW LEVEL SECURITY;
++-- No client policies at all — see file header. Only the service-role
++-- client (cron route, cache.ts) reads or writes this table.
++
++CREATE INDEX IF NOT EXISTS idx_exchange_rates_fetched_at
++  ON public.exchange_rates (fetched_at);
+=== NEW FILE: tests/unit/exchangeRateProvider.test.ts ===
+--- /dev/null	2026-07-23 23:45:50.173780495 +0000
++++ "/home/claude/savequest/savequest backup/tests/unit/exchangeRateProvider.test.ts"	2026-08-03 11:41:19.265157091 +0000
+@@ -0,0 +1,67 @@
++/**
++ * tests/unit/exchangeRateProvider.test.ts
++ * Sprint 31 — Phase 6 (Exchange Rate Infrastructure).
++ *
++ * Same testing boundary as tests/unit/pushProvider.test.ts /
++ * emailProvider.test.ts: pure request-building and selection logic get
++ * unit tests; the actual fetch() call inside exchangerateApi.ts's
++ * getRates() doesn't (no network access in this test environment, and no
++ * point re-testing that fetch() works). lib/exchangeRates/cache.ts's DB
++ * read/write paths aren't covered here either — they need a Supabase
++ * client, which is exactly what Phase 7's conversion-engine test suite
++ * should set up properly rather than half-mocking here.
++ */
++import { describe, it, expect, beforeEach } from "vitest";
++import { SUPPORTED_CURRENCIES } from "@/lib/currency";
++import { buildExchangeRateApiRequest } from "@/lib/exchangeRates/providers/exchangerateApi";
++import { identityProvider } from "@/lib/exchangeRates/providers/identity";
++import { selectExchangeRateProvider } from "@/lib/exchangeRates";
++
++describe("buildExchangeRateApiRequest", () => {
++  it("builds a GET-by-URL request against USD as the base currency", () => {
++    const req = buildExchangeRateApiRequest("test_key_123");
++    expect(req.url).toBe("https://v6.exchangerate-api.com/v6/test_key_123/latest/USD");
++  });
++});
++
++describe("identityProvider", () => {
++  it("returns a rate of exactly 1 for every supported currency", async () => {
++    const rates = await identityProvider.getRates();
++    expect(rates).toHaveLength(SUPPORTED_CURRENCIES.length);
++    for (const r of rates) {
++      expect(r.usdRate).toBe(1);
++      expect(r.source).toBe("identity");
++    }
++  });
++
++  it("covers every currency code in SUPPORTED_CURRENCIES, with none missing or extra", async () => {
++    const rates = await identityProvider.getRates();
++    const returnedCodes = new Set(rates.map((r) => r.currencyCode));
++    const expectedCodes = new Set(SUPPORTED_CURRENCIES.map((c) => c.code));
++    expect(returnedCodes).toEqual(expectedCodes);
++  });
++});
++
++describe("selectExchangeRateProvider", () => {
++  it("defaults to identity when EXCHANGE_RATE_PROVIDER is unset — the honest default, not silent failure", () => {
++    expect(selectExchangeRateProvider({}).name).toBe("identity");
++  });
++
++  it("stays on identity when EXCHANGE_RATE_PROVIDER is explicitly 'identity'", () => {
++    expect(selectExchangeRateProvider({ EXCHANGE_RATE_PROVIDER: "identity" }).name).toBe("identity");
++  });
++
++  it("falls back to identity when exchangerate_api is chosen but EXCHANGE_RATE_API_KEY is missing", () => {
++    expect(selectExchangeRateProvider({ EXCHANGE_RATE_PROVIDER: "exchangerate_api" }).name).toBe("identity");
++  });
++
++  it("selects exchangerate_api once an API key is configured", () => {
++    expect(
++      selectExchangeRateProvider({ EXCHANGE_RATE_PROVIDER: "exchangerate_api", EXCHANGE_RATE_API_KEY: "k" }).name
++    ).toBe("exchangerate_api");
++  });
++
++  it("falls back to identity for an unrecognized EXCHANGE_RATE_PROVIDER value", () => {
++    expect(selectExchangeRateProvider({ EXCHANGE_RATE_PROVIDER: "carrier_pigeon" }).name).toBe("identity");
++  });
++});
+--- "/home/claude/savequest_orig/savequest backup/vercel.json"	2026-07-31 18:41:10.000000000 +0000
++++ "/home/claude/savequest/savequest backup/vercel.json"	2026-08-03 11:40:54.357586153 +0000
+@@ -11,6 +11,10 @@
+     {
+       "path": "/api/cron/financial-health-snapshot",
+       "schedule": "0 10 * * *"
++    },
++    {
++      "path": "/api/cron/exchange-rates",
++      "schedule": "0 11 * * *"
+     }
+   ]
+ }
+\ No newline at end of file
+--- "/home/claude/savequest_orig/savequest backup/.env.local.example"	2026-07-31 18:41:08.000000000 +0000
++++ "/home/claude/savequest/savequest backup/.env.local.example"	2026-08-03 11:41:36.492634876 +0000
+@@ -74,3 +74,12 @@
+ # APNS_PRIVATE_KEY=
+ # APNS_TOPIC=
+ # APNS_PRODUCTION=false
++
++# ── Exchange rate provider (Sprint 31, Phase 6) ──────────────────────────────────
++# Leave EXCHANGE_RATE_PROVIDER unset (or "identity") to serve 1:1 rates for every
++# currency — the safe default, since no currency conversion feature reads these
++# rates yet (see lib/exchangeRates/providers/identity.ts). Set both vars below to
++# enable real daily-refreshed rates via exchangerate-api.com's free tier.
++# EXCHANGE_RATE_PROVIDER=exchangerate_api
++# EXCHANGE_RATE_API_KEY=your_exchangerate_api_key_here
++

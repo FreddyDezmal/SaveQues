@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { format, formatDistanceToNow } from "date-fns";
 import { X, TrendingUp, Target, Zap, Trophy, Calendar, Coins, ChevronRight } from "lucide-react";
+import { formatAmount, DEFAULT_CURRENCY, DEFAULT_LOCALE } from "@/lib/currency";
 
 interface Props {
   user: {
@@ -15,6 +16,11 @@ interface Props {
     streak_days: number;
     last_active_date: string | null;
     created_at: string;
+    // Sprint 31 — Phase 5: optional so this keeps compiling for any other
+    // caller that hasn't been updated to pass these yet; falls back to the
+    // exact previous ZAR/en-ZA behavior when absent.
+    currency_code?: string;
+    locale?: string;
   };
   onClose: () => void;
 }
@@ -172,7 +178,7 @@ export default function UserActivityDrawer({ user, onClose }: Props) {
         {/* Stats row */}
         <div className="grid grid-cols-4 gap-px bg-surface-border shrink-0">
           {[
-            { label: "Saved",      value: `R${stats.totalSaved.toLocaleString()}`, icon: <Coins size={12} />,     color: "text-emerald-400" },
+            { label: "Saved",      value: formatAmount(stats.totalSaved, user.currency_code ?? DEFAULT_CURRENCY, user.locale ?? DEFAULT_LOCALE), icon: <Coins size={12} />,     color: "text-emerald-400" },
             { label: "Goals",      value: String(stats.goalsCount),                icon: <Target size={12} />,    color: "text-brand-400"   },
             { label: "Quests",     value: String(stats.questsDone),                icon: <Calendar size={12} />,  color: "text-purple-400"  },
             { label: "Badges",     value: String(stats.achievementCount),           icon: <Trophy size={12} />,    color: "text-amber-400"   },
@@ -246,7 +252,7 @@ export default function UserActivityDrawer({ user, onClose }: Props) {
                           <div className="text-right shrink-0">
                             {e.type === "deposit" && e.amount !== undefined && (
                               <p className={`text-xs font-bold ${e.amount >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                                {e.amount >= 0 ? "+" : ""}R{Math.abs(e.amount).toLocaleString()}
+                                {e.amount >= 0 ? "+" : ""}{formatAmount(Math.abs(e.amount), user.currency_code ?? DEFAULT_CURRENCY, user.locale ?? DEFAULT_LOCALE)}
                               </p>
                             )}
                             {e.type === "quest" && e.amount !== undefined && (
