@@ -21,10 +21,12 @@ interface CreateSharedGoalModalProps {
   open: boolean;
   onClose: () => void;
   eligibleGoals: EligibleGoal[];
+  currencyCode: string;
+  locale: string;
   onCreated: () => void;
 }
 
-export default function CreateSharedGoalModal({ open, onClose, eligibleGoals, onCreated }: CreateSharedGoalModalProps) {
+export default function CreateSharedGoalModal({ open, onClose, eligibleGoals, currencyCode, locale, onCreated }: CreateSharedGoalModalProps) {
   const titleId = useId();
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -78,7 +80,7 @@ export default function CreateSharedGoalModal({ open, onClose, eligibleGoals, on
                 <span className="text-xl shrink-0" aria-hidden="true">{g.goal_emoji}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-white truncate">{g.title}</p>
-                  <p className="text-xs text-white/40">{formatCurrency(g.current_amount)} of {formatCurrency(g.target_amount)}</p>
+                  <p className="text-xs text-white/40">{formatCurrency(g.current_amount, currencyCode, locale)} of {formatCurrency(g.target_amount, currencyCode, locale)}</p>
                 </div>
               </button>
             ))}

@@ -11,9 +11,10 @@ export default async function SharedGoalsPage() {
   // (auth.uid() = user_id) already scopes this to the caller, no new API
   // route needed. shared_goals.goal_id is UNIQUE (045), so any goal_id
   // present there is already shared and excluded from "eligible to share".
-  const [{ data: goals }, { data: alreadyShared }] = await Promise.all([
+  const [{ data: goals }, { data: alreadyShared }, { data: profile }] = await Promise.all([
     supabase.from("savings_goals").select("id, title, goal_emoji, target_amount, current_amount").eq("user_id", user.id).eq("is_complete", false),
     supabase.from("shared_goals").select("goal_id").eq("owner_id", user.id),
+    supabase.from("profiles").select("currency_code, locale").eq("id", user.id).single(),
   ]);
 
   const sharedGoalIds = new Set((alreadyShared ?? []).map((s) => s.goal_id));
@@ -22,7 +23,11 @@ export default async function SharedGoalsPage() {
   return (
     <div className="max-w-lg mx-auto px-4 pt-6">
       <h1 className="font-display text-2xl font-bold text-white mb-5">Shared Goals</h1>
-      <SharedGoalsClient eligibleGoals={eligibleGoals} />
+      <SharedGoalsClient
+        eligibleGoals={eligibleGoals}
+        currencyCode={profile?.currency_code ?? "ZAR"}
+        locale={profile?.locale ?? "en-ZA"}
+      />
     </div>
   );
 }

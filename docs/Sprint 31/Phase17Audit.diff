@@ -1,0 +1,188 @@
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/admin/page.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/admin/page.tsx"	2026-08-05 03:52:54.250210355 +0000
+@@ -1,6 +1,7 @@
+ import { createClient, createServiceClient } from "@/lib/supabase/server";
+ import { redirect } from "next/navigation";
+ import AdminClient from "./AdminClient";
++import { convertAmountsTo } from "@/lib/currencyConversion";
+ 
+ export default async function AdminPage() {
+   // Auth check via RLS client
+@@ -38,7 +39,7 @@
+     dailyQuestLogsRes,
+     chainProgressRes,
+   ] = await Promise.all([
+-    service.from("profiles").select("id, display_name, avatar_emoji, xp_total, current_level, streak_days, longest_streak, last_active_date, is_admin, country_code, created_at").order("created_at", { ascending: false }),
++    service.from("profiles").select("id, display_name, avatar_emoji, xp_total, current_level, streak_days, longest_streak, last_active_date, is_admin, country_code, currency_code, locale, created_at").order("created_at", { ascending: false }),
+     service.from("savings_goals").select("id, user_id, title, category, target_amount, current_amount, is_complete, created_at"),
+     service.from("transactions").select("id, user_id, amount, created_at, transaction_type"),
+     service.from("challenges").select("*").order("xp_reward", { ascending: false }),
+@@ -112,11 +113,43 @@
+     badgeUsage.set(row.achievement_id, (badgeUsage.get(row.achievement_id) ?? 0) + 1);
+   }
+ 
++  // Sprint 31 — Phase 17 (Final Audit): the "Platform Saved" KPI used to
++  // sum every deposit's raw `amount` across every user regardless of
++  // their currency — a ZAR user's 500 and a USD user's 500 silently
++  // added as if they were the same money, the exact bug class Phase 9
++  // fixed for shared-goal contributions, just not caught here until this
++  // final sweep. Same fix shape: group by each depositing user's real
++  // currency, convert each group's subtotal into ZAR (the platform's
++  // historical/majority currency) via the Phase 7 engine, sum those.
++  const currencyByUserId = new Map((usersRes.data ?? []).map((u) => [u.id, u.currency_code ?? "ZAR"]));
++  const depositsByCurrency = new Map<string, number>();
++  for (const t of txRes.data ?? []) {
++    const amount = Number(t.amount);
++    if (amount <= 0) continue;
++    const code = currencyByUserId.get(t.user_id) ?? "ZAR";
++    depositsByCurrency.set(code, (depositsByCurrency.get(code) ?? 0) + amount);
++  }
++  let totalSavedZAR = 0;
++  try {
++    const converted = await convertAmountsTo(
++      Array.from(depositsByCurrency, ([currencyCode, amount]) => ({ amount, currencyCode })),
++      "ZAR"
++    );
++    totalSavedZAR = converted.reduce((sum, c) => sum + c.amount, 0);
++  } catch {
++    // Rate lookup failed with no fallback available (see
++    // lib/exchangeRates/cache.ts) — fall back to the pre-Phase-17 raw
++    // sum rather than showing a blank/zero KPI. Inaccurate the same way
++    // it always was for non-ZAR deposits, not a new failure mode.
++    totalSavedZAR = Array.from(depositsByCurrency.values()).reduce((sum, v) => sum + v, 0);
++  }
++
+   return (
+     <AdminClient
+       users={usersWithEmail}
+       goals={goalsRes.data ?? []}
+       transactions={txRes.data ?? []}
++      totalSavedZAR={totalSavedZAR}
+       challenges={challengesRes.data ?? []}
+       userChallenges={userChallengesRes.data ?? []}
+       userAchievements={achievementsRes.data ?? []}
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/admin/AdminClient.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/admin/AdminClient.tsx"	2026-08-05 03:53:21.937239447 +0000
+@@ -33,6 +33,11 @@
+   users: any[];
+   goals: any[];
+   transactions: any[];
++  /** Sprint 31 — Phase 17: computed server-side in page.tsx, converting
++   *  each depositing user's own-currency total into ZAR via the Phase 7
++   *  engine — replaces a naive cross-currency sum of raw `amount` values
++   *  that used to silently treat every currency as equivalent. */
++  totalSavedZAR: number;
+   challenges: any[];
+   userChallenges: any[];
+   userAchievements: any[];
+@@ -63,7 +68,7 @@
+ const BLANK_STEP = { step_number: 1, title: "", description: "", xp_reward: 50, requires_type: "save_amount", requires_value: 1, requires_quest_id: "" };
+ 
+ export default function AdminClient({
+-  users, goals, transactions, challenges,
++  users, goals, transactions, totalSavedZAR, challenges,
+   userChallenges, userAchievements, activityLog, adminName, dbEvents,
+   engagementStatuses, dailyActivity,
+   dailyQuests, weeklyQuests, questChains, badges,
+@@ -114,7 +119,8 @@
+ 
+   // ── Platform stats ────────────────────────────────────────────
+   const totalUsers     = users.length;
+-  const totalSaved     = transactions.filter(t => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
++  // totalSavedZAR comes from page.tsx (Phase 17) — converted per-user's-currency,
++  // not a raw cross-currency sum of transactions[].amount.
+   const totalGoals     = goals.length;
+   const completedGoals = goals.filter(g => g.is_complete).length;
+   const activeStreaks  = users.filter(u => (u.streak_days ?? 0) >= 3).length;
+@@ -544,7 +550,7 @@
+         <div className="space-y-4">
+           <div className="grid grid-cols-2 gap-3">
+             <KPICard icon="👥" label="Total Users"     value={String(totalUsers)}             sub={`${recentlyActive} active last 7d`} />
+-            <KPICard icon="💰" label="Platform Saved"  value={formatCurrency(totalSaved)}     sub={`${transactions.filter(t=>Number(t.amount)>0).length} deposits`} />
++            <KPICard icon="💰" label="Platform Saved"  value={formatCurrency(totalSavedZAR, "ZAR")}     sub={`${transactions.filter(t=>Number(t.amount)>0).length} deposits`} />
+             <KPICard icon="🎯" label="Goals"           value={String(totalGoals)}             sub={`${completedGoals} completed`} />
+             <KPICard icon="🔥" label="Active Streaks"  value={String(activeStreaks)}           sub="3+ day streaks" />
+             <KPICard icon="⚡" label="XP Awarded"      value={totalXP.toLocaleString()}        sub="across all users" />
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/dashboard/DashboardClient.tsx"	2026-08-02 05:17:44.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/dashboard/DashboardClient.tsx"	2026-08-05 03:53:40.438570899 +0000
+@@ -266,7 +266,7 @@
+         </div>
+       ) : (
+         <div className="grid grid-cols-3 gap-2.5 mb-4">
+-          <StatCard label="Total Saved" value={formatCurrency(totalSaved)} icon="💰" />
++          <StatCard label="Total Saved" value={formatCurrency(totalSaved, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")} icon="💰" />
+           <StatCard label="Goals" value={String(activeGoals.length)} icon="🎯" />
+           <StatCard label="Streak" value={streakPaused ? "⏸" : `${profile.streak_days}d`} icon="🔥" />
+         </div>
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/shared-goals/page.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/shared-goals/page.tsx"	2026-08-05 03:54:42.506281878 +0000
+@@ -11,9 +11,10 @@
+   // (auth.uid() = user_id) already scopes this to the caller, no new API
+   // route needed. shared_goals.goal_id is UNIQUE (045), so any goal_id
+   // present there is already shared and excluded from "eligible to share".
+-  const [{ data: goals }, { data: alreadyShared }] = await Promise.all([
++  const [{ data: goals }, { data: alreadyShared }, { data: profile }] = await Promise.all([
+     supabase.from("savings_goals").select("id, title, goal_emoji, target_amount, current_amount").eq("user_id", user.id).eq("is_complete", false),
+     supabase.from("shared_goals").select("goal_id").eq("owner_id", user.id),
++    supabase.from("profiles").select("currency_code, locale").eq("id", user.id).single(),
+   ]);
+ 
+   const sharedGoalIds = new Set((alreadyShared ?? []).map((s) => s.goal_id));
+@@ -22,7 +23,11 @@
+   return (
+     <div className="max-w-lg mx-auto px-4 pt-6">
+       <h1 className="font-display text-2xl font-bold text-white mb-5">Shared Goals</h1>
+-      <SharedGoalsClient eligibleGoals={eligibleGoals} />
++      <SharedGoalsClient
++        eligibleGoals={eligibleGoals}
++        currencyCode={profile?.currency_code ?? "ZAR"}
++        locale={profile?.locale ?? "en-ZA"}
++      />
+     </div>
+   );
+ }
+--- "/home/claude/savequest_orig/savequest backup/app/(app)/shared-goals/SharedGoalsClient.tsx"	2026-07-31 18:40:50.000000000 +0000
++++ "/home/claude/savequest/savequest backup/app/(app)/shared-goals/SharedGoalsClient.tsx"	2026-08-05 03:54:58.148102851 +0000
+@@ -19,7 +19,7 @@
+ interface SharedGoalsData { owned: OwnedSharedGoal[]; contributing: ContributingSharedGoal[]; pending_invites: PendingInvite[]; }
+ interface EligibleGoal { id: string; title: string; goal_emoji: string; target_amount: number; current_amount: number; }
+ 
+-export default function SharedGoalsClient({ eligibleGoals }: { eligibleGoals: EligibleGoal[] }) {
++export default function SharedGoalsClient({ eligibleGoals, currencyCode, locale }: { eligibleGoals: EligibleGoal[]; currencyCode: string; locale: string }) {
+   const [data, setData] = useState<SharedGoalsData | null>(null);
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState(false);
+@@ -113,7 +113,7 @@
+         <EmptyState emoji="🎯" title="No shared goals yet" description="Share one of your goals to save together with friends or a group." />
+       )}
+ 
+-      <CreateSharedGoalModal open={createOpen} onClose={() => setCreateOpen(false)} eligibleGoals={eligibleGoals} onCreated={load} />
++      <CreateSharedGoalModal open={createOpen} onClose={() => setCreateOpen(false)} eligibleGoals={eligibleGoals} currencyCode={currencyCode} locale={locale} onCreated={load} />
+     </div>
+   );
+ }
+--- "/home/claude/savequest_orig/savequest backup/components/social/CreateSharedGoalModal.tsx"	2026-07-31 18:40:52.000000000 +0000
++++ "/home/claude/savequest/savequest backup/components/social/CreateSharedGoalModal.tsx"	2026-08-05 03:55:11.336498644 +0000
+@@ -21,10 +21,12 @@
+   open: boolean;
+   onClose: () => void;
+   eligibleGoals: EligibleGoal[];
++  currencyCode: string;
++  locale: string;
+   onCreated: () => void;
+ }
+ 
+-export default function CreateSharedGoalModal({ open, onClose, eligibleGoals, onCreated }: CreateSharedGoalModalProps) {
++export default function CreateSharedGoalModal({ open, onClose, eligibleGoals, currencyCode, locale, onCreated }: CreateSharedGoalModalProps) {
+   const titleId = useId();
+   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
+   const [submitting, setSubmitting] = useState(false);
+@@ -78,7 +80,7 @@
+                 <span className="text-xl shrink-0" aria-hidden="true">{g.goal_emoji}</span>
+                 <div className="flex-1 min-w-0">
+                   <p className="text-sm text-white truncate">{g.title}</p>
+-                  <p className="text-xs text-white/40">{formatCurrency(g.current_amount)} of {formatCurrency(g.target_amount)}</p>
++                  <p className="text-xs text-white/40">{formatCurrency(g.current_amount, currencyCode, locale)} of {formatCurrency(g.target_amount, currencyCode, locale)}</p>
+                 </div>
+               </button>
+             ))}

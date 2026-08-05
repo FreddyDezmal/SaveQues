@@ -254,3 +254,46 @@ never introduce a second analytics pipeline. Specific seams:
   natural Sprint 29 candidate, building on `goalHealth.ts` +
   `forecast.ts` per-goal outputs the same way `portfolioIntelligence.ts`
   already does for strongest/weakest ranking.
+
+## 9. Currency compatibility audit (Sprint 31, Phase 8)
+
+Sprint 31 checked whether any of this document's engines assumed a
+single currency. 14 of 15 modules didn't need changes — `forecast.ts`,
+`coaching.ts`, `financialHealthScore.ts`, `cashFlowProjection.ts`,
+`categoryIntelligence.ts`, `behaviorProfile.ts`, `goalHealth.ts`,
+`portfolioIntelligence.ts`, `riskEngine.ts`, `interventions.ts`,
+`adaptiveGoals.ts`, and `analyticsEngine.ts` all compute in ratios and
+percentages relative to a user's *own* numbers — inherently
+currency-agnostic by construction, not by luck. `insights.ts` was
+already properly currency-aware (`formatCurrency` threaded through
+since it was written).
+
+The one real bug — the exception this section exists to document, per
+this file's own §1 rule that every claim gets verified against the
+code: `lib/recommendations.ts`'s `TEMPLATES.baselineTarget` catalog
+("Emergency Fund: 15000," etc.) was authored in raw ZAR and used
+completely unconverted for every user, regardless of `currency_code`.
+Worse, the capacity-scaling math compared a user's own-currency weekly
+savings against that same ZAR-denominated reference rate, so
+currencies with very different unit values than ZAR (JPY, KWD) would
+mostly hit the scaling clamp rather than scaling meaningfully.
+
+Fixed via dependency injection, not a rewrite of the scaling math —
+same pattern `lib/scenarioSimulator.ts` already used for injecting
+`formatAmount` (§8 above): `generateGoalRecommendations()` takes an
+optional `convertFromZar` function, defaulting to identity (zero
+regression for ZAR users, and for any caller that doesn't pass one).
+`getFinancialIntelligence()` had to stay pure and synchronous per its
+own §2.2 rule — it doesn't await anything itself. Instead,
+`lib/currencyConversion.ts`'s `createZarConverter()` resolves the real
+exchange rate *once*, asynchronously, in the two page routes that call
+the orchestrator, and hands the (now-synchronous) resulting closure
+down through `FinancialIntelligenceInput`. The orchestrator's "this
+file calculates nothing" rule (§2.2) held — it still doesn't do the
+conversion itself, just threads through a function its caller already
+resolved.
+
+**Left as documented future work, not silently fixed**: the "round to
+nearest 100" step in `recommendations.ts`'s suggested-target math still
+assumes a ZAR-like unit value — cosmetically wrong for BHD/KWD, not a
+magnitude bug, not touched.

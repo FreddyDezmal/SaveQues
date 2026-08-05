@@ -1,6 +1,7 @@
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import AdminClient from "./AdminClient";
+import { convertAmountsTo } from "@/lib/currencyConversion";
 
 export default async function AdminPage() {
   // Auth check via RLS client
@@ -112,11 +113,43 @@ export default async function AdminPage() {
     badgeUsage.set(row.achievement_id, (badgeUsage.get(row.achievement_id) ?? 0) + 1);
   }
 
+  // Sprint 31 — Phase 17 (Final Audit): the "Platform Saved" KPI used to
+  // sum every deposit's raw `amount` across every user regardless of
+  // their currency — a ZAR user's 500 and a USD user's 500 silently
+  // added as if they were the same money, the exact bug class Phase 9
+  // fixed for shared-goal contributions, just not caught here until this
+  // final sweep. Same fix shape: group by each depositing user's real
+  // currency, convert each group's subtotal into ZAR (the platform's
+  // historical/majority currency) via the Phase 7 engine, sum those.
+  const currencyByUserId = new Map((usersRes.data ?? []).map((u) => [u.id, u.currency_code ?? "ZAR"]));
+  const depositsByCurrency = new Map<string, number>();
+  for (const t of txRes.data ?? []) {
+    const amount = Number(t.amount);
+    if (amount <= 0) continue;
+    const code = currencyByUserId.get(t.user_id) ?? "ZAR";
+    depositsByCurrency.set(code, (depositsByCurrency.get(code) ?? 0) + amount);
+  }
+  let totalSavedZAR = 0;
+  try {
+    const converted = await convertAmountsTo(
+      Array.from(depositsByCurrency, ([currencyCode, amount]) => ({ amount, currencyCode })),
+      "ZAR"
+    );
+    totalSavedZAR = converted.reduce((sum, c) => sum + c.amount, 0);
+  } catch {
+    // Rate lookup failed with no fallback available (see
+    // lib/exchangeRates/cache.ts) — fall back to the pre-Phase-17 raw
+    // sum rather than showing a blank/zero KPI. Inaccurate the same way
+    // it always was for non-ZAR deposits, not a new failure mode.
+    totalSavedZAR = Array.from(depositsByCurrency.values()).reduce((sum, v) => sum + v, 0);
+  }
+
   return (
     <AdminClient
       users={usersWithEmail}
       goals={goalsRes.data ?? []}
       transactions={txRes.data ?? []}
+      totalSavedZAR={totalSavedZAR}
       challenges={challengesRes.data ?? []}
       userChallenges={userChallengesRes.data ?? []}
       userAchievements={achievementsRes.data ?? []}

@@ -6,7 +6,7 @@ Postgres via Supabase. 28 tables, 50 RLS policies as of Sprint 18, plus `user_di
 
 | Table | Purpose |
 |---|---|
-| `profiles` | One row per user. Currency preference (`currency_code`, default `ZAR`), notification settings, XP total, streak state. |
+| `profiles` | One row per user. Currency preference (`currency_code`, default `ZAR`, CHECK-constrained against `lib/currency.ts`'s 116-currency `SUPPORTED_CURRENCIES` list as of Sprint 31 Phase 3 — expanded from an original 10 by migration `056_expand_currency_codes.sql`) plus `locale` (default `en-ZA`), notification settings, XP total, streak state. Both columns existed since migration 014 but were missing from the hand-maintained TypeScript `Database` type until Sprint 31 Phase 5 — every `profile.currency_code` read before then was technically untyped. |
 | `savings_goals` | `title`, `target_amount`, `current_amount`, `goal_status` (`active`/`paused`/`completed`/`archived`), `is_primary`. |
 | `transactions` | Deposits/withdrawals. `transaction_type`, `amount`, `idempotency_key`. |
 | `xp_awards` | XP grant audit trail — what makes `award_xp`-style RPCs idempotent per (user, action, source). |
@@ -113,6 +113,30 @@ existing policies).
 
 
 
+## Multi-currency (Sprint 31)
+
+Full design rationale in `docs/ARCHITECTURE.md`'s Multi-currency
+architecture section. One new table, one column addition:
+
+| Table | Purpose |
+|---|---|
+| `exchange_rates` | New, Phase 6. One row per supported currency (`currency_code` PK, same 116-code CHECK constraint as `profiles`), priced against USD (`usd_rate`). RLS enabled, **zero client policies** — same deny-all-clients pattern as `billing_webhook_events` (Sprint 29). Only the daily cron and `lib/exchangeRates/cache.ts`'s service-role client ever write to it. 24-hour cache lifetime — see Architecture doc for the exact fallback order on a stale/missing read. |
+
+`group_contributions` (Sprint 27's social foundation, migration 045)
+gained a `currency_code` column (migration 072, Phase 9) —
+`DEFAULT 'ZAR'`, same CHECK constraint pattern. Not a guess for
+existing rows: every contribution made before this sprint genuinely
+was ZAR, since the platform was single-currency until now. Captured at
+insert time from the contributing user's own `profiles.currency_code`
+— never accepted from the request body (`app/api/shared-goals/contribute/route.ts`
+doesn't read a `currency_code` field from its input at all).
+
+`get_shared_goal_detail()` (migration 049) was rewritten by migration
+072 to stop doing a cross-currency `SUM()` across `group_contributions`
+— it now returns a per-currency breakdown (SQL only ever sums rows
+sharing one `currency_code`, which is safe); the actual cross-currency
+total is computed in Node, not SQL. See Architecture doc for why.
+
 **A note on naming, found during the Sprint 18 audit and worth stating plainly rather than re-presenting as a fresh discovery**: migration files use three different naming conventions across the project's history — sequential numbers (`001_initial_schema.sql` … `017_...`), dated files (`20260613_notifications.sql`, `20260707_notification_preferences.sql`), and a few unprefixed files (`admin_read_policies.sql`). This is **already documented and audited** in `supabase/migrations/MIGRATION_CONFLICTS.md`, which predates this sprint and explains which early migrations were superseded (e.g. `0061_...` superseded by `0062_...`) and the `014_prod_cleanup.sql` vs `014_consolidated_schema.sql` split for production vs. clean-environment setup. A `rollback/` subdirectory contains `_down.sql` files for several migrations; an `archive/` subdirectory holds superseded originals. Read `MIGRATION_CONFLICTS.md` before touching any migration numbered below 014.
 
 **Sprint 27 additions**: 4 new migrations, all date-prefixed (continuing the convention `20260613_notifications.sql` started): `20260723_notification_preferences_expansion.sql` (Phase 4), `20260724_user_digests.sql` (Phase 5), `20260725_notification_analytics.sql` (Phase 11), `20260726_notification_performance_indexes.sql` (Phase 13) — the last of these adds two composite indexes on `notification_logs`; see `docs/SPRINT27_PHASE13_PERFORMANCE.md` for exactly which query shapes they target and why single-column indexes weren't enough.
@@ -129,5 +153,11 @@ it adds.
 `069` established. One new table (`saved_scenarios`) and one new
 feature/plan_features row (`saved_scenarios_limit`) — see the Billing —
 Sprint 30 addition section above.
+
+**Sprint 31 additions**: `071_exchange_rates.sql` (Phase 6, new
+`exchange_rates` table) and `072_shared_goal_currency_awareness.sql`
+(Phase 9, `group_contributions.currency_code` + the rewritten
+`get_shared_goal_detail()`), both continuing the sequential convention.
+See the Multi-currency section above.
 
 

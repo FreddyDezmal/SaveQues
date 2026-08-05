@@ -285,3 +285,157 @@ app-structure summary.
   populated once by the orchestrator and shared into both; every other
   caller (e.g. `coachingMessagesForGoal()` on goal detail, which only
   ever handles one goal) is unaffected.
+
+## Multi-currency architecture (Sprint 31)
+
+SaveQuest launched ZAR-only. Sprint 31's 17-phase brief made the app
+currency-aware end to end while explicitly forbidding a rewrite:
+"extend existing modules instead of replacing them," "every existing
+user experiences zero regression." A Phase 1 repository-wide audit
+found this was less greenfield than expected — `lib/currency.ts`
+already had a 116-currency catalogue and a central `formatAmount()`,
+and `profiles.currency_code` already existed with a CHECK constraint.
+The real gaps were: no decimal-precision awareness, no exchange-rate
+infrastructure at all, several hardcoded-currency bypasses of the
+central formatter, and one goal-recommendation module whose numbers
+implicitly assumed ZAR. This section documents what Sprint 31 actually
+built and fixed, not what it assumed needed building.
+
+### Formatting layer (Phases 2, 5, 12)
+
+`lib/currency.ts` is the single source of truth for currency
+formatting — `formatAmount(amount, currencyCode, locale, options?)`.
+Default output is **whole units, no decimals**, for every currency —
+a deliberate product choice (this is a savings app; cents rarely
+matter), not an oversight. `getCurrencyConfig(code)` now carries a
+real per-currency `decimals` field (0 for JPY/KRW, 3 for BHD/KWD/OMR,
+2 for most others) for callers that opt into `{ precise: true }` —
+additive only, the default whole-unit output never changed. Lookup is
+O(1) via a `Map` built once at module load (Phase 13 — it used to be
+a 116-entry `.find()` on every call, including inside list-rendered
+components).
+
+`lib/dateFormat.ts` (Phase 12) is the equivalent for dates —
+`formatDateLong`/`formatDateShort`/`formatDateNumeric`, all defaulting
+to `DEFAULT_LOCALE`. Before this existed, ~15 components each called
+`toLocaleDateString()` directly with locale handling that was
+inconsistent three different ways (hardcoded to the wrong locale,
+left to the browser's own runtime default, or — in the two report
+clients — already correct but duplicated inline at every call site).
+Deliberately kept as a *separate* module from `lib/dateUtils.ts`,
+which answers "which calendar date is this" (a data-integrity
+concern for activity-log writes) — the two should never merge.
+
+Every hardcoded-currency-bypass found (Phase 1's audit, plus two more
+found later doing unrelated work in Phases 9/12 — different JSX
+syntax shapes the original grep patterns didn't catch) now routes
+through these two modules. None remain as of Phase 12's final sweep.
+
+### Exchange rates (Phase 6)
+
+`lib/exchangeRates/` — an `ExchangeRateProvider` interface (mirrors
+`lib/billing/provider.ts`'s and `lib/push/`'s existing adapter
+pattern) with two implementations: `identity` (returns 1:1 rates,
+logs a loud one-time warning — the safe default, since unlike push's
+default this app never had a working FX feed to preserve) and
+`exchangerate_api` (real, free-tier, inactive unless
+`EXCHANGE_RATE_PROVIDER`/`EXCHANGE_RATE_API_KEY` are both set — true
+for every environment as of this sprint).
+
+Rates are stored **pivoted against USD**, one row per currency (116
+rows), not one row per pair (which would need up to 13,340 rows for
+full coverage) — converting A→B goes through USD:
+`amountInUsd = amount / rate(A); result = amountInUsd * rate(B)`.
+`exchange_rates` table: RLS enabled, **zero client policies** — only
+the service-role client (the daily cron + `lib/exchangeRates/cache.ts`)
+ever touches it, satisfying Phase 14's "users cannot manipulate
+exchange rates" by construction, not by a runtime check.
+
+Cache lifetime: **24 hours**, refreshed by `app/api/cron/exchange-rates/route.ts`
+(same `CRON_SECRET` pattern as every other cron here). Read path
+(`getCachedRates`, Phase 6, batched in Phase 13): fresh cached row →
+use it; stale/missing → live provider call; live call fails but a
+stale row exists → serve it anyway (logged); live call fails and
+there's no cached row at all → throw, since there's nothing honest to
+return. `getCachedRates` takes an array and does **one** query
+(`.in(...)`) for however many currencies are needed — Phase 13 found
+and fixed four call sites each doing N separate single-currency
+queries where one batched query sufficed: `convertCurrency`,
+`createZarConverter`, and `convertAmountsTo` (all in
+`lib/currencyConversion.ts`), plus the shared-goal detail route, which
+went from up to (member count + 1) round-trips per page load to one.
+
+### Conversion engine (Phase 7)
+
+`lib/currencyConversion.ts` — the **only** module in the app allowed
+to call `lib/exchangeRates`'s cache for conversion purposes. Same
+pure-core/thin-I/O-shell split as `lib/financialHealthScore.ts` vs.
+`lib/financialHealthSnapshot.ts`: `convertAmount()` is pure,
+deterministic, synchronous, fully unit-testable without a database —
+rounds to the *target* currency's real decimal precision using an
+epsilon-corrected `Math.round` (fixes the classic `1.005 → 1.00`
+float misround; explicitly documented as not arbitrary-precision
+arithmetic, since this app has no fixed-point library and none was
+introduced for this alone). `convertCurrency`/`convertAmountsTo`/
+`resolveRates`/`createZarConverter` are the async wrappers that
+resolve rates and hand them to the pure function.
+
+`createZarConverter(currencyCode)` exists for one specific reason:
+`lib/recommendations.ts`'s goal-template baselines were authored in
+raw ZAR numbers and used unconverted for every user (Phase 8's real
+bug — a JPY user was offered a literal "¥15,000" emergency fund,
+≈$100, too small; a KWD user, 15,000 KWD, ≈$49,000, absurd).
+`getFinancialIntelligence()` is documented as pure/synchronous and
+that contract wasn't broken to fix this — the two page routes that
+call it resolve a currency-converter closure *once*, asynchronously,
+before calling the (still-synchronous) orchestrator.
+
+At the point Phase 7 shipped, nothing in the app actually needed real
+conversion yet — same "built ahead of its first consumer" situation
+Phase 6 was in until Phase 7 existed. Phase 9 (below) became that
+first real consumer.
+
+### Social features: currency stays visible, totals normalize (Phase 9)
+
+Audited every social surface for currency-mixing risk. Groups,
+Leaderboards, Partner Mode, and Invitations turned out to sidestep the
+problem entirely, by design — they've never shown raw amounts at all
+(migration 045: *"no amounts leak beyond goal participants"*). The one
+surface that does, shared-goal contributions, had a real bug:
+`group_contributions.amount` had no `currency_code` of its own, and
+`get_shared_goal_detail()` did a plain cross-currency `SUM()` — a ZAR
+contributor's 500 and a USD contributor's 500 were silently added as
+if they were the same money.
+
+Fixed with a documented architecture, not a guess: **original currency
+stays visible per contribution** (`group_contributions.currency_code`,
+migration 072, `DEFAULT 'ZAR'` — accurate for every pre-existing row,
+this having been a single-currency platform until now); **totals
+normalize into the goal owner's currency** (since `target_amount`
+already lives there), via `lib/currencyConversion.ts`, exclusively
+inside `app/api/shared-goals/detail/route.ts` — never in the RPC (no
+rate-cache access from SQL) and never in the client component. The RPC
+itself only ever does same-currency `SUM()`s (safe), returning a
+per-currency breakdown; Node does the actual cross-currency math.
+
+### Reporting: a Currency column, not a currency symbol (Phase 10)
+
+CSV exports (`lib/exportCenter.ts`) needed a different fix than the UI
+did. Embedding a symbol into the amount column (`"R500"`) would break
+a spreadsheet's ability to sum it. Instead, `transactionsToCSV`,
+`goalsToCSV`, and both annual-report CSV builders gained a separate
+`Currency` column (ISO code) alongside the still-bare-numeric amount
+column — unambiguous without sacrificing spreadsheet usability.
+Report *pages* needed no changes; they were already fully
+currency-aware from earlier phases.
+
+### What Sprint 31 deliberately didn't build
+
+Documented per-phase, not hidden: `recommendations.ts`'s target
+rounding (nearest 100 units) still assumes a ZAR-like unit value —
+cosmetic for BHD/KWD, not fixed. ~10 components still render dates in
+`DEFAULT_LOCALE` rather than each individual viewer's own locale
+(would require new prop plumbing, not a formatting fix — Phase 12's
+own header documents exactly which). No screen yet does real
+cross-currency comparison, so the conversion engine has no live
+consumer beyond shared-goal totals.

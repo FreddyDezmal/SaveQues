@@ -266,7 +266,7 @@ export default function DashboardClient({
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-2.5 mb-4">
-          <StatCard label="Total Saved" value={formatCurrency(totalSaved)} icon="💰" />
+          <StatCard label="Total Saved" value={formatCurrency(totalSaved, profile.currency_code ?? "ZAR", profile.locale ?? "en-ZA")} icon="💰" />
           <StatCard label="Goals" value={String(activeGoals.length)} icon="🎯" />
           <StatCard label="Streak" value={streakPaused ? "⏸" : `${profile.streak_days}d`} icon="🔥" />
         </div>

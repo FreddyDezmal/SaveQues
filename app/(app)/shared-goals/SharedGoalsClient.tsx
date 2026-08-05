@@ -19,7 +19,7 @@ interface PendingInvite { member_id: string; shared_goal_id: string; goal_title:
 interface SharedGoalsData { owned: OwnedSharedGoal[]; contributing: ContributingSharedGoal[]; pending_invites: PendingInvite[]; }
 interface EligibleGoal { id: string; title: string; goal_emoji: string; target_amount: number; current_amount: number; }
 
-export default function SharedGoalsClient({ eligibleGoals }: { eligibleGoals: EligibleGoal[] }) {
+export default function SharedGoalsClient({ eligibleGoals, currencyCode, locale }: { eligibleGoals: EligibleGoal[]; currencyCode: string; locale: string }) {
   const [data, setData] = useState<SharedGoalsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -113,7 +113,7 @@ export default function SharedGoalsClient({ eligibleGoals }: { eligibleGoals: El
         <EmptyState emoji="🎯" title="No shared goals yet" description="Share one of your goals to save together with friends or a group." />
       )}
 
-      <CreateSharedGoalModal open={createOpen} onClose={() => setCreateOpen(false)} eligibleGoals={eligibleGoals} onCreated={load} />
+      <CreateSharedGoalModal open={createOpen} onClose={() => setCreateOpen(false)} eligibleGoals={eligibleGoals} currencyCode={currencyCode} locale={locale} onCreated={load} />
     </div>
   );
 }

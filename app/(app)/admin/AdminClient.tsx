@@ -33,6 +33,11 @@ interface Props {
   users: any[];
   goals: any[];
   transactions: any[];
+  /** Sprint 31 — Phase 17: computed server-side in page.tsx, converting
+   *  each depositing user's own-currency total into ZAR via the Phase 7
+   *  engine — replaces a naive cross-currency sum of raw `amount` values
+   *  that used to silently treat every currency as equivalent. */
+  totalSavedZAR: number;
   challenges: any[];
   userChallenges: any[];
   userAchievements: any[];
@@ -63,7 +68,7 @@ const BLANK_CHAIN = { id: "", title: "", description: "", icon: "🔗", completi
 const BLANK_STEP = { step_number: 1, title: "", description: "", xp_reward: 50, requires_type: "save_amount", requires_value: 1, requires_quest_id: "" };
 
 export default function AdminClient({
-  users, goals, transactions, challenges,
+  users, goals, transactions, totalSavedZAR, challenges,
   userChallenges, userAchievements, activityLog, adminName, dbEvents,
   engagementStatuses, dailyActivity,
   dailyQuests, weeklyQuests, questChains, badges,
@@ -114,7 +119,8 @@ export default function AdminClient({
 
   // ── Platform stats ────────────────────────────────────────────
   const totalUsers     = users.length;
-  const totalSaved     = transactions.filter(t => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+  // totalSavedZAR comes from page.tsx (Phase 17) — converted per-user's-currency,
+  // not a raw cross-currency sum of transactions[].amount.
   const totalGoals     = goals.length;
   const completedGoals = goals.filter(g => g.is_complete).length;
   const activeStreaks  = users.filter(u => (u.streak_days ?? 0) >= 3).length;
@@ -544,7 +550,7 @@ export default function AdminClient({
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <KPICard icon="👥" label="Total Users"     value={String(totalUsers)}             sub={`${recentlyActive} active last 7d`} />
-            <KPICard icon="💰" label="Platform Saved"  value={formatCurrency(totalSaved)}     sub={`${transactions.filter(t=>Number(t.amount)>0).length} deposits`} />
+            <KPICard icon="💰" label="Platform Saved"  value={formatCurrency(totalSavedZAR, "ZAR")}     sub={`${transactions.filter(t=>Number(t.amount)>0).length} deposits`} />
             <KPICard icon="🎯" label="Goals"           value={String(totalGoals)}             sub={`${completedGoals} completed`} />
             <KPICard icon="🔥" label="Active Streaks"  value={String(activeStreaks)}           sub="3+ day streaks" />
             <KPICard icon="⚡" label="XP Awarded"      value={totalXP.toLocaleString()}        sub="across all users" />
